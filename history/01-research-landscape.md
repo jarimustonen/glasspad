@@ -84,9 +84,9 @@ kiinnostavimmat ovat ne, jotka toimivat deklaratiivisesti (JSON → kuva):
 14. **Upotettavat widgetit** — iframe-embed muihin sovelluksiin
 
 ### Turvallisuus
-15. **Sandboxed rendering** — iframe sandbox / CSP, ei pääsyä hostiin
+15. **Localhost-only** oletuksena — sisältö tulee omalta agentilta, ei tarvetta sandboxille
 16. **Padien vanheneminen** — automaattinen TTL
-17. **Sisältövalidointi** — estä XSS, script injection
+17. **Sandbox optiona** — myöhemmin jos tuetaan julkista jakelua
 
 ## Lähteet
 

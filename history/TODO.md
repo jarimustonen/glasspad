@@ -4,11 +4,11 @@ AI scratchpad for rich data views.
 
 ## Status
 
-🚧 Tutkimusvaihe — Vaihe 1 käynnissä
+✅ Vaihe 1 valmis — seuraavaksi projektin runko
 
 ---
 
-## Vaihe 1: Tutkimus ✅ osittain
+## Vaihe 1: Tutkimus ✅
 
 - [x] 1.1 Markkina- ja teknologiakatsaus → `history/01-research-landscape.md`
   - [x] a) Dashboard- ja visualisointikirjastot (open source)
@@ -18,13 +18,14 @@ AI scratchpad for rich data views.
   - [x] Konseptitason API (agent → pad → selain → agent)
   - [x] Callback-mekanismi (pad → agent kaksisuuntaisuus)
   - [x] Sisältötyypit ja turvallisuusmalli
-- [ ] 1.3 Teknologiavalinnat ja perustelut → `history/03-design-tech-choices.md`
+- [x] 1.3 Teknologiavalinnat ja perustelut → `history/03-design-tech-choices.md`
+  - Rust + Axum + SQLite + Clap, single binary
 
 ## Vaihe 2: Projektin runko ⬜
 
 > Edellytys: Vaihe 1 valmis (teknologiavalinnat tehty)
 
-- [ ] 2.1 Alustetaan projekti (package.json, tsconfig, linter, formatter)
+- [ ] 2.1 Alustetaan Rust-projekti (cargo init, Cargo.toml, riippuvuudet)
 - [ ] 2.2 Perus dev-ympäristö (hot reload, testit)
 - [ ] 2.3 CI-pohja (lint + test)
 
@@ -44,7 +45,7 @@ AI scratchpad for rich data views.
 > Edellytys: Vaihe 2 valmis (voi edetä rinnakkain vaiheen 3 kanssa)
 
 - [ ] 4.1 GET /:id — padin renderöinti selaimessa
-- [ ] 4.2 HTML-sisällön sandboxed rendering (iframe + CSP)
+- [ ] 4.2 HTML-sisällön renderöinti (suoraan, ei sandboxia — localhost-työkalu)
 - [ ] 4.3 Chart-renderöinti (Vega-Lite JSON → SVG/Canvas)
 - [ ] 4.4 Markdown-renderöinti
 - [ ] 4.5 Taulukkonäkymä (JSON/CSV → interaktiivinen taulukko)
@@ -112,11 +113,17 @@ Vaihe 7: Tuotantovalmius
 
 ---
 
-## Avoimet kysymykset (ratkaistaan vaiheessa 1.3)
+## Ratkaistut kysymykset
 
-- Runtime: Node.js + Fastify vai Bun vai Deno?
-- Storage: SQLite (paras) vai tiedostopohjainen vai muistissa?
-- Chart-kirjasto: Vega-Lite (deklaratiivinen) vai Chart.js (yksinkertainen)?
+- ✅ Kieli: **Rust** (single binary, ei runtime-riippuvuuksia)
+- ✅ Framework: **Axum** + **Clap**
+- ✅ Storage: **SQLite** (rusqlite)
+- ✅ Chart-kirjasto: **Vega-Lite** (selainpuolella)
+- ✅ MCP: **samassa binäärissä** (`glasspad mcp`)
+- ✅ Turvallisuus: **localhost-only**, ei sandboxia
+
+## Avoimet kysymykset
+
 - Vanheneminen: 24h oletus, konfiguroitava?
-- MCP: samaan prosessiin vai erillinen?
 - A2UI-yhteensopivuus: tuetaanko deklaratiivista komponenttimallia?
+- Selainpuolen kirjastot: CDN vai upotettu binääriin?

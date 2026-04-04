@@ -109,8 +109,9 @@ glasspad events abc123 --follow
 
 ## Turvallisuusmalli
 
-- HTML renderöidään **sandboxed iframessa** (sandbox="allow-scripts")
-- CSP-headerit estävät ulkoiset resurssit oletuksena
+- **Localhost-only** oletuksena — ei tarvetta raskaalle suojaukselle
+- HTML renderöidään suoraan (ei sandboxia) — sisältö tulee käyttäjän omalta agentilta
 - Pad-ID:t ovat UUID:eja — arvaamattomat
 - TTL-vanheneminen oletuksena (esim. 24h)
-- Ei autentikaatiota MVP:ssä — localhost-only
+- Ei autentikaatiota — paikallinen työkalu
+- Sandbox optiona myöhemmin jos tuetaan julkista jakelua

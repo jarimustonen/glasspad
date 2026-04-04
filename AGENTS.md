@@ -8,6 +8,7 @@ via a simple API.
 
 AI-generated planning documents go in `history/` at the repo root.
 
+- `history/TODO.md` -- master-työsuunnitelma
 - `history/plan-<topic>.md` -- planning documents
 - `history/analysis-<topic>.md` -- research and analysis
 - `history/design-<topic>.md` -- design documents
