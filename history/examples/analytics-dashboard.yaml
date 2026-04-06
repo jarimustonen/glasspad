@@ -39,6 +39,10 @@ sections:
       encoding:
         x: { aggregate: count, type: quantitative }
         y: { field: country, type: nominal, sort: "-x" }
+        tooltip:
+          - { field: country_name, title: "Country" }
+          - { field: country, title: "Code" }
+          - { aggregate: count, title: "Events" }
 
   - id: by-device
     title: "By device"
