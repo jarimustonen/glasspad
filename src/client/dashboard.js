@@ -186,13 +186,21 @@
       });
 
     if (shouldCollapse) {
+      var expanded = false;
       var btn = document.createElement('button');
       btn.className = 'table-show-more';
       btn.textContent = 'Show all ' + categories + ' categories';
       btn.addEventListener('click', function() {
-        wrapper.classList.remove('collapsed');
-        wrapper.style.maxHeight = '';
-        btn.style.display = 'none';
+        expanded = !expanded;
+        if (expanded) {
+          wrapper.classList.remove('collapsed');
+          wrapper.style.maxHeight = '';
+          btn.textContent = 'Show less';
+        } else {
+          wrapper.classList.add('collapsed');
+          wrapper.style.maxHeight = CHART_COLLAPSED_HEIGHT + 'px';
+          btn.textContent = 'Show all ' + categories + ' categories';
+        }
       });
       card.appendChild(btn);
     }
@@ -240,25 +248,25 @@
     card.appendChild(wrapper);
 
     if (totalRows > INITIAL_ROWS) {
-      // Show more button
+      var expanded = false;
+      var showAllText = 'Show all ' + totalRows + ' rows';
+      if (allData.length > MAX_ROWS) {
+        showAllText = 'Show all ' + totalRows + ' rows (of ' + allData.length + ' total)';
+      }
       var btn = document.createElement('button');
       btn.className = 'table-show-more';
-      btn.textContent = 'Show all ' + totalRows + ' rows';
-      if (allData.length > MAX_ROWS) {
-        btn.textContent = 'Show all ' + totalRows + ' rows (of ' + allData.length + ' total)';
-      }
+      btn.textContent = showAllText;
       btn.addEventListener('click', function() {
-        wrapper.classList.remove('collapsed');
-        btn.style.display = 'none';
-        countEl.style.display = 'block';
+        expanded = !expanded;
+        if (expanded) {
+          wrapper.classList.remove('collapsed');
+          btn.textContent = 'Show less';
+        } else {
+          wrapper.classList.add('collapsed');
+          btn.textContent = showAllText;
+        }
       });
       card.appendChild(btn);
-
-      var countEl = document.createElement('p');
-      countEl.className = 'table-row-count';
-      countEl.textContent = totalRows + ' rows' + (allData.length > MAX_ROWS ? ' (showing first ' + MAX_ROWS + ')' : '');
-      countEl.style.display = 'none';
-      card.appendChild(countEl);
     }
   }
 
