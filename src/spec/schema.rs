@@ -100,9 +100,8 @@ pub struct ColumnDef {
     pub title: Option<String>,
     #[serde(default)]
     pub width: Option<u32>,
-    /// Sort type hint: "number", "string", "temporal", "boolean". Auto-detected if omitted.
     #[serde(default)]
-    pub sort: Option<String>,
+    pub sort: Option<SortType>,
 }
 
 /// Stats configuration.
@@ -182,6 +181,15 @@ pub struct ActionDef {
     pub label: String,
     #[serde(default)]
     pub style: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortType {
+    Number,
+    String,
+    Temporal,
+    Boolean,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
