@@ -69,6 +69,25 @@
     return { ok: false, error: 'No data source configured' };
   }
 
+  // --- Count distinct values for a field in data ---
+  function countDistinct(data, field) {
+    var seen = {};
+    for (var i = 0; i < data.length; i++) {
+      var v = data[i][field];
+      if (v !== null && v !== undefined) seen[String(v)] = true;
+    }
+    return Object.keys(seen).length;
+  }
+
+  // --- Detect if chart is horizontal bar (x is quantitative/aggregate, y is categorical) ---
+  function isHorizontalBar(cfg) {
+    if (cfg.mark !== 'bar') return false;
+    var enc = cfg.encoding || {};
+    var xIsQuant = enc.x && (enc.x.type === 'quantitative' || enc.x.aggregate);
+    var yIsCat = enc.y && (enc.y.type === 'nominal' || enc.y.type === 'ordinal');
+    return xIsQuant && yIsCat;
+  }
+
   // --- Section rendering ---
   function renderSection(section, index) {
     var card = document.createElement('div');
@@ -119,10 +138,20 @@
     var data = dataResult.ok ? dataResult.data : [];
     var mark = cfg.mark === 'arc' ? { type: 'arc', tooltip: true } : cfg.mark;
 
+    // Calculate dynamic height for horizontal bar charts based on category count
+    var height = 300;
+    if (isHorizontalBar(cfg) && data.length > 0) {
+      var yField = (cfg.encoding.y || {}).field;
+      if (yField) {
+        var categories = countDistinct(data, yField);
+        height = Math.max(200, categories * 22 + 60); // 22px per bar + padding
+      }
+    }
+
     var vlSpec = {
       '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
       width: 'container',
-      height: 300,
+      height: height,
       mark: mark,
       data: { values: data },
       encoding: cfg.encoding || {}
@@ -132,6 +161,12 @@
       delete vlSpec.width;
       vlSpec.height = 300;
       vlSpec.view = { stroke: null };
+    }
+
+    // For horizontal bars with many labels, add label limit config
+    if (isHorizontalBar(cfg)) {
+      // Allow full width for container
+      vlSpec.width = 'container';
     }
 
     vegaEmbed(div, vlSpec, { actions: false, renderer: 'svg' })
@@ -145,47 +180,66 @@
   }
 
   // --- Table ---
-  var DEFAULT_MAX_ROWS = 1000;
+  var INITIAL_ROWS = 10;
+  var MAX_ROWS = 1000;
 
   function renderTable(card, section, dataResult) {
     var cfg = section.table;
     if (!cfg || !cfg.columns) { appendError(card, 'No table config'); return; }
     if (!dataResult.ok) { appendError(card, dataResult.error); return; }
-    var data = dataResult.data;
-    if (!data || data.length === 0) { appendError(card, 'No data'); return; }
+    var allData = dataResult.data;
+    if (!allData || allData.length === 0) { appendError(card, 'No data'); return; }
 
-    var maxRows = DEFAULT_MAX_ROWS;
-    var truncated = data.length > maxRows;
-    var rows = truncated ? data.slice(0, maxRows) : data;
+    // Limit total rows
+    var totalRows = Math.min(allData.length, MAX_ROWS);
+    var showInitial = Math.min(totalRows, INITIAL_ROWS);
 
-    // Build HTML string once (not innerHTML +=)
-    var html = '<table><thead><tr>';
-    for (var c = 0; c < cfg.columns.length; c++) {
-      var col = cfg.columns[c];
-      var title = col.title || col.field;
-      var style = col.width ? ' style="width:' + col.width + 'px"' : '';
-      html += '<th' + style + '>' + esc(title) + '</th>';
-    }
-    html += '</tr></thead><tbody>';
-
-    for (var r = 0; r < rows.length; r++) {
-      html += '<tr>';
-      for (var c2 = 0; c2 < cfg.columns.length; c2++) {
-        html += '<td>' + esc(formatCell(rows[r][cfg.columns[c2].field])) + '</td>';
+    // Build table HTML
+    function buildTableHtml(rows) {
+      var html = '<table><thead><tr>';
+      for (var c = 0; c < cfg.columns.length; c++) {
+        var col = cfg.columns[c];
+        var title = col.title || col.field;
+        var style = col.width ? ' style="width:' + col.width + 'px"' : '';
+        html += '<th' + style + '>' + esc(title) + '</th>';
       }
-      html += '</tr>';
+      html += '</tr></thead><tbody>';
+      for (var r = 0; r < rows.length; r++) {
+        html += '<tr>';
+        for (var c2 = 0; c2 < cfg.columns.length; c2++) {
+          html += '<td>' + esc(formatCell(rows[r][cfg.columns[c2].field])) + '</td>';
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      return html;
     }
-    html += '</tbody></table>';
 
     var wrapper = document.createElement('div');
-    wrapper.innerHTML = html;
+    wrapper.className = 'table-wrapper collapsed';
+    wrapper.innerHTML = buildTableHtml(allData.slice(0, totalRows));
     card.appendChild(wrapper);
 
-    if (truncated) {
-      var msg = document.createElement('p');
-      msg.className = 'table-truncated';
-      msg.textContent = 'Showing ' + maxRows + ' of ' + data.length + ' rows';
-      card.appendChild(msg);
+    if (totalRows > INITIAL_ROWS) {
+      // Show more button
+      var btn = document.createElement('button');
+      btn.className = 'table-show-more';
+      btn.textContent = 'Show all ' + totalRows + ' rows';
+      if (allData.length > MAX_ROWS) {
+        btn.textContent = 'Show all ' + totalRows + ' rows (of ' + allData.length + ' total)';
+      }
+      btn.addEventListener('click', function() {
+        wrapper.classList.remove('collapsed');
+        btn.style.display = 'none';
+        countEl.style.display = 'block';
+      });
+      card.appendChild(btn);
+
+      var countEl = document.createElement('p');
+      countEl.className = 'table-row-count';
+      countEl.textContent = totalRows + ' rows' + (allData.length > MAX_ROWS ? ' (showing first ' + MAX_ROWS + ')' : '');
+      countEl.style.display = 'none';
+      card.appendChild(countEl);
     }
   }
 
@@ -207,17 +261,7 @@
     var grid = document.createElement('div');
     grid.className = 'stats-grid';
     for (var i = 0; i < rows.length; i++) {
-      var sc = document.createElement('div');
-      sc.className = 'stat-card';
-      var val = document.createElement('div');
-      val.className = 'stat-value';
-      val.textContent = formatCell(rows[i].value);
-      var lbl = document.createElement('div');
-      lbl.className = 'stat-label';
-      lbl.textContent = formatCell(rows[i].label);
-      sc.appendChild(val);
-      sc.appendChild(lbl);
-      grid.appendChild(sc);
+      grid.appendChild(statCard(formatCell(rows[i].label), formatCell(rows[i].value)));
     }
     card.appendChild(grid);
   }
@@ -227,19 +271,23 @@
     grid.className = 'stats-grid';
     for (var i = 0; i < items.length; i++) {
       var value = computeAggregate(items[i], data);
-      var sc = document.createElement('div');
-      sc.className = 'stat-card';
-      var val = document.createElement('div');
-      val.className = 'stat-value';
-      val.textContent = value;
-      var lbl = document.createElement('div');
-      lbl.className = 'stat-label';
-      lbl.textContent = items[i].label;
-      sc.appendChild(val);
-      sc.appendChild(lbl);
-      grid.appendChild(sc);
+      grid.appendChild(statCard(items[i].label, value));
     }
     card.appendChild(grid);
+  }
+
+  function statCard(label, value) {
+    var sc = document.createElement('div');
+    sc.className = 'stat-card';
+    var val = document.createElement('div');
+    val.className = 'stat-value';
+    val.textContent = value;
+    var lbl = document.createElement('div');
+    lbl.className = 'stat-label';
+    lbl.textContent = label;
+    sc.appendChild(val);
+    sc.appendChild(lbl);
+    return sc;
   }
 
   function computeAggregate(item, data) {
@@ -249,8 +297,7 @@
       var keys = Object.keys(whereClause);
       filtered = data.filter(function(row) {
         for (var i = 0; i < keys.length; i++) {
-          var k = keys[i];
-          if (!valueEquals(row[k], whereClause[k])) return false;
+          if (!valueEquals(row[keys[i]], whereClause[keys[i]])) return false;
         }
         return true;
       });
@@ -263,14 +310,7 @@
     if (!field) return '\u26a0 missing field';
 
     if (agg === 'distinct') {
-      var seen = {};
-      for (var i = 0; i < filtered.length; i++) {
-        var v = filtered[i][field];
-        if (v !== null && v !== undefined) {
-          seen[distinctKey(v)] = true;
-        }
-      }
-      return formatCount(Object.keys(seen).length);
+      return formatCount(countDistinct(filtered, field));
     }
 
     var nums = [];
@@ -310,14 +350,23 @@
     return false;
   }
 
-  function distinctKey(v) {
-    if (v === null) return 'null';
-    return typeof v + ':' + String(v);
-  }
-
   // --- Render all sections ---
   spec.sections.forEach(function(section, i) {
-    container.appendChild(renderSection(section, i));
+    var card = renderSection(section, i);
+
+    // Auto-span: tables and sections with many-category horizontal bars span full width
+    var shouldSpan = false;
+    if (section.type === 'table') shouldSpan = true;
+    if (section.type === 'chart' && section.chart && isHorizontalBar(section.chart)) {
+      var dr = getDataResult(section);
+      if (dr.ok && dr.data) {
+        var yField = (section.chart.encoding.y || {}).field;
+        if (yField && countDistinct(dr.data, yField) > 8) shouldSpan = true;
+      }
+    }
+    if (shouldSpan) card.classList.add('span-full');
+
+    container.appendChild(card);
   });
 
 })();
