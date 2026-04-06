@@ -55,6 +55,50 @@
     return Math.trunc(n).toLocaleString('en-US');
   }
 
+  // --- Collapse toggle (shared by charts and tables) ---
+  // Adds bottom "Show all" button and top "Show less" button (visible when expanded)
+  function addCollapseToggle(card, wrapper, showAllText, onToggle) {
+    var expanded = false;
+
+    // Top "show less" — inserted before the wrapper, hidden initially
+    var topBtn = document.createElement('button');
+    topBtn.className = 'table-show-more collapse-top';
+    topBtn.textContent = 'Show less';
+    topBtn.style.display = 'none';
+    card.insertBefore(topBtn, wrapper);
+
+    // Bottom "show all"
+    var bottomBtn = document.createElement('button');
+    bottomBtn.className = 'table-show-more';
+    bottomBtn.textContent = showAllText;
+
+    function toggle() {
+      expanded = !expanded;
+      if (expanded) {
+        wrapper.classList.remove('collapsed');
+        bottomBtn.textContent = 'Show less';
+        topBtn.style.display = '';
+      } else {
+        wrapper.classList.add('collapsed');
+        bottomBtn.textContent = showAllText;
+        topBtn.style.display = 'none';
+        // Scroll card into view so user sees the collapsed state
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      if (onToggle) onToggle(expanded);
+    }
+
+    bottomBtn.addEventListener('click', toggle);
+    topBtn.addEventListener('click', toggle);
+
+    // Insert bottom button after wrapper
+    if (wrapper.nextSibling) {
+      card.insertBefore(bottomBtn, wrapper.nextSibling);
+    } else {
+      card.appendChild(bottomBtn);
+    }
+  }
+
   // --- Data resolution ---
   function getDataResult(section) {
     if (section.source) {
@@ -186,23 +230,13 @@
       });
 
     if (shouldCollapse) {
-      var expanded = false;
-      var btn = document.createElement('button');
-      btn.className = 'table-show-more';
-      btn.textContent = 'Show all ' + categories + ' categories';
-      btn.addEventListener('click', function() {
-        expanded = !expanded;
-        if (expanded) {
-          wrapper.classList.remove('collapsed');
+      addCollapseToggle(card, wrapper, 'Show all ' + categories + ' categories', function(exp) {
+        if (exp) {
           wrapper.style.maxHeight = '';
-          btn.textContent = 'Show less';
         } else {
-          wrapper.classList.add('collapsed');
           wrapper.style.maxHeight = CHART_COLLAPSED_HEIGHT + 'px';
-          btn.textContent = 'Show all ' + categories + ' categories';
         }
       });
-      card.appendChild(btn);
     }
   }
 
@@ -248,25 +282,11 @@
     card.appendChild(wrapper);
 
     if (totalRows > INITIAL_ROWS) {
-      var expanded = false;
       var showAllText = 'Show all ' + totalRows + ' rows';
       if (allData.length > MAX_ROWS) {
-        showAllText = 'Show all ' + totalRows + ' rows (of ' + allData.length + ' total)';
+        showAllText += ' (of ' + allData.length + ' total)';
       }
-      var btn = document.createElement('button');
-      btn.className = 'table-show-more';
-      btn.textContent = showAllText;
-      btn.addEventListener('click', function() {
-        expanded = !expanded;
-        if (expanded) {
-          wrapper.classList.remove('collapsed');
-          btn.textContent = 'Show less';
-        } else {
-          wrapper.classList.add('collapsed');
-          btn.textContent = showAllText;
-        }
-      });
-      card.appendChild(btn);
+      addCollapseToggle(card, wrapper, showAllText);
     }
   }
 

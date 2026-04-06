@@ -65,6 +65,7 @@ tbody tr:hover { background: #f9fafb; }
   color: #374151; font-size: 0.85rem; cursor: pointer; text-align: center;
 }
 .table-show-more:hover { background: #e5e7eb; }
+.collapse-top { margin-bottom: 0.5rem; }
 .table-row-count { color: #6b7280; font-size: 0.8rem; margin-top: 0.5rem; }
 
 @media (max-width: 768px) {
