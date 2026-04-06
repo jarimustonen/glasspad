@@ -1,5 +1,7 @@
 use rand::RngCore;
 
+const TOKEN_LENGTH: usize = 32;
+
 /// Generate a cryptographically random 32-character hex token.
 pub fn generate_token() -> String {
     let mut rng = rand::thread_rng();
@@ -9,19 +11,29 @@ pub fn generate_token() -> String {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
-/// Constant-time token comparison to prevent timing attacks.
+/// Constant-time token comparison.
+/// Rejects empty tokens and wrong-length tokens.
 pub fn verify_token(provided: &str, expected: &str) -> bool {
-    if provided.len() != expected.len() {
+    // Tokens must be exactly TOKEN_LENGTH characters
+    if provided.len() != TOKEN_LENGTH || expected.len() != TOKEN_LENGTH {
         return false;
     }
+    // Constant-time XOR comparison
     let mut result: u8 = 0;
     for (a, b) in provided.bytes().zip(expected.bytes()) {
         result |= a ^ b;
     }
-    result == 0
+    // Use black_box to prevent compiler from optimizing the comparison
+    std::hint::black_box(result) == 0
 }
 
 #[cfg(test)]
@@ -30,8 +42,7 @@ mod tests {
 
     #[test]
     fn token_length() {
-        let token = generate_token();
-        assert_eq!(token.len(), 32);
+        assert_eq!(generate_token().len(), TOKEN_LENGTH);
     }
 
     #[test]
@@ -61,12 +72,24 @@ mod tests {
     }
 
     #[test]
-    fn verify_different_lengths() {
-        assert!(!verify_token("short", "longer_token"));
+    fn reject_short_tokens() {
+        assert!(!verify_token("short", "short"));
     }
 
     #[test]
-    fn verify_empty_tokens() {
-        assert!(verify_token("", ""));
+    fn reject_empty_tokens() {
+        assert!(!verify_token("", ""));
+    }
+
+    #[test]
+    fn reject_wrong_length_provided() {
+        let token = generate_token();
+        assert!(!verify_token("abc", &token));
+    }
+
+    #[test]
+    fn reject_wrong_length_expected() {
+        let token = generate_token();
+        assert!(!verify_token(&token, "abc"));
     }
 }
