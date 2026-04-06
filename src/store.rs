@@ -33,7 +33,7 @@ impl PadStore {
             .map(|p| PadMeta {
                 id: p.id.clone(),
                 title: p.title.clone(),
-                pad_type: p.pad_type.clone(),
+                pad_type: "dashboard".to_string(),
                 url: format!("{}/{}", self.base_url, p.id),
                 created_at: p.created_at,
             })

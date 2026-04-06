@@ -1,9 +1,11 @@
 /// Content-Security-Policy header value for rendered pad pages.
+/// Note: 'unsafe-inline' is required for script-src because Vega-Lite embed
+/// calls are generated inline. A future improvement would use nonces instead.
 pub const CSP_HEADER_VALUE: &str = "\
 default-src 'self'; \
-script-src 'self' https://cdn.jsdelivr.net; \
+script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; \
 style-src 'self' 'unsafe-inline'; \
-connect-src 'self'; \
+connect-src 'self' https://cdn.jsdelivr.net; \
 img-src 'self' data:; \
 font-src 'self'; \
 object-src 'none'; \

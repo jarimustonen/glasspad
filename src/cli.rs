@@ -10,10 +10,9 @@ const DEFAULT_URL: &str = "http://localhost:3000";
 async fn ensure_server(base: &str) {
     let client = reqwest::Client::new();
     if client.get(format!("{}/api/pads", base)).send().await.is_ok() {
-        return; // already running
+        return;
     }
 
-    // Spawn server as detached background process
     let exe = std::env::current_exe().unwrap();
     let port = DEFAULT_PORT.to_string();
     match std::process::Command::new(exe)
@@ -24,7 +23,6 @@ async fn ensure_server(base: &str) {
     {
         Ok(_) => {
             eprintln!("Starting glasspad server on port {}...", DEFAULT_PORT);
-            // Wait for server to be ready
             for _ in 0..20 {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 if client.get(format!("{}/api/pads", base)).send().await.is_ok() {
@@ -40,11 +38,28 @@ async fn ensure_server(base: &str) {
     }
 }
 
-pub async fn create(file: Option<PathBuf>, base_url: Option<String>) {
+/// Parse a --data argument like "events=path/to/file.csv"
+pub fn parse_data_arg(s: &str) -> Result<(String, PathBuf), String> {
+    match s.split_once('=') {
+        Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+            Ok((name.to_string(), PathBuf::from(path)))
+        }
+        _ => Err(format!(
+            "Invalid --data format: '{}'. Expected: name=path (e.g., events=data.csv)",
+            s
+        )),
+    }
+}
+
+pub async fn create(
+    file: Option<PathBuf>,
+    data_args: Vec<(String, PathBuf)>,
+    base_url: Option<String>,
+) {
     let base = base_url.unwrap_or_else(|| DEFAULT_URL.to_string());
     ensure_server(&base).await;
 
-    let body = match file {
+    let spec_body = match file {
         Some(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
             eprintln!("Error reading file {}: {}", path.display(), e);
             std::process::exit(1);
@@ -59,18 +74,121 @@ pub async fn create(file: Option<PathBuf>, base_url: Option<String>) {
         }
     };
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("{}/api/pads", base))
-        .header("Content-Type", "application/x-yaml")
-        .body(body)
-        .send()
-        .await;
+    if data_args.is_empty() {
+        // Simple YAML-only upload
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/api/pads", base))
+            .header("Content-Type", "application/x-yaml")
+            .body(spec_body)
+            .send()
+            .await;
 
+        handle_create_response(resp).await;
+    } else {
+        // Multipart: spec + data files
+        // For now, inject data into the spec as inline_data
+        // (full multipart support comes with API rewrite)
+        let mut spec_value: serde_yaml::Value = serde_yaml::from_str(&spec_body)
+            .unwrap_or_else(|e| {
+                eprintln!("Error parsing YAML: {}", e);
+                std::process::exit(1);
+            });
+
+        // Read and inject each data file
+        for (name, path) in &data_args {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+
+            let data_str = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("Error reading data file {}: {}", path.display(), e);
+                std::process::exit(1);
+            });
+
+            let rows: serde_json::Value = match ext {
+                "csv" => {
+                    let dataset = crate::data::csv::parse_csv_str(&data_str)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error parsing CSV {}: {}", path.display(), e);
+                            std::process::exit(1);
+                        });
+                    // Convert to JSON for injection
+                    serde_json::to_value(&dataset).unwrap()
+                }
+                "json" => {
+                    let dataset = crate::data::json::parse_json_str(&data_str)
+                        .unwrap_or_else(|e| {
+                            eprintln!("Error parsing JSON {}: {}", path.display(), e);
+                            std::process::exit(1);
+                        });
+                    serde_json::to_value(&dataset).unwrap()
+                }
+                _ => {
+                    eprintln!("Unsupported data format: {} (use .csv or .json)", ext);
+                    std::process::exit(1);
+                }
+            };
+
+            // Inject inline_data into sections that reference this dataset
+            inject_dataset_into_spec(&mut spec_value, name, &rows);
+        }
+
+        let yaml_body = serde_yaml::to_string(&spec_value).unwrap();
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/api/pads", base))
+            .header("Content-Type", "application/x-yaml")
+            .body(yaml_body)
+            .send()
+            .await;
+
+        handle_create_response(resp).await;
+    }
+}
+
+/// Inject dataset rows into sections that reference the given source name.
+fn inject_dataset_into_spec(
+    spec: &mut serde_yaml::Value,
+    dataset_name: &str,
+    rows_json: &serde_json::Value,
+) {
+    // Convert JSON rows to YAML value
+    let rows_yaml: serde_yaml::Value =
+        serde_yaml::from_str(&serde_json::to_string(rows_json).unwrap()).unwrap();
+
+    if let Some(sections) = spec.get_mut("sections").and_then(|s| s.as_sequence_mut()) {
+        for section in sections {
+            let source = section
+                .get("source")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string());
+            if source.as_deref() == Some(dataset_name) {
+                // Remove source, add inline_data
+                if let Some(map) = section.as_mapping_mut() {
+                    map.remove(&serde_yaml::Value::String("source".to_string()));
+                    map.insert(
+                        serde_yaml::Value::String("inline_data".to_string()),
+                        rows_yaml.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    // Remove the dataset declaration since data is now inline
+    if let Some(datasets) = spec.get_mut("datasets").and_then(|d| d.as_mapping_mut()) {
+        datasets.remove(&serde_yaml::Value::String(dataset_name.to_string()));
+    }
+}
+
+async fn handle_create_response(resp: Result<reqwest::Response, reqwest::Error>) {
     match resp {
         Ok(r) if r.status().is_success() => {
             let created: PadCreated = r.json().await.unwrap();
-            println!("Created pad {}", created.id);
+            eprintln!("Created pad {}", created.id);
             println!("{}", created.url);
         }
         Ok(r) => {
@@ -81,6 +199,7 @@ pub async fn create(file: Option<PathBuf>, base_url: Option<String>) {
         }
         Err(e) => {
             eprintln!("Connection error: {}", e);
+            eprintln!("Is the glasspad server running? Start it with: glasspad serve");
             std::process::exit(1);
         }
     }
@@ -91,10 +210,7 @@ pub async fn list(base_url: Option<String>) {
     ensure_server(&base).await;
 
     let client = reqwest::Client::new();
-    let resp = client
-        .get(format!("{}/api/pads", base))
-        .send()
-        .await;
+    let resp = client.get(format!("{}/api/pads", base)).send().await;
 
     match resp {
         Ok(r) if r.status().is_success() => {
@@ -103,10 +219,10 @@ pub async fn list(base_url: Option<String>) {
                 println!("No pads");
                 return;
             }
-            println!("{:<10} {:<40} {:<12} {}", "ID", "TITLE", "TYPE", "URL");
+            println!("{:<36} {:<40} {:<12} {}", "ID", "TITLE", "TYPE", "URL");
             for p in &pads {
                 println!(
-                    "{:<10} {:<40} {:<12} {}",
+                    "{:<36} {:<40} {:<12} {}",
                     p["id"].as_str().unwrap_or(""),
                     p["title"].as_str().unwrap_or(""),
                     p["type"].as_str().unwrap_or(""),

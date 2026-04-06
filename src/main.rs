@@ -31,6 +31,9 @@ enum Commands {
     Create {
         #[arg(short, long)]
         file: Option<PathBuf>,
+        /// Attach a dataset: --data events=events.csv
+        #[arg(long = "data", value_parser = cli::parse_data_arg)]
+        data: Vec<(String, PathBuf)>,
     },
     /// List all pads
     List,
@@ -61,7 +64,7 @@ async fn main() {
 
     match args.command {
         Commands::Serve { port } => server::run(port).await,
-        Commands::Create { file } => cli::create(file, None).await,
+        Commands::Create { file, data } => cli::create(file, data, None).await,
         Commands::List => cli::list(None).await,
         Commands::Open { id } => cli::open(id, None).await,
         Commands::Docs { topic } => match topic.as_deref() {
