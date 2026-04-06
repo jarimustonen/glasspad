@@ -4,97 +4,56 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Spec contract toteutettu, data layer toimii, integroitu API+CLI+renderer.
-Seuraavaksi: client-side renderöinti → interaktiivinen suodatus.
+Client-side renderöinti valmis, UX-korjaukset tehty. Seuraavaksi: interaktiivinen suodatus.
 
 Sopimus: `04-spec-contract.md`
-Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`
+Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`
 
 ---
 
 ## Vaihe 1: Tutkimus ✅
-
-- [x] 1.1 Markkina- ja teknologiakatsaus → `01-research-landscape.md`
-- [x] 1.2 Integraatiomalli → `02-design-integration-model.md`
-- [x] 1.3 Teknologiavalinnat → `03-design-tech-choices.md` (Rust + Axum + Clap)
-- [x] 1.4 Demo-skenaario → `04-design-demo-scenario.md`
-- [x] 1.5 Arkkitehtuurisuunnitelmat → `05–08`, ref `09–10`, roadmap `11`
-- [x] 1.6 Architecture review → `review-architecture-v1.md`
-- [x] 1.7 Spec contract → `04-spec-contract.md`
-
 ## Vaihe 2: PoC ✅
-
-- [x] 2.1 Rust-projekti, Axum-serveri, in-memory storage
-- [x] 2.2 CRUD API (POST/GET/PUT/DELETE /api/pads)
-- [x] 2.3 YAML → HTML renderöinti (chart, table, stats)
-- [x] 2.4 CLI (create, list, open, docs, skill)
-- [x] 2.5 Auto-start serveri, skill --install-claude
-
-## Vaihe 3: Spec contract -toteutus ✅
-
-- [x] 3.1 `spec_version: 1` pakolliseksi
-- [x] 3.2 `datasets:` top-level, `deny_unknown_fields`
-- [x] 3.3 `inline_data:` section-tasolla
-- [x] 3.4 `interactive_filter: { field: x }` kanoninen muoto
-- [x] 3.5 Section `id:` -kenttä (pakollinen interaktiivisille)
-- [x] 3.6 Stats-schema: `stats.items` + aggregaatit (count, distinct, sum, avg, min, max)
-- [x] 3.7 Validointivirheet koneluettavina (16 sääntöä, section-kohtaiset viestit)
-- [x] 3.8 Deprecated normalisointi: ei vielä (uusi schema on ainoa tuettu)
-- [ ] 3.9 Päivitä `glasspad docs spec` vastaamaan uutta schemaa
-- [x] 3.10 Analytics-esimerkki päivitetty kanoniseen muotoon
-
+## Vaihe 3: Spec contract ✅
 ## Vaihe 4: Turvallisuus ✅
-
-- [x] 4.1 Pad-token (32 hex) generoidaan luontihetkellä
-- [x] 4.2 Mutaatio-endpointit vaativat `X-Glasspad-Token`
-- [x] 4.3 Token palautetaan CLI:n stdout-JSONissa (agentti käyttää)
-- [x] 4.4 Pitkät pad-ID:t (UUID v4, 32 hex)
-- [x] 4.5 CSP-headerit GET /:id -vastaukseen (+ frame-ancestors, base-uri, form-action)
-- [ ] 4.6 `body_format: sanitized_html` allowlist-sanitoinnilla (text toimii)
-- [x] 4.7 JSON-upotus: `<script type="application/json">` + `\u003c` escape
-- [x] 4.8 Vega-specit safe_json_script_tag:lla (ei XSS inline scriptissä)
-
 ## Vaihe 5: Data layer ✅
 
-- [x] 5.1 CSV-parser → `Vec<Row>` tyyppipäättelyllä
-- [x] 5.2 JSON-parser → `Vec<Row>` (tyyppi säilyy, ei re-inferenssiä)
-- [x] 5.3 Tyyppipäättely: numerot, booleanit, temporal, null (ei trimmausta)
-- [x] 5.4 Dataset-metadata (FieldKind per sarake)
-- [x] 5.5 Kokorajoitukset (50k riviä, 100 saraketta, 1MB solu, duplikaatti/tyhjä header → virhe)
-- [x] 5.6 CLI `--data events=file.csv` (parsii, injektoi, case-insensitive extension)
-- [ ] 5.7 API: multipart upload (nyt CLI injektoi inline, serveri tukee top-level+inline)
-- [x] 5.8 `source:` resoluutio: collect_datasets tukee top-level + inline, ristiriitadetektointi
-- [x] 5.9 Inline_data toimii ilman --data
-- [x] 5.10 Arc<Pad> storessa (ei kloonausta)
-- [x] 5.11 CLI: JSON stdout (id, url, token, title)
-- [x] 5.12 ensure_server tarkistaa is_success()
-- [x] 5.13 Stats-aggregaatiot rendererissä (count, distinct, sum, avg, min, max, where)
+## Vaihe 6: Client-side renderöinti ✅
+
+- [x] 6.1 Spec + datasets JSON selaimeen (safe script tags)
+- [x] 6.2 JS-moduuli: parsii spec + datasets, renderöi kaikki sectionit
+- [x] 6.3 Chart: vegaEmbed, view-instanssit tallennettu chartViews-registriin
+- [x] 6.4 Table: DOM-pohjainen, thead kerran + tbody päivitetään sortilla
+- [x] 6.5 Stats: aggregaatiot client-sidessa (count, distinct, sum, avg, min, max, where)
+- [x] 6.6 Renderer.rs: HTML-runko + include_str! JS/CSS erillisistä tiedostoista
+- [x] 6.7 Vakio section-rakenne: createSectionCard → {card, body, actions}
+- [x] 6.8 Collapsible charts/tables: show more/less toggle, gradient fade
+- [x] 6.9 Taulukon sarakesorttaus: asc→desc→original, tyyppikohtainen (number/string/temporal/boolean)
+- [x] 6.10 SortType enum schemassa (validoidaan parse-vaiheessa)
+- [x] 6.11 Tooltips kaikissa charteissa (normalizeMark)
+- [x] 6.12 Dynaaminen korkeus horizontal bar charteille
+- [x] 6.13 Auto-span: taulukot + paljon kategorioita → koko leveys
+- [x] 6.14 Accessibility: aria-sort, aria-expanded, aria-controls, button-sort, focus-visible
+- [x] 6.15 Docs päivitetty kanoniseen schemaan
+- [x] 6.16 HTML-sanitoija (ammonia) body_format: sanitized_html valmis käyttöön
+
+Puuttuu vielä:
+- [ ] 5.7 API: multipart upload (nyt CLI injektoi inline)
 
 ---
-
-## Vaihe 6: Client-side renderöinti ⬜
-
-> Nykyinen renderöinti on server-side (Rust generoi HTML:n).
-> Client-side renderöinti mahdollistaa interaktiivisen suodatuksen (vaihe 7).
-
-- [ ] 6.1 Datasets JSON selaimeen (application/json script tag per dataset)
-- [ ] 6.2 JS-moduuli: parsii datasets, renderöi sectionit
-- [ ] 6.3 Chart-renderöinti client-sidessa (Vega-Lite, datasta)
-- [ ] 6.4 Table-renderöinti client-sidessa
-- [ ] 6.5 Stats-aggregaatiot client-sidessa
-- [ ] 6.6 Serveri generoi HTML-rungon + spec + data, JS tekee renderöinnin
 
 ## Vaihe 7: Interaktiivinen suodatus ⬜
 
 > Ref: `04-spec-contract.md` §6, `06-arch-interactive-filtering.md`
+> Pohja valmis: client-side renderöinti, chartViews-registry, vakio section-rakenne
 
 - [ ] 7.1 Filter state -malli (per dataset, per field, Set<arvo>)
 - [ ] 7.2 Chart-klikkaus → toggle filter (interactive_filter.field)
 - [ ] 7.3 Suodatetun datan syöttö kaikkiin saman source:n sectioneihin
-- [ ] 7.4 Filter bar (kelluva, tagit, reset-nappi)
-- [ ] 7.5 Pulse-animaatio kun suodatus muuttuu
-- [ ] 7.6 Section-tilan säilyminen
-- [ ] 7.7 Testaus analytics-esimerkkidatalla
+- [ ] 7.4 Kaikkien sectionien uudelleenrenderöinti suodatetulla datalla
+- [ ] 7.5 Filter bar (kelluva, tagit, reset-nappi)
+- [ ] 7.6 Pulse-animaatio kun suodatus muuttuu
+- [ ] 7.7 Section-tilan säilyminen (taulukko-sort, collapse-tila)
+- [ ] 7.8 Testaus analytics-esimerkkidatalla
 
 ## Vaihe 8: Rikkaat datanäkymät (list) ⬜                  ← rinnastettavissa vaiheen 7 kanssa
 
@@ -103,10 +62,9 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 - [ ] 8.1 List-section renderöinti (cards, rows, compact)
 - [ ] 8.2 `id_field` pakollinen, validointi
 - [ ] 8.3 Detail-näkymä (replace-moodi)
-- [ ] 8.4 `body_format: text` renderöinti
-- [ ] 8.5 `body_format: sanitized_html` renderöinti
-- [ ] 8.6 Detail → back-navigaatio
-- [ ] 8.7 List reagoi suodatuksiin
+- [ ] 8.4 `body_format: text` / `sanitized_html` renderöinti
+- [ ] 8.5 Detail → back-navigaatio
+- [ ] 8.6 List reagoi suodatuksiin
 
 ## Vaihe 9: Kaksisuuntaiset toiminnot ⬜
 
@@ -118,19 +76,17 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 - [ ] 9.4 `row_actions` taulukossa
 - [ ] 9.5 Done-painike + Cancel-painike
 - [ ] 9.6 Pending actions JS-tilassa
-- [ ] 9.7 Visuaalinen palaute
-- [ ] 9.8 `--wait` CLI-lippu (blocking, timeout)
-- [ ] 9.9 Pad lukitaan completionin jälkeen (409)
+- [ ] 9.7 `--wait` CLI-lippu (blocking, timeout)
+- [ ] 9.8 Pad lukitaan completionin jälkeen (409)
 
 ## Vaihe 10: Viimeistely ⬜
 
 - [ ] 10.1 PID-tiedosto `~/.glasspad/server.pid`
 - [ ] 10.2 `glasspad stop` -komento
 - [ ] 10.3 `GLASSPAD_PORT` ympäristömuuttuja
-- [ ] 10.4 `glasspad docs` päivitys uudella schemalla
-- [ ] 10.5 Skill-päivitys
-- [ ] 10.6 README päivitys
-- [ ] 10.7 `cargo install` ja testaus toisessa repossa
+- [ ] 10.4 Skill-päivitys (uusi schema, --data, sort, tooltip)
+- [ ] 10.5 README päivitys
+- [ ] 10.6 `cargo install` ja testaus toisessa repossa
 
 ## Vaihe 11: MCP-integraatio ⬜
 
@@ -155,9 +111,7 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 ## Rinnakkaisuusanalyysi
 
 ```
-Vaiheet 3–5: ✅ Tehty
-    │
-Vaihe 6: Client-side renderöinti
+Vaiheet 1–6: ✅ Tehty
     │
     ├──────────────────────┐
     │                      │
