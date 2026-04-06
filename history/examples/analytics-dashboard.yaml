@@ -17,6 +17,17 @@ sections:
         x: { field: datetime, type: temporal, timeUnit: hours }
         y: { aggregate: count, type: quantitative, title: "events" }
 
+  - id: summary
+    title: "Summary"
+    type: stats
+    source: events
+    stats:
+      items:
+        - { label: "Total events", aggregate: count }
+        - { label: "Visits", aggregate: count, where: { event_type: "visit" } }
+        - { label: "Pageviews", aggregate: count, where: { event_type: "pageview" } }
+        - { label: "Countries", aggregate: distinct, field: country }
+
   - id: by-country
     title: "By country"
     type: chart
@@ -65,24 +76,13 @@ sections:
         x: { aggregate: count, type: quantitative }
         y: { field: path, type: nominal, sort: "-x" }
 
-  - id: summary
-    title: "Summary"
-    type: stats
-    source: events
-    stats:
-      items:
-        - { label: "Total events", aggregate: count }
-        - { label: "Visits", aggregate: count, where: { event_type: "visit" } }
-        - { label: "Pageviews", aggregate: count, where: { event_type: "pageview" } }
-        - { label: "Countries", aggregate: distinct, field: country }
-
   - id: all-events
     title: "All events"
     type: table
     source: events
     table:
       columns:
-        - { field: datetime, title: "Time" }
+        - { field: datetime, title: "Time", sort: temporal }
         - { field: path, title: "Page" }
         - { field: referrer, title: "Referrer" }
         - { field: country, title: "Country" }
