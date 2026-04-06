@@ -72,11 +72,6 @@ pub fn validate(
                     Some(label),
                     format!("source \"{}\" not declared in datasets", source),
                 ));
-            } else if !provided_datasets.contains(source)
-                && !spec.datasets.get(source).is_some()
-            {
-                // Dataset declared but not provided — this is OK at parse time,
-                // will be checked at create time
             }
         }
 
@@ -96,10 +91,12 @@ pub fn validate(
             ));
         }
 
-        // interactive_filter requires chart type
+        // interactive_filter only supported on charts
         if section.interactive_filter.is_some() && section.section_type != SectionType::Chart {
-            // Charts only for now — lists can filter later
-            // This is a soft warning, not blocking
+            errors.push(err(
+                Some(label),
+                "interactive_filter is only supported on chart sections",
+            ));
         }
     }
 
@@ -127,6 +124,12 @@ fn validate_chart(
                 chart.mark, SUPPORTED_MARKS
             ),
         ));
+    }
+
+    // chart.encoding must be an object
+    if !chart.encoding.is_object() && !chart.encoding.is_null() {
+        errors.push(err(Some(label), "chart.encoding must be a JSON object"));
+        return;
     }
 
     // interactive_filter.field should appear in encoding

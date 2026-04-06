@@ -1,0 +1,8 @@
+spec_version: 1
+title: "Typo test"
+sectons:
+  - title: "Chart"
+    type: chart
+    chart:
+      mark: bar
+      encoding: {}

@@ -5,6 +5,7 @@ use crate::data::types::Row;
 
 /// Top-level dashboard spec (canonical form).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DashboardSpec {
     pub spec_version: u32,
     pub title: String,
@@ -31,10 +32,12 @@ pub enum Layout {
 /// Dataset declaration in the spec.
 /// Empty object = "this dataset will be provided externally via --data".
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DatasetDecl {}
 
 /// A section in the dashboard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Section {
     #[serde(default)]
     pub id: Option<String>,
@@ -80,6 +83,7 @@ pub struct ChartConfig {
 
 /// Table configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TableConfig {
     pub columns: Vec<ColumnDef>,
     #[serde(default)]
@@ -89,6 +93,7 @@ pub struct TableConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ColumnDef {
     pub field: String,
     #[serde(default)]
@@ -99,11 +104,13 @@ pub struct ColumnDef {
 
 /// Stats configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StatsConfig {
     pub items: Vec<StatsItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StatsItem {
     pub label: String,
     pub aggregate: String,
@@ -115,6 +122,7 @@ pub struct StatsItem {
 
 /// List configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListConfig {
     pub id_field: Option<String>,
     #[serde(default)]
@@ -144,6 +152,7 @@ pub enum ListLayout {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DetailConfig {
     #[serde(default)]
     pub fields: Option<Vec<ColumnDef>>,
@@ -164,6 +173,7 @@ pub enum BodyFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActionDef {
     pub id: String,
     pub label: String,
@@ -172,6 +182,7 @@ pub struct ActionDef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InteractiveFilter {
     pub field: String,
 }
