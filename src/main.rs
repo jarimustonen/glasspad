@@ -1,9 +1,12 @@
 mod cli;
+mod data;
 mod docs;
 mod models;
 mod renderer;
 mod routes;
+mod security;
 mod server;
+mod spec;
 mod store;
 
 use std::path::PathBuf;

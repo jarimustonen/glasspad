@@ -1,0 +1,52 @@
+spec_version: 1
+title: "Test Analytics"
+description: "Integration test dashboard"
+layout: grid-2col
+
+datasets:
+  events: {}
+
+sections:
+  - id: by-country
+    title: "By country"
+    type: chart
+    source: events
+    interactive_filter:
+      field: country
+    chart:
+      mark: bar
+      encoding:
+        x: { field: country, type: nominal }
+        y: { aggregate: count, type: quantitative }
+
+  - id: by-device
+    title: "By device"
+    type: chart
+    source: events
+    interactive_filter:
+      field: device
+    chart:
+      mark: arc
+      encoding:
+        theta: { aggregate: count, type: quantitative }
+        color: { field: device, type: nominal }
+
+  - id: summary
+    title: "Summary"
+    type: stats
+    source: events
+    stats:
+      items:
+        - { label: "Total events", aggregate: count }
+        - { label: "Countries", aggregate: distinct, field: country }
+
+  - id: all-events
+    title: "All events"
+    type: table
+    source: events
+    table:
+      columns:
+        - { field: datetime, title: "Time" }
+        - { field: path, title: "Page" }
+        - { field: country, title: "Country" }
+        - { field: device, title: "Device" }

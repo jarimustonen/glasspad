@@ -1,0 +1,8 @@
+spec_version: 1
+title: "Bad aggregate"
+sections:
+  - title: "Stats"
+    type: stats
+    stats:
+      items:
+        - { label: "Median", aggregate: median }

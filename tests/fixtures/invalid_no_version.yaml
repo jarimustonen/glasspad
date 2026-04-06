@@ -1,0 +1,7 @@
+title: "Missing version"
+sections:
+  - title: "Chart"
+    type: chart
+    chart:
+      mark: bar
+      encoding: {}
