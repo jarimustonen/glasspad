@@ -1,0 +1,87 @@
+{
+  "query_period": "24h",
+  "query_date": "2026-04-05",
+  "site": "3dbear.io",
+  "data": {
+    "total": {
+      "pageviews": 230,
+      "visits": 209
+    },
+    "daily": [
+      { "date": "2026-04-04", "pageviews": 194, "visits": 173 },
+      { "date": "2026-04-05", "pageviews": 36, "visits": 36 }
+    ],
+    "pages": [
+      { "path": "/blog/impact-of-ai/", "pageviews": 87 },
+      { "path": "/", "pageviews": 23 },
+      { "path": "/en/", "pageviews": 13 },
+      { "path": "/en/contact/", "pageviews": 6 },
+      { "path": "/en/tapahtumat/", "pageviews": 5 },
+      { "path": "/en/privacy/", "pageviews": 4 },
+      { "path": "/en/simuna/", "pageviews": 4 },
+      { "path": "/asiakastarinat/hami/", "pageviews": 3 },
+      { "path": "/en/immersive-spaces/", "pageviews": 3 },
+      { "path": "/asiakastarinat/centria/", "pageviews": 2 },
+      { "path": "/simuna/liiketoiminta/", "pageviews": 2 },
+      { "path": "/en/tapahtumat/sett-2026/", "pageviews": 2 },
+      { "path": "/en/asiakastarinat/circular-economy-game/", "pageviews": 2 },
+      { "path": "/asiakastarinat/livia/", "pageviews": 2 },
+      { "path": "/asiakastarinat/immersive-space-keuda/", "pageviews": 2 },
+      { "path": "/immersiiviset-tilat/", "pageviews": 2 },
+      { "path": "/blog/jari-mustonen/", "pageviews": 2 },
+      { "path": "/asiakastarinat/virtuaalinen-metsanhoito/", "pageviews": 2 },
+      { "path": "/en/blog/karhun-vuosi-2025/", "pageviews": 1 },
+      { "path": "/asiakastarinat/taitotalo/", "pageviews": 1 }
+    ],
+    "referrers": [
+      { "host": "(direct)", "pageviews": 120 },
+      { "host": "www.google.com", "pageviews": 84 },
+      { "host": "www.3dbear.io", "pageviews": 21 },
+      { "host": "www.bing.com", "pageviews": 1 },
+      { "host": "com.google.android.googlequicksearchbox", "pageviews": 1 },
+      { "host": "chatgpt.com", "pageviews": 1 },
+      { "host": "shypd.ai", "pageviews": 1 },
+      { "host": "www.linkedin.com", "pageviews": 1 }
+    ],
+    "countries": [
+      { "code": "SG", "name": "Singapore", "pageviews": 60 },
+      { "code": "IN", "name": "India", "pageviews": 46 },
+      { "code": "US", "name": "United States", "pageviews": 27 },
+      { "code": "OM", "name": "Oman", "pageviews": 12 },
+      { "code": "CN", "name": "China", "pageviews": 12 },
+      { "code": "BG", "name": "Bulgaria", "pageviews": 10 },
+      { "code": "NL", "name": "Netherlands", "pageviews": 7 },
+      { "code": "DE", "name": "Germany", "pageviews": 5 },
+      { "code": "AU", "name": "Australia", "pageviews": 5 },
+      { "code": "MY", "name": "Malaysia", "pageviews": 4 },
+      { "code": "SE", "name": "Sweden", "pageviews": 4 },
+      { "code": "FR", "name": "France", "pageviews": 3 },
+      { "code": "JP", "name": "Japan", "pageviews": 3 },
+      { "code": "CA", "name": "Canada", "pageviews": 3 },
+      { "code": "SA", "name": "Saudi Arabia", "pageviews": 3 },
+      { "code": "NG", "name": "Nigeria", "pageviews": 2 },
+      { "code": "UZ", "name": "Uzbekistan", "pageviews": 2 },
+      { "code": "PL", "name": "Poland", "pageviews": 2 },
+      { "code": "FI", "name": "Finland", "pageviews": 2 },
+      { "code": "BD", "name": "Bangladesh", "pageviews": 2 }
+    ],
+    "browsers": [
+      { "browser": "Chrome", "pageviews": 104 },
+      { "browser": "ChromeMobile", "pageviews": 89 },
+      { "browser": "Unknown", "pageviews": 17 },
+      { "browser": "MobileSafari", "pageviews": 8 },
+      { "browser": "Edge", "pageviews": 6 },
+      { "browser": "Safari", "pageviews": 5 },
+      { "browser": "OperaMobile", "pageviews": 1 }
+    ],
+    "os": [
+      { "os": "Windows", "pageviews": 90 },
+      { "os": "Android", "pageviews": 62 },
+      { "os": "iOS", "pageviews": 36 },
+      { "os": "Unknown", "pageviews": 17 },
+      { "os": "MacOSX", "pageviews": 16 },
+      { "os": "Linux", "pageviews": 8 },
+      { "os": "ChromeOS", "pageviews": 1 }
+    ]
+  }
+}

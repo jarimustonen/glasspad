@@ -1,0 +1,115 @@
+title: "weatherapi — Git Dashboard"
+description: "Repository health overview, generated 2026-04-04"
+layout: grid-2col
+
+sections:
+  - title: "Commits per day (30d)"
+    type: chart
+    chart:
+      mark: bar
+      data:
+        - { date: "2026-03-05", count: 3 }
+        - { date: "2026-03-06", count: 7 }
+        - { date: "2026-03-07", count: 2 }
+        - { date: "2026-03-08", count: 0 }
+        - { date: "2026-03-09", count: 0 }
+        - { date: "2026-03-10", count: 5 }
+        - { date: "2026-03-11", count: 8 }
+        - { date: "2026-03-12", count: 4 }
+        - { date: "2026-03-13", count: 6 }
+        - { date: "2026-03-14", count: 1 }
+        - { date: "2026-03-15", count: 0 }
+        - { date: "2026-03-16", count: 0 }
+        - { date: "2026-03-17", count: 9 }
+        - { date: "2026-03-18", count: 12 }
+        - { date: "2026-03-19", count: 5 }
+        - { date: "2026-03-20", count: 3 }
+        - { date: "2026-03-21", count: 7 }
+        - { date: "2026-03-22", count: 0 }
+        - { date: "2026-03-23", count: 0 }
+        - { date: "2026-03-24", count: 4 }
+        - { date: "2026-03-25", count: 6 }
+        - { date: "2026-03-26", count: 11 }
+        - { date: "2026-03-27", count: 8 }
+        - { date: "2026-03-28", count: 3 }
+        - { date: "2026-03-29", count: 0 }
+        - { date: "2026-03-30", count: 0 }
+        - { date: "2026-03-31", count: 5 }
+        - { date: "2026-04-01", count: 7 }
+        - { date: "2026-04-02", count: 4 }
+        - { date: "2026-04-03", count: 9 }
+      encoding:
+        x: { field: date, type: temporal }
+        y: { field: count, type: quantitative, title: "commits" }
+
+  - title: "File types"
+    type: chart
+    chart:
+      mark: arc
+      data:
+        - { type: ".rs", files: 42 }
+        - { type: ".sql", files: 12 }
+        - { type: ".toml", files: 5 }
+        - { type: ".md", files: 8 }
+        - { type: ".yaml", files: 6 }
+        - { type: ".html", files: 3 }
+      encoding:
+        theta: { field: files, type: quantitative }
+        color: { field: type, type: nominal }
+
+  - title: "Lines of code by module"
+    type: chart
+    chart:
+      mark: bar
+      direction: horizontal
+      data:
+        - { module: "api/handlers", lines: 1842 }
+        - { module: "api/middleware", lines: 567 }
+        - { module: "db", lines: 1204 }
+        - { module: "models", lines: 890 }
+        - { module: "services/weather", lines: 2103 }
+        - { module: "services/geocode", lines: 645 }
+        - { module: "cli", lines: 432 }
+      encoding:
+        x: { field: lines, type: quantitative }
+        y: { field: module, type: nominal, sort: "-x" }
+
+  - title: "Test coverage trend"
+    type: chart
+    chart:
+      mark: line
+      data:
+        - { week: "2026-W10", coverage: 62.3 }
+        - { week: "2026-W11", coverage: 65.1 }
+        - { week: "2026-W12", coverage: 64.8 }
+        - { week: "2026-W13", coverage: 71.2 }
+        - { week: "2026-W14", coverage: 74.5 }
+      encoding:
+        x: { field: week, type: ordinal }
+        y: { field: coverage, type: quantitative, title: "coverage %", scale: { domain: [50, 100] } }
+
+  - title: "Recent commits"
+    type: table
+    columns:
+      - { field: hash, title: "Hash", width: 80 }
+      - { field: author, title: "Author" }
+      - { field: message, title: "Message" }
+      - { field: time, title: "When", width: 100 }
+    data:
+      - { hash: "e07d63f", author: "Jari", message: "feat: add geocoding fallback for ambiguous city names", time: "2h ago" }
+      - { hash: "5cfe2fa", author: "Jari", message: "fix: handle timezone offset in hourly forecast response", time: "4h ago" }
+      - { hash: "f246aed", author: "Mika", message: "refactor: extract weather provider trait for multi-source support", time: "6h ago" }
+      - { hash: "b3c891a", author: "Jari", message: "test: add integration tests for /api/v1/forecast endpoint", time: "1d ago" }
+      - { hash: "9d4e72c", author: "Mika", message: "feat: add 7-day forecast with daily min/max temperatures", time: "1d ago" }
+      - { hash: "1a8f3b2", author: "Jari", message: "docs: update API reference with query parameter examples", time: "2d ago" }
+      - { hash: "7c2d4e1", author: "Mika", message: "fix: prevent duplicate location entries in search results", time: "2d ago" }
+
+  - title: "Summary"
+    type: stats
+    data:
+      - { label: "Total commits (30d)", value: 134 }
+      - { label: "Contributors", value: 2 }
+      - { label: "Open issues", value: 7 }
+      - { label: "Test coverage", value: "74.5%" }
+      - { label: "Lines of code", value: "7,683" }
+      - { label: "Dependencies", value: 23 }

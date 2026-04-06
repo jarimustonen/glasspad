@@ -1,0 +1,132 @@
+title: "3dbear.io — Analytiikka (24h)"
+layout: grid-2col
+sections:
+  - title: "Yhteenveto"
+    type: stats
+    data:
+      - { label: "Sivukatselut", value: 230 }
+      - { label: "Vierailut", value: 209 }
+      - { label: "Suosituin sivu", value: "/blog/impact-of-ai/" }
+      - { label: "Suurin liikennemaa", value: "Singapore (60)" }
+
+  - title: "Sivukatselut päivittäin"
+    type: chart
+    chart:
+      mark: bar
+      data:
+        - { date: "2026-04-04", sivukatselut: 194, vierailut: 173 }
+        - { date: "2026-04-05", sivukatselut: 36, vierailut: 36 }
+      encoding:
+        x: { field: date, type: nominal }
+        y: { field: sivukatselut, type: quantitative }
+
+  - title: "Suosituimmat sivut (top 10)"
+    type: chart
+    chart:
+      mark: bar
+      data:
+        - { sivu: "/blog/impact-of-ai/", katselut: 87 }
+        - { sivu: "/", katselut: 23 }
+        - { sivu: "/en/", katselut: 13 }
+        - { sivu: "/en/contact/", katselut: 6 }
+        - { sivu: "/en/tapahtumat/", katselut: 5 }
+        - { sivu: "/en/privacy/", katselut: 4 }
+        - { sivu: "/en/simuna/", katselut: 4 }
+        - { sivu: "/asiakastarinat/hami/", katselut: 3 }
+        - { sivu: "/en/immersive-spaces/", katselut: 3 }
+        - { sivu: "/asiakastarinat/centria/", katselut: 2 }
+      encoding:
+        x: { field: katselut, type: quantitative }
+        y: { field: sivu, type: nominal }
+
+  - title: "Liikennelähteet"
+    type: chart
+    chart:
+      mark: arc
+      data:
+        - { lahde: "Suora liikenne", katselut: 120 }
+        - { lahde: "Google", katselut: 84 }
+        - { lahde: "3dbear.io (sisäinen)", katselut: 21 }
+        - { lahde: "Bing", katselut: 1 }
+        - { lahde: "ChatGPT", katselut: 1 }
+        - { lahde: "LinkedIn", katselut: 1 }
+        - { lahde: "Muut", katselut: 2 }
+      encoding:
+        theta: { field: katselut, type: quantitative }
+        color: { field: lahde, type: nominal }
+
+  - title: "Kävijämaat (top 10)"
+    type: chart
+    chart:
+      mark: bar
+      data:
+        - { maa: "Singapore", katselut: 60 }
+        - { maa: "Intia", katselut: 46 }
+        - { maa: "USA", katselut: 27 }
+        - { maa: "Oman", katselut: 12 }
+        - { maa: "Kiina", katselut: 12 }
+        - { maa: "Bulgaria", katselut: 10 }
+        - { maa: "Alankomaat", katselut: 7 }
+        - { maa: "Saksa", katselut: 5 }
+        - { maa: "Australia", katselut: 5 }
+        - { maa: "Malesia", katselut: 4 }
+      encoding:
+        x: { field: katselut, type: quantitative }
+        y: { field: maa, type: nominal }
+
+  - title: "Laitejakauma (käyttöjärjestelmä)"
+    type: chart
+    chart:
+      mark: arc
+      data:
+        - { os: "Windows", katselut: 90 }
+        - { os: "Android", katselut: 62 }
+        - { os: "iOS", katselut: 36 }
+        - { os: "MacOS", katselut: 16 }
+        - { os: "Linux", katselut: 8 }
+        - { os: "Muu", katselut: 18 }
+      encoding:
+        theta: { field: katselut, type: quantitative }
+        color: { field: os, type: nominal }
+
+  - title: "Selaimet"
+    type: chart
+    chart:
+      mark: arc
+      data:
+        - { selain: "Chrome (desktop)", katselut: 104 }
+        - { selain: "Chrome (mobile)", katselut: 89 }
+        - { selain: "Safari (mobile)", katselut: 8 }
+        - { selain: "Edge", katselut: 6 }
+        - { selain: "Safari", katselut: 5 }
+        - { selain: "Muu", katselut: 18 }
+      encoding:
+        theta: { field: katselut, type: quantitative }
+        color: { field: selain, type: nominal }
+
+  - title: "Kaikki sivut"
+    type: table
+    columns:
+      - { field: sivu, title: "Sivu" }
+      - { field: katselut, title: "Katselut", width: 80 }
+    data:
+      - { sivu: "/blog/impact-of-ai/", katselut: 87 }
+      - { sivu: "/", katselut: 23 }
+      - { sivu: "/en/", katselut: 13 }
+      - { sivu: "/en/contact/", katselut: 6 }
+      - { sivu: "/en/tapahtumat/", katselut: 5 }
+      - { sivu: "/en/privacy/", katselut: 4 }
+      - { sivu: "/en/simuna/", katselut: 4 }
+      - { sivu: "/asiakastarinat/hami/", katselut: 3 }
+      - { sivu: "/en/immersive-spaces/", katselut: 3 }
+      - { sivu: "/asiakastarinat/centria/", katselut: 2 }
+      - { sivu: "/simuna/liiketoiminta/", katselut: 2 }
+      - { sivu: "/en/tapahtumat/sett-2026/", katselut: 2 }
+      - { sivu: "/en/asiakastarinat/circular-economy-game/", katselut: 2 }
+      - { sivu: "/asiakastarinat/livia/", katselut: 2 }
+      - { sivu: "/asiakastarinat/immersive-space-keuda/", katselut: 2 }
+      - { sivu: "/immersiiviset-tilat/", katselut: 2 }
+      - { sivu: "/blog/jari-mustonen/", katselut: 2 }
+      - { sivu: "/asiakastarinat/virtuaalinen-metsanhoito/", katselut: 2 }
+      - { sivu: "/en/blog/karhun-vuosi-2025/", katselut: 1 }
+      - { sivu: "/asiakastarinat/taitotalo/", katselut: 1 }
