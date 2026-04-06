@@ -56,16 +56,22 @@
   }
 
   // --- Collapse toggle (shared by charts and tables) ---
-  // Adds bottom "Show all" button and top "Show less" button (visible when expanded)
+  // Bottom "Show all" button + small "Show less" link next to section title
   function addCollapseToggle(card, wrapper, showAllText, onToggle) {
     var expanded = false;
 
-    // Top "show less" — inserted before the wrapper, hidden initially
-    var topBtn = document.createElement('button');
-    topBtn.className = 'table-show-more collapse-top';
-    topBtn.textContent = 'Show less';
-    topBtn.style.display = 'none';
-    card.insertBefore(topBtn, wrapper);
+    // Find the h3 in this card and wrap it in a flex header with "show less" link
+    var h3 = card.querySelector('h3');
+    var header = document.createElement('div');
+    header.className = 'section-header';
+    h3.parentNode.insertBefore(header, h3);
+    header.appendChild(h3);
+
+    var topLink = document.createElement('button');
+    topLink.className = 'collapse-top-link';
+    topLink.textContent = 'Show less';
+    topLink.style.display = 'none';
+    header.appendChild(topLink);
 
     // Bottom "show all"
     var bottomBtn = document.createElement('button');
@@ -77,21 +83,19 @@
       if (expanded) {
         wrapper.classList.remove('collapsed');
         bottomBtn.textContent = 'Show less';
-        topBtn.style.display = '';
+        topLink.style.display = '';
       } else {
         wrapper.classList.add('collapsed');
         bottomBtn.textContent = showAllText;
-        topBtn.style.display = 'none';
-        // Scroll card into view so user sees the collapsed state
+        topLink.style.display = 'none';
         card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
       if (onToggle) onToggle(expanded);
     }
 
     bottomBtn.addEventListener('click', toggle);
-    topBtn.addEventListener('click', toggle);
+    topLink.addEventListener('click', toggle);
 
-    // Insert bottom button after wrapper
     if (wrapper.nextSibling) {
       card.insertBefore(bottomBtn, wrapper.nextSibling);
     } else {
