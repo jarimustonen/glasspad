@@ -183,7 +183,10 @@
 
     var sectionKey = section.id || ('section-' + index);
     var data = dataResult.ok ? dataResult.data : [];
-    var mark = cfg.mark === 'arc' ? { type: 'arc', tooltip: true } : cfg.mark;
+    // Always enable tooltips on all mark types
+    var mark = (typeof cfg.mark === 'string')
+      ? { type: cfg.mark, tooltip: true }
+      : cfg.mark;
 
     // Calculate dynamic height for horizontal bar charts
     var height = 300;
