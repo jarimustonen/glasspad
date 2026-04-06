@@ -1,0 +1,40 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  max-width: 1400px; margin: 0 auto; padding: 2rem;
+  background: #f8f9fa; color: #1a1a2e;
+}
+h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
+.description { color: #6b7280; margin-bottom: 1.5rem; }
+.dashboard-grid { display: grid; gap: 1.5rem; margin-top: 1.5rem; }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.dashboard-stack { display: flex; flex-direction: column; gap: 1.5rem; margin-top: 1.5rem; }
+.section-card {
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+  padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.section-card h3 {
+  font-size: 0.95rem; font-weight: 600; color: #374151;
+  margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.chart-container { width: 100%; }
+.chart-container .vega-embed { width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+thead th {
+  text-align: left; padding: 0.6rem 0.75rem; border-bottom: 2px solid #e5e7eb;
+  font-weight: 600; color: #6b7280; font-size: 0.8rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+tbody td { padding: 0.55rem 0.75rem; border-bottom: 1px solid #f3f4f6; }
+tbody tr:hover { background: #f9fafb; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+.stat-card { text-align: center; padding: 1rem; background: #f9fafb; border-radius: 8px; }
+.stat-value { font-size: 1.75rem; font-weight: 700; color: #1a1a2e; line-height: 1.2; }
+.stat-label { font-size: 0.8rem; color: #6b7280; margin-top: 0.25rem; }
+.section-error { color: #dc2626; font-style: italic; padding: 0.5rem 0; }
+.table-truncated { color: #6b7280; font-size: 0.85rem; padding: 0.5rem 0; font-style: italic; }
+@media (max-width: 768px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  body { padding: 1rem; }
+}
