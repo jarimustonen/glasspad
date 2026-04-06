@@ -248,6 +248,47 @@
   var INITIAL_ROWS = 10;
   var MAX_ROWS = 1000;
 
+  // Detect sort type for a column from data values
+  function detectSortType(data, field) {
+    for (var i = 0; i < Math.min(data.length, 50); i++) {
+      var v = data[i][field];
+      if (v === null || v === undefined) continue;
+      if (typeof v === 'number') return 'number';
+      if (typeof v === 'boolean') return 'boolean';
+      if (typeof v === 'string') {
+        // ISO-8601 date pattern
+        if (/^\d{4}-\d{2}-\d{2}/.test(v)) return 'temporal';
+        return 'string';
+      }
+    }
+    return 'string';
+  }
+
+  // Compare two values for sorting. Nulls always last.
+  function compareValues(a, b, sortType, ascending) {
+    var aNull = (a === null || a === undefined || a === '');
+    var bNull = (b === null || b === undefined || b === '');
+    if (aNull && bNull) return 0;
+    if (aNull) return 1;  // nulls last regardless of direction
+    if (bNull) return -1;
+
+    var result = 0;
+    switch (sortType) {
+      case 'number':
+        result = (Number(a) || 0) - (Number(b) || 0);
+        break;
+      case 'temporal':
+        result = String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+        break;
+      case 'boolean':
+        result = (a === b) ? 0 : a ? 1 : -1;
+        break;
+      default: // string
+        result = String(a).localeCompare(String(b));
+    }
+    return ascending ? result : -result;
+  }
+
   function renderTable(card, section, dataResult) {
     var cfg = section.table;
     if (!cfg || !cfg.columns) { appendError(card, 'No table config'); return; }
@@ -255,35 +296,94 @@
     var allData = dataResult.data;
     if (!allData || allData.length === 0) { appendError(card, 'No data'); return; }
 
-    // Limit total rows
     var totalRows = Math.min(allData.length, MAX_ROWS);
-    var showInitial = Math.min(totalRows, INITIAL_ROWS);
+    var sourceData = allData.slice(0, totalRows); // original order preserved
+    var displayData = sourceData.slice(); // mutable copy for sorting
 
-    // Build table HTML
-    function buildTableHtml(rows) {
+    // Detect sort types per column (agent hint or auto-detect)
+    var sortTypes = {};
+    for (var c = 0; c < cfg.columns.length; c++) {
+      var col = cfg.columns[c];
+      sortTypes[col.field] = col.sort || detectSortType(sourceData, col.field);
+    }
+
+    // Sort state: { field, ascending } or null
+    var sortState = null;
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'table-wrapper collapsed';
+    card.appendChild(wrapper);
+
+    function rebuildTable() {
+      // Sort if active
+      if (sortState) {
+        var sf = sortState.field;
+        var sa = sortState.ascending;
+        var st = sortTypes[sf] || 'string';
+        displayData.sort(function(a, b) {
+          return compareValues(a[sf], b[sf], st, sa);
+        });
+      } else {
+        // Restore original order
+        displayData = sourceData.slice();
+      }
+
       var html = '<table><thead><tr>';
       for (var c = 0; c < cfg.columns.length; c++) {
         var col = cfg.columns[c];
         var title = col.title || col.field;
         var style = col.width ? ' style="width:' + col.width + 'px"' : '';
-        html += '<th' + style + '>' + esc(title) + '</th>';
+        var sortClass = '';
+        var indicator = ' \u2195'; // ↕ default
+        if (sortState && sortState.field === col.field) {
+          if (sortState.ascending) {
+            sortClass = ' class="sort-asc"';
+            indicator = ' \u25B2'; // ▲
+          } else {
+            sortClass = ' class="sort-desc"';
+            indicator = ' \u25BC'; // ▼
+          }
+        }
+        html += '<th' + sortClass + style + ' data-field="' + esc(col.field) + '">'
+          + esc(title) + '<span class="sort-indicator">' + indicator + '</span></th>';
       }
       html += '</tr></thead><tbody>';
-      for (var r = 0; r < rows.length; r++) {
+      for (var r = 0; r < displayData.length; r++) {
         html += '<tr>';
         for (var c2 = 0; c2 < cfg.columns.length; c2++) {
-          html += '<td>' + esc(formatCell(rows[r][cfg.columns[c2].field])) + '</td>';
+          html += '<td>' + esc(formatCell(displayData[r][cfg.columns[c2].field])) + '</td>';
         }
         html += '</tr>';
       }
       html += '</tbody></table>';
-      return html;
+      wrapper.innerHTML = html;
+
+      // Attach click handlers to headers
+      var ths = wrapper.querySelectorAll('th[data-field]');
+      for (var t = 0; t < ths.length; t++) {
+        ths[t].addEventListener('click', onHeaderClick);
+      }
     }
 
-    var wrapper = document.createElement('div');
-    wrapper.className = 'table-wrapper collapsed';
-    wrapper.innerHTML = buildTableHtml(allData.slice(0, totalRows));
-    card.appendChild(wrapper);
+    function onHeaderClick(e) {
+      var th = e.currentTarget;
+      var field = th.getAttribute('data-field');
+      if (!field) return;
+
+      if (!sortState || sortState.field !== field) {
+        // New column: ascending
+        sortState = { field: field, ascending: true };
+      } else if (sortState.ascending) {
+        // Same column, was ascending: switch to descending
+        sortState.ascending = false;
+      } else {
+        // Was descending: clear sort
+        sortState = null;
+      }
+      rebuildTable();
+    }
+
+    rebuildTable();
 
     if (totalRows > INITIAL_ROWS) {
       var showAllText = 'Show all ' + totalRows + ' rows';

@@ -426,6 +426,7 @@ mod tests {
                 field: "name".to_string(),
                 title: None,
                 width: None,
+                sort: None,
             }],
             row_id_field: None,
             row_actions: Some(vec![ActionDef {

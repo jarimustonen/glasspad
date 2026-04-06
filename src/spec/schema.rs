@@ -100,6 +100,9 @@ pub struct ColumnDef {
     pub title: Option<String>,
     #[serde(default)]
     pub width: Option<u32>,
+    /// Sort type hint: "number", "string", "temporal", "boolean". Auto-detected if omitted.
+    #[serde(default)]
+    pub sort: Option<String>,
 }
 
 /// Stats configuration.

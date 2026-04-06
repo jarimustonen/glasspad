@@ -38,7 +38,12 @@ thead th {
   text-align: left; padding: 0.6rem 0.75rem; border-bottom: 2px solid #e5e7eb;
   font-weight: 600; color: #6b7280; font-size: 0.8rem;
   text-transform: uppercase; letter-spacing: 0.04em;
+  cursor: pointer; user-select: none; white-space: nowrap;
 }
+thead th:hover { color: #1a1a2e; }
+thead th .sort-indicator { margin-left: 0.3rem; font-size: 0.7rem; opacity: 0.4; }
+thead th.sort-asc .sort-indicator,
+thead th.sort-desc .sort-indicator { opacity: 1; color: #1a1a2e; }
 tbody td {
   padding: 0.55rem 0.75rem; border-bottom: 1px solid #f3f4f6;
   max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
