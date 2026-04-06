@@ -38,8 +38,8 @@ impl fmt::Display for CellValue {
             CellValue::Null => write!(f, ""),
             CellValue::Bool(b) => write!(f, "{}", b),
             CellValue::Number(n) => {
-                if *n == (*n as i64) as f64 {
-                    write!(f, "{}", *n as i64)
+                if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                    write!(f, "{:.0}", n)
                 } else {
                     write!(f, "{}", n)
                 }
