@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -6,14 +7,23 @@ use crate::models::PadCreated;
 const DEFAULT_PORT: u16 = 3000;
 const DEFAULT_URL: &str = "http://localhost:3000";
 
-/// Check if server is running, if not spawn it in background
+/// Check if server is running, if not spawn it in background.
 async fn ensure_server(base: &str) {
     let client = reqwest::Client::new();
-    if client.get(format!("{}/api/pads", base)).send().await.is_ok() {
-        return;
+    // Check that server responds with success, not just any HTTP response
+    if let Ok(resp) = client.get(format!("{}/api/pads", base)).send().await {
+        if resp.status().is_success() {
+            return;
+        }
     }
 
-    let exe = std::env::current_exe().unwrap();
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("Cannot determine executable path: {}", e);
+            std::process::exit(1);
+        }
+    };
     let port = DEFAULT_PORT.to_string();
     match std::process::Command::new(exe)
         .args(["serve", "--port", &port])
@@ -25,8 +35,10 @@ async fn ensure_server(base: &str) {
             eprintln!("Starting glasspad server on port {}...", DEFAULT_PORT);
             for _ in 0..20 {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                if client.get(format!("{}/api/pads", base)).send().await.is_ok() {
-                    return;
+                if let Ok(resp) = client.get(format!("{}/api/pads", base)).send().await {
+                    if resp.status().is_success() {
+                        return;
+                    }
                 }
             }
             eprintln!("Warning: server may not be ready yet");
@@ -59,6 +71,15 @@ pub async fn create(
     let base = base_url.unwrap_or_else(|| DEFAULT_URL.to_string());
     ensure_server(&base).await;
 
+    // Validate no duplicate --data names
+    let mut seen_names = HashSet::new();
+    for (name, _) in &data_args {
+        if !seen_names.insert(name.clone()) {
+            eprintln!("Error: duplicate --data name: '{}'", name);
+            std::process::exit(1);
+        }
+    }
+
     let spec_body = match file {
         Some(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
             eprintln!("Error reading file {}: {}", path.display(), e);
@@ -86,56 +107,132 @@ pub async fn create(
 
         handle_create_response(resp).await;
     } else {
-        // Multipart: spec + data files
-        // For now, inject data into the spec as inline_data
-        // (full multipart support comes with API rewrite)
-        let mut spec_value: serde_yaml::Value = serde_yaml::from_str(&spec_body)
-            .unwrap_or_else(|e| {
+        // Parse spec, inject datasets into top-level datasets map, send
+        let mut spec_value: serde_yaml::Value = match serde_yaml::from_str(&spec_body) {
+            Ok(v) => v,
+            Err(e) => {
                 eprintln!("Error parsing YAML: {}", e);
                 std::process::exit(1);
-            });
+            }
+        };
 
-        // Read and inject each data file
+        // Parse each data file and inject into top-level datasets
+        let mut injected = HashMap::new();
         for (name, path) in &data_args {
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .unwrap_or("");
+                .unwrap_or("")
+                .to_ascii_lowercase();
 
             let data_str = std::fs::read_to_string(path).unwrap_or_else(|e| {
                 eprintln!("Error reading data file {}: {}", path.display(), e);
                 std::process::exit(1);
             });
 
-            let rows: serde_json::Value = match ext {
+            let rows: serde_json::Value = match ext.as_str() {
                 "csv" => {
-                    let dataset = crate::data::csv::parse_csv_str(&data_str)
-                        .unwrap_or_else(|e| {
+                    let dataset = match crate::data::csv::parse_csv_str(&data_str) {
+                        Ok(d) => d,
+                        Err(e) => {
                             eprintln!("Error parsing CSV {}: {}", path.display(), e);
                             std::process::exit(1);
-                        });
-                    // Convert to JSON for injection
-                    serde_json::to_value(&dataset).unwrap()
+                        }
+                    };
+                    match serde_json::to_value(&dataset) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Error serializing dataset: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
                 "json" => {
-                    let dataset = crate::data::json::parse_json_str(&data_str)
-                        .unwrap_or_else(|e| {
+                    let dataset = match crate::data::json::parse_json_str(&data_str) {
+                        Ok(d) => d,
+                        Err(e) => {
                             eprintln!("Error parsing JSON {}: {}", path.display(), e);
                             std::process::exit(1);
-                        });
-                    serde_json::to_value(&dataset).unwrap()
+                        }
+                    };
+                    match serde_json::to_value(&dataset) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Error serializing dataset: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
-                _ => {
-                    eprintln!("Unsupported data format: {} (use .csv or .json)", ext);
+                other => {
+                    eprintln!(
+                        "Unsupported data format '.{}' for {}. Use .csv or .json",
+                        other,
+                        path.display()
+                    );
                     std::process::exit(1);
                 }
             };
 
-            // Inject inline_data into sections that reference this dataset
-            inject_dataset_into_spec(&mut spec_value, name, &rows);
+            injected.insert(name.clone(), rows);
         }
 
-        let yaml_body = serde_yaml::to_string(&spec_value).unwrap();
+        // Inject datasets into spec: replace source→inline_data for matching sections
+        for (name, rows_json) in &injected {
+            let rows_yaml = match serde_yaml::to_value(rows_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Error converting dataset '{}' to YAML: {}", name, e);
+                    std::process::exit(1);
+                }
+            };
+
+            let mut matched = 0usize;
+
+            if let Some(sections) = spec_value.get_mut("sections").and_then(|s| s.as_sequence_mut()) {
+                for section in sections.iter_mut() {
+                    let source = section
+                        .get("source")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.to_string());
+                    if source.as_deref() == Some(name) {
+                        if let Some(map) = section.as_mapping_mut() {
+                            map.remove(&serde_yaml::Value::String("source".to_string()));
+                            map.insert(
+                                serde_yaml::Value::String("inline_data".to_string()),
+                                rows_yaml.clone(),
+                            );
+                            matched += 1;
+                        }
+                    }
+                }
+            }
+
+            if matched == 0 {
+                eprintln!(
+                    "Warning: --data {}={} did not match any section source. \
+                     Check that your spec has 'source: {}' in at least one section.",
+                    name,
+                    data_args.iter().find(|(n, _)| n == name).unwrap().1.display(),
+                    name
+                );
+            }
+        }
+
+        // Remove injected dataset declarations (they're now inline)
+        if let Some(datasets) = spec_value.get_mut("datasets").and_then(|d| d.as_mapping_mut()) {
+            for name in injected.keys() {
+                datasets.remove(&serde_yaml::Value::String(name.clone()));
+            }
+            // If datasets map is now empty, keep it (empty is valid)
+        }
+
+        let yaml_body = match serde_yaml::to_string(&spec_value) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error serializing spec: {}", e);
+                std::process::exit(1);
+            }
+        };
 
         let client = reqwest::Client::new();
         let resp = client
@@ -149,47 +246,21 @@ pub async fn create(
     }
 }
 
-/// Inject dataset rows into sections that reference the given source name.
-fn inject_dataset_into_spec(
-    spec: &mut serde_yaml::Value,
-    dataset_name: &str,
-    rows_json: &serde_json::Value,
-) {
-    // Convert JSON rows to YAML value
-    let rows_yaml: serde_yaml::Value =
-        serde_yaml::from_str(&serde_json::to_string(rows_json).unwrap()).unwrap();
-
-    if let Some(sections) = spec.get_mut("sections").and_then(|s| s.as_sequence_mut()) {
-        for section in sections {
-            let source = section
-                .get("source")
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string());
-            if source.as_deref() == Some(dataset_name) {
-                // Remove source, add inline_data
-                if let Some(map) = section.as_mapping_mut() {
-                    map.remove(&serde_yaml::Value::String("source".to_string()));
-                    map.insert(
-                        serde_yaml::Value::String("inline_data".to_string()),
-                        rows_yaml.clone(),
-                    );
-                }
-            }
-        }
-    }
-
-    // Remove the dataset declaration since data is now inline
-    if let Some(datasets) = spec.get_mut("datasets").and_then(|d| d.as_mapping_mut()) {
-        datasets.remove(&serde_yaml::Value::String(dataset_name.to_string()));
-    }
-}
-
 async fn handle_create_response(resp: Result<reqwest::Response, reqwest::Error>) {
     match resp {
         Ok(r) if r.status().is_success() => {
-            let created: PadCreated = r.json().await.unwrap();
-            eprintln!("Created pad {}", created.id);
+            let created: PadCreated = match r.json().await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error parsing server response: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            // Print URL to stdout (machine-readable)
             println!("{}", created.url);
+            // Print details to stderr (human-readable)
+            eprintln!("Created pad {}", created.id);
+            eprintln!("Token: {}", created.token);
         }
         Ok(r) => {
             let status = r.status();
@@ -214,7 +285,7 @@ pub async fn list(base_url: Option<String>) {
 
     match resp {
         Ok(r) if r.status().is_success() => {
-            let pads: Vec<serde_json::Value> = r.json().await.unwrap();
+            let pads: Vec<serde_json::Value> = r.json().await.unwrap_or_default();
             if pads.is_empty() {
                 println!("No pads");
                 return;

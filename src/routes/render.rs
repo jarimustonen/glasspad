@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
 };
 
@@ -20,5 +20,6 @@ pub async fn get_pad_html(
     Ok((
         [(header::CONTENT_SECURITY_POLICY, csp::CSP_HEADER_VALUE)],
         Html(html),
-    ).into_response())
+    )
+        .into_response())
 }

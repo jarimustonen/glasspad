@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use crate::models::{Pad, PadMeta};
 
 pub struct PadStore {
-    pads: RwLock<HashMap<String, Pad>>,
+    pads: RwLock<HashMap<String, Arc<Pad>>>,
     pub base_url: String,
 }
 
@@ -18,10 +18,10 @@ impl PadStore {
 
     pub fn insert(&self, pad: Pad) {
         let mut pads = self.pads.write().unwrap();
-        pads.insert(pad.id.clone(), pad);
+        pads.insert(pad.id.clone(), Arc::new(pad));
     }
 
-    pub fn get(&self, id: &str) -> Option<Pad> {
+    pub fn get(&self, id: &str) -> Option<Arc<Pad>> {
         let pads = self.pads.read().unwrap();
         pads.get(id).cloned()
     }
@@ -45,7 +45,7 @@ impl PadStore {
     pub fn update(&self, id: &str, pad: Pad) -> bool {
         let mut pads = self.pads.write().unwrap();
         if pads.contains_key(id) {
-            pads.insert(id.to_string(), pad);
+            pads.insert(id.to_string(), Arc::new(pad));
             true
         } else {
             false

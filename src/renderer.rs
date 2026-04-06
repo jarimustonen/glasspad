@@ -14,12 +14,19 @@ pub fn render_dashboard(pad: &Pad) -> String {
         Layout::Grid2col => "dashboard-grid grid-2",
     };
 
-    let mut chart_scripts = Vec::new();
+    let mut chart_spec_tags = Vec::new(); // Safe JSON script tags for Vega specs
+    let mut chart_init_scripts = Vec::new(); // JS init code referencing those tags
     let mut sections_html = String::new();
 
     for (i, section) in spec.sections.iter().enumerate() {
         let data = resolve_section_data(section, &pad.datasets);
-        let section_html = render_section(section, i, data.as_deref(), &mut chart_scripts);
+        let section_html = render_section(
+            section,
+            i,
+            data.as_deref(),
+            &mut chart_spec_tags,
+            &mut chart_init_scripts,
+        );
         sections_html.push_str(&section_html);
     }
 
@@ -29,28 +36,8 @@ pub fn render_dashboard(pad: &Pad) -> String {
         .map(|d| format!("<p class=\"description\">{}</p>", html_escape(d)))
         .unwrap_or_default();
 
-    // Embed datasets as safe JSON for future client-side use
-    let datasets_json: serde_json::Value = pad
-        .datasets
-        .iter()
-        .map(|(name, data)| {
-            let rows: Vec<serde_json::Value> = data
-                .iter()
-                .map(|row| {
-                    let obj: serde_json::Map<String, serde_json::Value> = row
-                        .iter()
-                        .map(|(k, v)| (k.clone(), cell_to_json(v)))
-                        .collect();
-                    serde_json::Value::Object(obj)
-                })
-                .collect();
-            (name.clone(), serde_json::Value::Array(rows))
-        })
-        .collect::<serde_json::Map<String, serde_json::Value>>()
-        .into();
-
-    let data_tag = safe_json_script_tag("glasspad-data", &datasets_json);
-    let scripts = chart_scripts.join("\n");
+    let spec_tags = chart_spec_tags.join("\n");
+    let init_scripts = chart_init_scripts.join("\n");
 
     format!(
         r#"<!DOCTYPE html>
@@ -66,11 +53,8 @@ pub fn render_dashboard(pad: &Pad) -> String {
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 2rem;
-      background: #f8f9fa;
-      color: #1a1a2e;
+      max-width: 1400px; margin: 0 auto; padding: 2rem;
+      background: #f8f9fa; color: #1a1a2e;
     }}
     h1 {{ font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }}
     .description {{ color: #6b7280; margin-bottom: 1.5rem; }}
@@ -112,9 +96,9 @@ pub fn render_dashboard(pad: &Pad) -> String {
   <div class="{layout}">
     {sections}
   </div>
-  {data_tag}
+  {spec_tags}
   <script>
-    {scripts}
+    {init_scripts}
   </script>
 </body>
 </html>"#,
@@ -122,8 +106,8 @@ pub fn render_dashboard(pad: &Pad) -> String {
         description = description_html,
         layout = layout_class,
         sections = sections_html,
-        data_tag = data_tag,
-        scripts = scripts,
+        spec_tags = spec_tags,
+        init_scripts = init_scripts,
     )
 }
 
@@ -134,7 +118,6 @@ fn resolve_section_data<'a>(
     if let Some(ref source) = section.source {
         datasets.get(source.as_str())
     } else if let Some(ref data) = section.inline_data {
-        // inline_data is Vec<Row> which is Dataset
         Some(data)
     } else {
         None
@@ -145,10 +128,11 @@ fn render_section(
     section: &Section,
     index: usize,
     data: Option<&Dataset>,
-    chart_scripts: &mut Vec<String>,
+    spec_tags: &mut Vec<String>,
+    init_scripts: &mut Vec<String>,
 ) -> String {
     let inner = match section.section_type {
-        SectionType::Chart => render_chart_section(section, index, data, chart_scripts),
+        SectionType::Chart => render_chart_section(section, index, data, spec_tags, init_scripts),
         SectionType::Table => render_table_section(section, data),
         SectionType::Stats => render_stats_section(section, data),
         SectionType::List => "<p>List rendering not yet implemented</p>".to_string(),
@@ -165,7 +149,8 @@ fn render_chart_section(
     section: &Section,
     index: usize,
     data: Option<&Dataset>,
-    chart_scripts: &mut Vec<String>,
+    spec_tags: &mut Vec<String>,
+    init_scripts: &mut Vec<String>,
 ) -> String {
     let chart = match &section.chart {
         Some(c) => c,
@@ -173,6 +158,7 @@ fn render_chart_section(
     };
 
     let div_id = format!("vis-{}", index);
+    let spec_id = format!("vis-spec-{}", index);
 
     let mark = if chart.mark == "arc" {
         serde_json::json!({"type": "arc", "tooltip": true})
@@ -180,9 +166,8 @@ fn render_chart_section(
         serde_json::json!(chart.mark)
     };
 
-    // Convert Dataset rows to JSON values for Vega-Lite
     let data_values: Vec<serde_json::Value> = data
-        .map(|d| d.iter().map(|row| row_to_json(row)).collect())
+        .map(|d| d.iter().map(row_to_json).collect())
         .unwrap_or_default();
 
     let mut vl_spec = serde_json::json!({
@@ -202,12 +187,13 @@ fn render_chart_section(
         }
     }
 
-    let spec_json = serde_json::to_string(&vl_spec).unwrap_or_default();
+    // Embed Vega spec as safe non-executable JSON, then parse in JS
+    spec_tags.push(safe_json_script_tag(&spec_id, &vl_spec));
 
-    chart_scripts.push(format!(
-        "vegaEmbed('#{div_id}', {spec}, {{actions: false, renderer: 'svg'}}).catch(console.error);",
+    init_scripts.push(format!(
+        "vegaEmbed('#{div_id}', JSON.parse(document.getElementById('{spec_id}').textContent), {{actions: false, renderer: 'svg'}}).catch(console.error);",
         div_id = div_id,
-        spec = spec_json,
+        spec_id = spec_id,
     ));
 
     format!("<div id=\"{}\" class=\"chart-container\"></div>", div_id)
@@ -241,7 +227,7 @@ fn render_table_section(section: &Section, data: Option<&Dataset>) -> String {
         for col in &table.columns {
             let val = row
                 .get(&col.field)
-                .map(|v| v.to_string())
+                .map(format_cell)
                 .unwrap_or_default();
             html.push_str(&format!("  <td>{}</td>\n", html_escape(&val)));
         }
@@ -253,7 +239,7 @@ fn render_table_section(section: &Section, data: Option<&Dataset>) -> String {
 }
 
 fn render_stats_section(section: &Section, data: Option<&Dataset>) -> String {
-    // If stats config exists, use aggregation mode
+    // Aggregation mode (canonical)
     if let Some(ref stats_config) = section.stats {
         let data = match data {
             Some(d) => d,
@@ -271,7 +257,6 @@ fn render_stats_section(section: &Section, data: Option<&Dataset>) -> String {
 }
 
 fn render_aggregate_stats(stats: &crate::spec::schema::StatsConfig, data: &Dataset) -> String {
-
     let mut html = String::from("<div class=\"stats-grid\">\n");
 
     for item in &stats.items {
@@ -291,14 +276,8 @@ fn render_inline_stats(data: &Dataset) -> String {
     let mut html = String::from("<div class=\"stats-grid\">\n");
 
     for row in data {
-        let label = row
-            .get("label")
-            .map(|v| v.to_string())
-            .unwrap_or_default();
-        let value = row
-            .get("value")
-            .map(|v| v.to_string())
-            .unwrap_or_default();
+        let label = row.get("label").map(format_cell).unwrap_or_default();
+        let value = row.get("value").map(format_cell).unwrap_or_default();
 
         html.push_str(&format!(
             "  <div class=\"stat-card\">\n    <div class=\"stat-value\">{}</div>\n    <div class=\"stat-label\">{}</div>\n  </div>\n",
@@ -317,7 +296,6 @@ fn compute_aggregate(
     where_clause: &Option<BTreeMap<String, serde_json::Value>>,
     data: &Dataset,
 ) -> String {
-    // Apply where filter
     let filtered: Vec<_> = data
         .iter()
         .filter(|row| {
@@ -336,27 +314,25 @@ fn compute_aggregate(
     match aggregate {
         "count" => format_number(filtered.len() as i64),
         "distinct" => {
-            let field = field.unwrap_or("");
+            let field = match field {
+                Some(f) => f,
+                None => return "⚠ missing field".to_string(),
+            };
             let mut seen = std::collections::HashSet::new();
             for row in &filtered {
                 if let Some(v) = row.get(field) {
                     if !v.is_null() {
-                        seen.insert(v.to_string());
+                        seen.insert(format_cell(v));
                     }
                 }
             }
             format_number(seen.len() as i64)
         }
         "sum" => {
-            let field = field.unwrap_or("");
-            let sum: f64 = filtered
-                .iter()
-                .filter_map(|row| row.get(field).and_then(|v| v.as_f64()))
-                .sum();
-            format_decimal(sum)
-        }
-        "avg" => {
-            let field = field.unwrap_or("");
+            let field = match field {
+                Some(f) => f,
+                None => return "⚠ missing field".to_string(),
+            };
             let values: Vec<f64> = filtered
                 .iter()
                 .filter_map(|row| row.get(field).and_then(|v| v.as_f64()))
@@ -364,29 +340,42 @@ fn compute_aggregate(
             if values.is_empty() {
                 "—".to_string()
             } else {
-                let avg = values.iter().sum::<f64>() / values.len() as f64;
-                format_decimal(avg)
+                format_decimal(values.iter().sum())
             }
         }
-        "min" => {
-            let field = field.unwrap_or("");
-            filtered
+        "avg" => {
+            let field = match field {
+                Some(f) => f,
+                None => return "⚠ missing field".to_string(),
+            };
+            let values: Vec<f64> = filtered
                 .iter()
                 .filter_map(|row| row.get(field).and_then(|v| v.as_f64()))
-                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(format_decimal)
-                .unwrap_or_else(|| "—".to_string())
+                .collect();
+            if values.is_empty() {
+                "—".to_string()
+            } else {
+                format_decimal(values.iter().sum::<f64>() / values.len() as f64)
+            }
         }
-        "max" => {
-            let field = field.unwrap_or("");
-            filtered
+        "min" | "max" => {
+            let field = match field {
+                Some(f) => f,
+                None => return "⚠ missing field".to_string(),
+            };
+            let values: Vec<f64> = filtered
                 .iter()
                 .filter_map(|row| row.get(field).and_then(|v| v.as_f64()))
-                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(format_decimal)
-                .unwrap_or_else(|| "—".to_string())
+                .collect();
+            if values.is_empty() {
+                "—".to_string()
+            } else if aggregate == "min" {
+                format_decimal(values.iter().cloned().fold(f64::INFINITY, f64::min))
+            } else {
+                format_decimal(values.iter().cloned().fold(f64::NEG_INFINITY, f64::max))
+            }
         }
-        _ => "?".to_string(),
+        other => format!("⚠ unknown aggregate: {}", other),
     }
 }
 
@@ -394,11 +383,22 @@ fn cell_matches_json(cell: &CellValue, json_val: &serde_json::Value) -> bool {
     match (cell, json_val) {
         (CellValue::String(s), serde_json::Value::String(j)) => s == j,
         (CellValue::Number(n), serde_json::Value::Number(j)) => {
-            j.as_f64().is_some_and(|jn| (*n - jn).abs() < f64::EPSILON)
+            j.as_f64().is_some_and(|jn| *n == jn)
         }
         (CellValue::Bool(b), serde_json::Value::Bool(j)) => b == j,
         (CellValue::Null, serde_json::Value::Null) => true,
         _ => false,
+    }
+}
+
+/// Format a CellValue for display in tables and stats.
+/// Consistent formatting: null→empty, bool→true/false, number→formatted, string→as-is.
+fn format_cell(v: &CellValue) -> String {
+    match v {
+        CellValue::Null => String::new(),
+        CellValue::Bool(b) => b.to_string(),
+        CellValue::Number(n) => format_decimal(*n),
+        CellValue::String(s) => s.clone(),
     }
 }
 

@@ -18,21 +18,43 @@ use crate::spec::schema::DashboardSpec;
 use crate::spec::validate;
 use crate::store::PadStore;
 
-/// Parse datasets from inline_data in sections.
-fn collect_inline_datasets(spec: &DashboardSpec) -> BTreeMap<String, Dataset> {
+/// Collect datasets from both top-level spec.datasets (external, provided via --data)
+/// and section.inline_data (inline in spec). Detects duplicate/conflicting definitions.
+fn collect_datasets(
+    spec: &DashboardSpec,
+    external_datasets: &BTreeMap<String, Dataset>,
+) -> Result<BTreeMap<String, Dataset>, String> {
     let mut datasets = BTreeMap::new();
-    for section in &spec.sections {
+
+    // 1. External datasets provided via --data (already parsed by CLI or multipart)
+    for (name, data) in external_datasets {
+        datasets.insert(name.clone(), data.clone());
+    }
+
+    // 2. Inline datasets from sections
+    for (idx, section) in spec.sections.iter().enumerate() {
         if let Some(ref data) = section.inline_data {
-            // Use section id or title as synthetic dataset name
             let name = section
                 .source
                 .clone()
                 .or_else(|| section.id.clone())
-                .unwrap_or_else(|| format!("_inline_{}", section.title));
-            datasets.insert(name, data.clone());
+                .unwrap_or_else(|| format!("_inline_{}", idx));
+
+            if let Some(existing) = datasets.get(&name) {
+                if existing != data {
+                    return Err(format!(
+                        "Conflicting dataset definitions for '{}' (section [{}] \"{}\")",
+                        name, idx, section.title
+                    ));
+                }
+                // Same data, already present — skip
+            } else {
+                datasets.insert(name, data.clone());
+            }
         }
     }
-    datasets
+
+    Ok(datasets)
 }
 
 pub async fn create_pad(
@@ -48,25 +70,22 @@ pub async fn create_pad(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // Only accept YAML specs now (no raw HTML fallback)
-    if !content_type.contains("yaml")
-        && !body_str.trim_start().starts_with("spec_version:")
-        && !body_str.trim_start().starts_with("title:")
-    {
+    // Reject obviously wrong content types, but don't sniff body content
+    if !content_type.is_empty() && !content_type.contains("yaml") {
         return Err((
-            StatusCode::BAD_REQUEST,
-            "Expected YAML spec (Content-Type: application/x-yaml)".to_string(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Expected Content-Type: application/x-yaml".to_string(),
         ));
     }
 
     let spec: DashboardSpec = serde_yaml::from_str(&body_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
 
-    // Collect inline datasets
-    let datasets = collect_inline_datasets(&spec);
+    // Collect datasets (no external datasets via API body-only path)
+    let datasets = collect_datasets(&spec, &BTreeMap::new())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let provided: HashSet<String> = datasets.keys().cloned().collect();
 
-    // Validate
     let errors = validate::validate(&spec, &provided);
     if !errors.is_empty() {
         let msg = errors
@@ -80,7 +99,6 @@ pub async fn create_pad(
         ));
     }
 
-    // Generate metadata
     let dataset_meta = datasets
         .iter()
         .map(|(name, data)| (name.clone(), infer_dataset_meta(data)))
@@ -124,16 +142,14 @@ pub async fn get_pad(
     State(store): State<Arc<PadStore>>,
     Path(id): Path<String>,
 ) -> Result<Json<PadMeta>, StatusCode> {
-    match store.get(&id) {
-        Some(pad) => Ok(Json(PadMeta {
-            id: pad.id.clone(),
-            title: pad.title,
-            pad_type: "dashboard".to_string(),
-            url: format!("{}/{}", store.base_url, pad.id),
-            created_at: pad.created_at,
-        })),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    let pad = store.get(&id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(PadMeta {
+        id: pad.id.clone(),
+        title: pad.title.clone(),
+        pad_type: "dashboard".to_string(),
+        url: format!("{}/{}", store.base_url, pad.id),
+        created_at: pad.created_at,
+    }))
 }
 
 pub async fn update_pad(
@@ -146,7 +162,6 @@ pub async fn update_pad(
         .get(&id)
         .ok_or((StatusCode::NOT_FOUND, "Pad not found".to_string()))?;
 
-    // Verify token
     let provided_token = headers
         .get("x-glasspad-token")
         .and_then(|v| v.to_str().ok())
@@ -161,7 +176,8 @@ pub async fn update_pad(
     let spec: DashboardSpec = serde_yaml::from_str(&body_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
 
-    let datasets = collect_inline_datasets(&spec);
+    let datasets = collect_datasets(&spec, &BTreeMap::new())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let provided: HashSet<String> = datasets.keys().cloned().collect();
 
     let errors = validate::validate(&spec, &provided);
@@ -177,7 +193,7 @@ pub async fn update_pad(
 
     let pad = Pad {
         id: id.clone(),
-        token: existing.token,
+        token: existing.token.clone(),
         title: spec.title.clone(),
         spec,
         datasets,
