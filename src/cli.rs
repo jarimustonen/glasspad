@@ -256,11 +256,14 @@ async fn handle_create_response(resp: Result<reqwest::Response, reqwest::Error>)
                     std::process::exit(1);
                 }
             };
-            // Print URL to stdout (machine-readable)
-            println!("{}", created.url);
-            // Print details to stderr (human-readable)
-            eprintln!("Created pad {}", created.id);
-            eprintln!("Token: {}", created.token);
+            // Stdout: JSON with everything the agent needs
+            let output = serde_json::json!({
+                "id": created.id,
+                "url": created.url,
+                "token": created.token,
+                "title": created.title,
+            });
+            println!("{}", serde_json::to_string(&output).unwrap_or_default());
         }
         Ok(r) => {
             let status = r.status();
