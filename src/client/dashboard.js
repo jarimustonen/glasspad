@@ -126,27 +126,40 @@
   }
 
   // --- Chart ---
+  var CHART_COLLAPSED_HEIGHT = 350; // px, initial visible height for tall charts
+  var CHART_COLLAPSE_THRESHOLD = 10; // categories before collapsing
+
   function renderChart(card, section, dataResult, index) {
     var cfg = section.chart;
     if (!cfg) { appendError(card, 'No chart config'); return; }
 
     var sectionKey = section.id || ('section-' + index);
-    var div = document.createElement('div');
-    div.className = 'chart-container';
-    card.appendChild(div);
-
     var data = dataResult.ok ? dataResult.data : [];
     var mark = cfg.mark === 'arc' ? { type: 'arc', tooltip: true } : cfg.mark;
 
-    // Calculate dynamic height for horizontal bar charts based on category count
+    // Calculate dynamic height for horizontal bar charts
     var height = 300;
+    var categories = 0;
+    var shouldCollapse = false;
     if (isHorizontalBar(cfg) && data.length > 0) {
       var yField = (cfg.encoding.y || {}).field;
       if (yField) {
-        var categories = countDistinct(data, yField);
-        height = Math.max(200, categories * 22 + 60); // 22px per bar + padding
+        categories = countDistinct(data, yField);
+        height = Math.max(200, categories * 22 + 60);
+        shouldCollapse = categories > CHART_COLLAPSE_THRESHOLD;
       }
     }
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'chart-container';
+    if (shouldCollapse) {
+      wrapper.classList.add('collapsed');
+      wrapper.style.maxHeight = CHART_COLLAPSED_HEIGHT + 'px';
+    }
+
+    var div = document.createElement('div');
+    wrapper.appendChild(div);
+    card.appendChild(wrapper);
 
     var vlSpec = {
       '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
@@ -163,12 +176,6 @@
       vlSpec.view = { stroke: null };
     }
 
-    // For horizontal bars with many labels, add label limit config
-    if (isHorizontalBar(cfg)) {
-      // Allow full width for container
-      vlSpec.width = 'container';
-    }
-
     vegaEmbed(div, vlSpec, { actions: false, renderer: 'svg' })
       .then(function(result) {
         chartViews[sectionKey] = result.view;
@@ -177,6 +184,18 @@
         console.error('Chart "' + section.title + '":', err);
         appendError(div, 'Chart error: ' + err.message);
       });
+
+    if (shouldCollapse) {
+      var btn = document.createElement('button');
+      btn.className = 'table-show-more';
+      btn.textContent = 'Show all ' + categories + ' categories';
+      btn.addEventListener('click', function() {
+        wrapper.classList.remove('collapsed');
+        wrapper.style.maxHeight = '';
+        btn.style.display = 'none';
+      });
+      card.appendChild(btn);
+    }
   }
 
   // --- Table ---

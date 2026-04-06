@@ -24,7 +24,14 @@ h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
   font-size: 0.95rem; font-weight: 600; color: #374151;
   margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.03em;
 }
-.chart-container { width: 100%; overflow-x: auto; }
+.chart-container { width: 100%; overflow-x: auto; position: relative; }
+.chart-container.collapsed { overflow: hidden; }
+.chart-container.collapsed::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 80px;
+  background: linear-gradient(transparent, white);
+  pointer-events: none;
+}
 .chart-container .vega-embed { width: 100%; }
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 thead th {
