@@ -18,22 +18,41 @@
 
 ### 1. Agent → Glasspad (sisällön luonti ja päivitys)
 
+**Ensisijainen: YAML-spec** (agentti kuvaa mitä näyttää, glasspad renderöi)
+
 ```
 POST /api/pads
-{
-  "type": "html" | "chart" | "markdown" | "table" | "dashboard",
-  "content": "..." | { spec },
-  "title": "optional title",
-  "ttl": 3600
-}
+Content-Type: application/x-yaml
+
+title: "Dashboard title"
+layout: grid-2col
+sections:
+  - title: "Chart"
+    type: chart
+    chart: { mark: bar, data: [...], encoding: {...} }
+  - title: "Table"
+    type: table
+    columns: [...]
+    data: [...]
+
+→ { "id": "abc123", "url": "http://localhost:3000/abc123" }
+```
+
+**Vaihtoehto: raw HTML** (erikoistapaukset)
+
+```
+POST /api/pads
+Content-Type: application/json
+
+{ "type": "html", "title": "...", "content": "<html>...</html>" }
 → { "id": "abc123", "url": "http://localhost:3000/abc123" }
 ```
 
 ```
 PUT /api/pads/:id
-{
-  "content": "updated content"
-}
+Content-Type: application/x-yaml
+
+(päivitetty YAML-spec)
 ```
 
 ### 2. Glasspad → Selain (renderöinti ja live-päivitykset)
@@ -97,15 +116,24 @@ glasspad events abc123 --follow
 # Tai Claude Coden sisältä MCP:n kautta
 ```
 
-## Sisältötyypit
+## Sisältöformaatit
 
-| Tyyppi | Agentti lähettää | Glasspad renderöi |
-|--------|-----------------|-------------------|
-| `html` | Raw HTML (+ CSS/JS) | Sandboxed iframe |
-| `chart` | Vega-Lite JSON spec | Vega-Lite → SVG/Canvas |
-| `markdown` | Markdown-teksti | Rendered HTML |
-| `table` | JSON array / CSV | Interaktiivinen taulukko |
-| `dashboard` | Array of pads | Grid-layout, useita näkymiä |
+**Ensisijainen: YAML-spec** — agentti kuvaa rakenteen, glasspad renderöi
+
+| Section type | Agentti kuvaa YAMLissa | Glasspad renderöi |
+|-------------|----------------------|-------------------|
+| `chart` | mark + data + encoding | Vega-Lite → SVG/Canvas |
+| `table` | columns + data | Interaktiivinen taulukko |
+| `stats` | label/value -parit | KPI-kortit |
+
+**Vaihtoehto: raw-formaatit** — erikoistapauksiin
+
+| Formaatti | Käyttö |
+|-----------|--------|
+| `html` | Täysi vapaus, agentti tuottaa valmiin HTML:n |
+| `markdown` | Tekstipainotteinen sisältö |
+| `json` | Suora Vega-Lite spec |
+| `csv` | Taulukkodata |
 
 ## Turvallisuusmalli
 
