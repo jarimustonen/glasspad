@@ -1,7 +1,7 @@
 (function() {
   'use strict';
 
-  // --- Bootstrap with error handling ---
+  // --- Bootstrap ---
   var spec, datasets, container;
   try {
     var specEl = document.getElementById('glasspad-spec');
@@ -20,10 +20,91 @@
     return;
   }
 
-  // --- Chart view registry (for filtering updates) ---
-  var chartViews = {};
+  // ============================================================
+  // FILTER STATE
+  // Per-dataset, per-field, Set of selected values
+  // { "events": { "country": Set(["IN","US"]), "device": Set(["mobile"]) } }
+  // Within same field: OR. Across fields: AND.
+  // ============================================================
+  var filterState = {};
 
-  // --- Utilities ---
+  function toggleFilter(source, field, value) {
+    if (!filterState[source]) filterState[source] = {};
+    var fieldFilters = filterState[source];
+    if (!fieldFilters[field]) fieldFilters[field] = {};
+    var key = distinctKey(value);
+    if (fieldFilters[field][key]) {
+      delete fieldFilters[field][key];
+      // Clean up empty
+      if (Object.keys(fieldFilters[field]).length === 0) delete fieldFilters[field];
+      if (Object.keys(filterState[source]).length === 0) delete filterState[source];
+    } else {
+      fieldFilters[field][key] = value;
+    }
+    onFilterChange();
+  }
+
+  function clearFilters() {
+    filterState = {};
+    onFilterChange();
+  }
+
+  function getActiveFilterCount() {
+    var count = 0;
+    for (var src in filterState) {
+      for (var field in filterState[src]) {
+        count += Object.keys(filterState[src][field]).length;
+      }
+    }
+    return count;
+  }
+
+  function getFilteredData(source) {
+    var raw = datasets[source];
+    if (!raw) return [];
+    var srcFilters = filterState[source];
+    if (!srcFilters) return raw;
+
+    return raw.filter(function(row) {
+      for (var field in srcFilters) {
+        var allowed = srcFilters[field];
+        var keys = Object.keys(allowed);
+        if (keys.length === 0) continue;
+        var rowKey = distinctKey(row[field]);
+        var match = false;
+        for (var i = 0; i < keys.length; i++) {
+          if (keys[i] === rowKey) { match = true; break; }
+        }
+        if (!match) return false; // AND across fields
+      }
+      return true;
+    });
+  }
+
+  function isValueFiltered(source, field, value) {
+    if (!filterState[source] || !filterState[source][field]) return false;
+    return !!filterState[source][field][distinctKey(value)];
+  }
+
+  // ============================================================
+  // SECTION REGISTRY — each section registers an update function
+  // ============================================================
+  var sectionRegistry = [];
+
+  function onFilterChange() {
+    for (var i = 0; i < sectionRegistry.length; i++) {
+      try {
+        sectionRegistry[i].update();
+      } catch (e) {
+        console.error('Section update error:', e);
+      }
+    }
+    renderFilterBar();
+  }
+
+  // ============================================================
+  // UTILITIES
+  // ============================================================
   function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -92,21 +173,21 @@
     return xIsQuant && yIsCat;
   }
 
-  // --- Data resolution ---
   function getDataResult(section) {
     if (section.source) {
-      if (!(section.source in datasets)) {
-        return { ok: false, error: 'Unknown dataset: ' + section.source };
-      }
-      return { ok: true, data: datasets[section.source] };
+      if (!(section.source in datasets)) return { ok: false, error: 'Unknown dataset: ' + section.source };
+      return { ok: true, data: datasets[section.source], source: section.source };
     }
-    if (section.inline_data) {
-      return { ok: true, data: section.inline_data };
-    }
+    if (section.inline_data) return { ok: true, data: section.inline_data, source: null };
     return { ok: false, error: 'No data source configured' };
   }
 
-  // --- Section layout metadata (computed once, used for rendering + span decisions) ---
+  function getFilteredDataResult(section) {
+    var dr = getDataResult(section);
+    if (!dr.ok || !dr.source) return dr;
+    return { ok: true, data: getFilteredData(dr.source), source: dr.source };
+  }
+
   function getSectionLayoutMeta(section, dataResult) {
     var meta = { spanFull: false, categories: 0, shouldCollapse: false };
     if (section.type === 'table') { meta.spanFull = true; return meta; }
@@ -123,7 +204,9 @@
     return meta;
   }
 
-  // --- Collapse toggle (shared by charts and tables) ---
+  // ============================================================
+  // COLLAPSE TOGGLE
+  // ============================================================
   function addCollapseToggle(actionsEl, wrapper, showAllText, onToggle) {
     var expanded = false;
     var wrapperId = wrapper.id || ('collapse-' + Math.random().toString(36).slice(2, 8));
@@ -164,7 +247,6 @@
     bottomBtn.addEventListener('click', toggle);
     topLink.addEventListener('click', toggle);
 
-    // Insert bottom button after wrapper
     if (wrapper.nextSibling) {
       wrapper.parentNode.insertBefore(bottomBtn, wrapper.nextSibling);
     } else {
@@ -172,7 +254,9 @@
     }
   }
 
-  // --- Create section card with stable header structure ---
+  // ============================================================
+  // SECTION CARD STRUCTURE
+  // ============================================================
   function createSectionCard(section, index) {
     var card = document.createElement('div');
     card.className = 'section-card';
@@ -198,51 +282,24 @@
     return { card: card, body: body, actions: actions };
   }
 
-  // --- Section rendering ---
-  function renderSection(section, index, layoutMeta) {
-    var s = createSectionCard(section, index);
-    var dataResult = getDataResult(section);
-
-    try {
-      switch (section.type) {
-        case 'chart':
-          renderChart(s, section, dataResult, index, layoutMeta);
-          break;
-        case 'table':
-          renderTable(s, section, dataResult);
-          break;
-        case 'stats':
-          renderStats(s, section, dataResult);
-          break;
-        case 'list':
-          appendError(s.body, 'List rendering coming soon');
-          break;
-        default:
-          appendError(s.body, 'Unknown section type: ' + String(section.type));
-      }
-    } catch (e) {
-      appendError(s.body, 'Render error: ' + e.message);
-      console.error('Section "' + section.title + '":', e);
-    }
-
-    return s.card;
-  }
-
-  // --- Chart ---
+  // ============================================================
+  // CHART
+  // ============================================================
   var CHART_COLLAPSED_HEIGHT = 350;
   var CHART_COLLAPSE_THRESHOLD = 10;
+  var chartViews = {};
 
-  function renderChart(s, section, dataResult, index, layoutMeta) {
+  function mountChart(s, section, index, layoutMeta) {
     var cfg = section.chart;
-    if (!cfg) { appendError(s.body, 'No chart config'); return; }
-    if (!dataResult.ok) { appendError(s.body, dataResult.error); return; }
+    if (!cfg) { appendError(s.body, 'No chart config'); return null; }
+    var dr = getDataResult(section);
+    if (!dr.ok) { appendError(s.body, dr.error); return null; }
 
     var sectionKey = section.id || ('section-' + index);
-    var data = dataResult.data || [];
+    var data = getFilteredData(dr.source) || dr.data || [];
     var mark = normalizeMark(cfg.mark);
     var markType = getMarkType(cfg.mark);
 
-    // Dynamic height for horizontal bar charts
     var height = 300;
     if (layoutMeta.categories > 0) {
       height = Math.max(200, layoutMeta.categories * 22 + 60);
@@ -264,7 +321,7 @@
       width: 'container',
       height: height,
       mark: mark,
-      data: { values: data },
+      data: { name: 'source', values: data },
       encoding: cfg.encoding || {}
     };
 
@@ -274,9 +331,26 @@
       vlSpec.view = { stroke: null };
     }
 
+    // Add Vega selection for interactive charts
+    var filterField = section.interactive_filter && section.interactive_filter.field;
+
     vegaEmbed(div, vlSpec, { actions: false, renderer: 'svg' })
       .then(function(result) {
         chartViews[sectionKey] = result.view;
+
+        // Wire click handler for interactive filter
+        if (filterField && dr.source) {
+          result.view.addEventListener('click', function(event, item) {
+            if (item && item.datum) {
+              var value = item.datum[filterField];
+              if (value !== undefined && value !== null) {
+                toggleFilter(dr.source, filterField, value);
+              }
+            }
+          });
+          // Show pointer cursor on interactive charts
+          div.style.cursor = 'pointer';
+        }
       })
       .catch(function(err) {
         console.error('Chart "' + section.title + '":', err);
@@ -288,9 +362,19 @@
         wrapper.style.maxHeight = exp ? '' : CHART_COLLAPSED_HEIGHT + 'px';
       });
     }
+
+    // Return update function
+    return function updateChart() {
+      var view = chartViews[sectionKey];
+      if (!view) return;
+      var filtered = dr.source ? getFilteredData(dr.source) : dr.data;
+      view.data('source', filtered || []).run();
+    };
   }
 
-  // --- Table ---
+  // ============================================================
+  // TABLE
+  // ============================================================
   var INITIAL_ROWS = 10;
   var MAX_ROWS = 1000;
 
@@ -327,8 +411,8 @@
         break;
       case 'temporal':
         var at = Date.parse(a), bt = Date.parse(b);
-        if (!isNaN(at) && !isNaN(bt)) { result = at - bt; }
-        else { result = String(a).localeCompare(String(b)); }
+        if (!isNaN(at) && !isNaN(bt)) result = at - bt;
+        else result = String(a).localeCompare(String(b));
         break;
       case 'boolean':
         result = (a === b) ? 0 : a ? 1 : -1;
@@ -339,29 +423,22 @@
     return ascending ? result : -result;
   }
 
-  function renderTable(s, section, dataResult) {
+  function mountTable(s, section) {
     var cfg = section.table;
-    if (!cfg || !cfg.columns) { appendError(s.body, 'No table config'); return; }
-    if (!dataResult.ok) { appendError(s.body, dataResult.error); return; }
-    var allData = dataResult.data;
-    if (!allData || allData.length === 0) { appendError(s.body, 'No data'); return; }
-
-    var totalRows = Math.min(allData.length, MAX_ROWS);
-    var sourceData = allData.slice(0, totalRows);
-    var displayData = sourceData.slice();
+    if (!cfg || !cfg.columns) { appendError(s.body, 'No table config'); return null; }
+    var dr = getDataResult(section);
+    if (!dr.ok) { appendError(s.body, dr.error); return null; }
 
     var sortTypes = {};
     for (var c = 0; c < cfg.columns.length; c++) {
       var col = cfg.columns[c];
-      sortTypes[col.field] = col.sort || detectSortType(sourceData, col.field);
+      sortTypes[col.field] = col.sort || detectSortType(dr.data, col.field);
     }
 
     var sortState = null;
 
-    // Build stable table structure
     var wrapper = document.createElement('div');
     wrapper.className = 'table-wrapper';
-    if (totalRows > INITIAL_ROWS) wrapper.classList.add('collapsed');
 
     var table = document.createElement('table');
     var thead = document.createElement('thead');
@@ -371,18 +448,16 @@
     wrapper.appendChild(table);
     s.body.appendChild(wrapper);
 
-    // Build thead once
+    var collapseAdded = false;
+
     function buildThead() {
       var tr = document.createElement('tr');
       for (var c = 0; c < cfg.columns.length; c++) {
         var col = cfg.columns[c];
         var th = document.createElement('th');
         th.setAttribute('scope', 'col');
-
         var isActive = sortState && sortState.field === col.field;
-        var ariaSort = 'none';
-        if (isActive) ariaSort = sortState.ascending ? 'ascending' : 'descending';
-        th.setAttribute('aria-sort', ariaSort);
+        th.setAttribute('aria-sort', isActive ? (sortState.ascending ? 'ascending' : 'descending') : 'none');
         if (isActive) th.className = sortState.ascending ? 'sort-asc' : 'sort-desc';
         if (col.width) th.style.width = col.width + 'px';
 
@@ -394,12 +469,9 @@
 
         var indicator = document.createElement('span');
         indicator.className = 'sort-indicator';
-        if (isActive) {
-          indicator.textContent = sortState.ascending ? ' \u25B2' : ' \u25BC';
-        }
+        if (isActive) indicator.textContent = sortState.ascending ? ' \u25B2' : ' \u25BC';
         btn.appendChild(indicator);
         btn.addEventListener('click', onHeaderClick);
-
         th.appendChild(btn);
         tr.appendChild(th);
       }
@@ -407,17 +479,16 @@
       thead.appendChild(tr);
     }
 
-    // Rebuild tbody only
     function rebuildTbody() {
+      var allData = dr.source ? getFilteredData(dr.source) : dr.data;
+      if (!allData) allData = [];
+      var totalRows = Math.min(allData.length, MAX_ROWS);
+      var sourceData = allData.slice(0, totalRows);
+      var displayData = sourceData.slice();
+
       if (sortState) {
-        var sf = sortState.field;
-        var sa = sortState.ascending;
-        var st = sortTypes[sf] || 'string';
-        displayData.sort(function(a, b) {
-          return compareValues(a[sf], b[sf], st, sa);
-        });
-      } else {
-        displayData = sourceData.slice();
+        var sf = sortState.field, sa = sortState.ascending, st = sortTypes[sf] || 'string';
+        displayData.sort(function(a, b) { return compareValues(a[sf], b[sf], st, sa); });
       }
 
       var html = '';
@@ -430,18 +501,27 @@
         html += '</tr>';
       }
       tbody.innerHTML = html;
+
+      // Manage collapse state
+      if (totalRows > INITIAL_ROWS) {
+        if (!collapseAdded) {
+          wrapper.classList.add('collapsed');
+          var showAllText = 'Show all ' + totalRows + ' rows';
+          if (allData.length > MAX_ROWS) showAllText += ' (of ' + allData.length + ' total)';
+          addCollapseToggle(s.actions, wrapper, showAllText);
+          collapseAdded = true;
+        }
+      } else {
+        wrapper.classList.remove('collapsed');
+      }
     }
 
     function onHeaderClick(e) {
       var field = e.currentTarget.getAttribute('data-field');
       if (!field) return;
-      if (!sortState || sortState.field !== field) {
-        sortState = { field: field, ascending: true };
-      } else if (sortState.ascending) {
-        sortState.ascending = false;
-      } else {
-        sortState = null;
-      }
+      if (!sortState || sortState.field !== field) sortState = { field: field, ascending: true };
+      else if (sortState.ascending) sortState.ascending = false;
+      else sortState = null;
       buildThead();
       rebuildTbody();
     }
@@ -449,25 +529,44 @@
     buildThead();
     rebuildTbody();
 
-    if (totalRows > INITIAL_ROWS) {
-      var showAllText = 'Show all ' + totalRows + ' rows';
-      if (allData.length > MAX_ROWS) showAllText += ' (of ' + allData.length + ' total)';
-      addCollapseToggle(s.actions, wrapper, showAllText);
-    }
+    return function updateTable() {
+      rebuildTbody();
+    };
   }
 
-  // --- Stats ---
-  function renderStats(s, section, dataResult) {
-    if (section.stats && section.stats.items) {
-      if (!dataResult.ok) { appendError(s.body, dataResult.error); return; }
-      renderAggregateStats(s.body, section.stats.items, dataResult.data || []);
-      return;
-    }
-    if (section.inline_data) {
+  // ============================================================
+  // STATS
+  // ============================================================
+  function mountStats(s, section) {
+    var dr = getDataResult(section);
+
+    // Inline stats (no filtering)
+    if (!section.stats && section.inline_data) {
       renderInlineStats(s.body, section.inline_data);
-      return;
+      return null;
     }
-    appendError(s.body, 'No stats config');
+    if (!section.stats || !section.stats.items) {
+      appendError(s.body, 'No stats config');
+      return null;
+    }
+    if (!dr.ok) { appendError(s.body, dr.error); return null; }
+
+    var grid = document.createElement('div');
+    grid.className = 'stats-grid';
+    s.body.appendChild(grid);
+
+    var items = section.stats.items;
+
+    function rebuild() {
+      var data = dr.source ? getFilteredData(dr.source) : dr.data || [];
+      grid.innerHTML = '';
+      for (var i = 0; i < items.length; i++) {
+        grid.appendChild(statCard(items[i].label, computeAggregate(items[i], data)));
+      }
+    }
+
+    rebuild();
+    return function updateStats() { rebuild(); };
   }
 
   function renderInlineStats(parent, rows) {
@@ -475,15 +574,6 @@
     grid.className = 'stats-grid';
     for (var i = 0; i < rows.length; i++) {
       grid.appendChild(statCard(formatCell(rows[i].label), formatCell(rows[i].value)));
-    }
-    parent.appendChild(grid);
-  }
-
-  function renderAggregateStats(parent, items, data) {
-    var grid = document.createElement('div');
-    grid.className = 'stats-grid';
-    for (var i = 0; i < items.length; i++) {
-      grid.appendChild(statCard(items[i].label, computeAggregate(items[i], data)));
     }
     parent.appendChild(grid);
   }
@@ -515,12 +605,9 @@
       });
     }
 
-    var agg = item.aggregate;
-    var field = item.field;
-
+    var agg = item.aggregate, field = item.field;
     if (agg === 'count') return formatCount(filtered.length);
     if (!field) return '\u26a0 missing field';
-
     if (agg === 'distinct') return formatCount(countDistinct(filtered, field));
 
     var nums = [];
@@ -530,27 +617,10 @@
     }
     if (nums.length === 0) return '\u2014';
 
-    if (agg === 'sum') {
-      var sum = 0;
-      for (var si = 0; si < nums.length; si++) sum += nums[si];
-      return formatDecimal(sum);
-    }
-    if (agg === 'avg') {
-      var total = 0;
-      for (var ai = 0; ai < nums.length; ai++) total += nums[ai];
-      return formatDecimal(total / nums.length);
-    }
-    if (agg === 'min') {
-      var min = nums[0];
-      for (var mi = 1; mi < nums.length; mi++) if (nums[mi] < min) min = nums[mi];
-      return formatDecimal(min);
-    }
-    if (agg === 'max') {
-      var max = nums[0];
-      for (var xi = 1; xi < nums.length; xi++) if (nums[xi] > max) max = nums[xi];
-      return formatDecimal(max);
-    }
-
+    if (agg === 'sum') { var sum = 0; for (var si = 0; si < nums.length; si++) sum += nums[si]; return formatDecimal(sum); }
+    if (agg === 'avg') { var tot = 0; for (var ai = 0; ai < nums.length; ai++) tot += nums[ai]; return formatDecimal(tot / nums.length); }
+    if (agg === 'min') { var min = nums[0]; for (var mi = 1; mi < nums.length; mi++) if (nums[mi] < min) min = nums[mi]; return formatDecimal(min); }
+    if (agg === 'max') { var max = nums[0]; for (var xi = 1; xi < nums.length; xi++) if (nums[xi] > max) max = nums[xi]; return formatDecimal(max); }
     return '\u26a0 unknown: ' + agg;
   }
 
@@ -560,13 +630,108 @@
     return false;
   }
 
-  // --- Render all sections ---
+  // ============================================================
+  // FILTER BAR
+  // ============================================================
+  var filterBarEl = null;
+
+  function createFilterBar() {
+    filterBarEl = document.createElement('div');
+    filterBarEl.className = 'filter-bar';
+    filterBarEl.style.display = 'none';
+    // Insert before dashboard
+    container.parentNode.insertBefore(filterBarEl, container);
+  }
+
+  function renderFilterBar() {
+    if (!filterBarEl) return;
+    var count = getActiveFilterCount();
+    if (count === 0) {
+      filterBarEl.style.display = 'none';
+      filterBarEl.classList.remove('filter-bar-pulse');
+      return;
+    }
+
+    filterBarEl.style.display = '';
+    filterBarEl.innerHTML = '';
+
+    var label = document.createElement('span');
+    label.className = 'filter-bar-label';
+    label.textContent = 'Filters:';
+    filterBarEl.appendChild(label);
+
+    var tags = document.createElement('div');
+    tags.className = 'filter-bar-tags';
+
+    for (var src in filterState) {
+      for (var field in filterState[src]) {
+        var values = filterState[src][field];
+        for (var key in values) {
+          var value = values[key];
+          var tag = document.createElement('button');
+          tag.className = 'filter-tag';
+          tag.textContent = field + ': ' + formatCell(value);
+          tag.setAttribute('title', 'Remove filter');
+          (function(s, f, v) {
+            tag.addEventListener('click', function() { toggleFilter(s, f, v); });
+          })(src, field, value);
+          tags.appendChild(tag);
+        }
+      }
+    }
+    filterBarEl.appendChild(tags);
+
+    var resetBtn = document.createElement('button');
+    resetBtn.className = 'filter-bar-reset';
+    resetBtn.textContent = 'Reset all';
+    resetBtn.addEventListener('click', clearFilters);
+    filterBarEl.appendChild(resetBtn);
+
+    // Pulse animation
+    filterBarEl.classList.remove('filter-bar-pulse');
+    void filterBarEl.offsetWidth; // force reflow
+    filterBarEl.classList.add('filter-bar-pulse');
+  }
+
+  // ============================================================
+  // RENDER ALL SECTIONS
+  // ============================================================
+  createFilterBar();
+
   spec.sections.forEach(function(section, i) {
     var dataResult = getDataResult(section);
     var layoutMeta = getSectionLayoutMeta(section, dataResult);
-    var card = renderSection(section, i, layoutMeta);
-    if (layoutMeta.spanFull) card.classList.add('span-full');
-    container.appendChild(card);
+    var s = createSectionCard(section, i);
+
+    var updateFn = null;
+    try {
+      switch (section.type) {
+        case 'chart':
+          updateFn = mountChart(s, section, i, layoutMeta);
+          break;
+        case 'table':
+          updateFn = mountTable(s, section);
+          break;
+        case 'stats':
+          updateFn = mountStats(s, section);
+          break;
+        case 'list':
+          appendError(s.body, 'List rendering coming soon');
+          break;
+        default:
+          appendError(s.body, 'Unknown section type: ' + String(section.type));
+      }
+    } catch (e) {
+      appendError(s.body, 'Render error: ' + e.message);
+      console.error('Section "' + section.title + '":', e);
+    }
+
+    if (updateFn) {
+      sectionRegistry.push({ section: section, update: updateFn });
+    }
+
+    if (layoutMeta.spanFull) s.card.classList.add('span-full');
+    container.appendChild(s.card);
   });
 
 })();
