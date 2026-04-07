@@ -27,8 +27,8 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 - [x] 7.10 CLI --data säilyttää source-identiteetin (cross-filtering toimii)
 
 Puuttuu vielä:
-- [ ] 7.11 Temporal-akselin kiinteä domain (events per hour ei saa "zoomata" suodatettaessa)
-- [ ] 7.12 Aikavälivalinta (brush/interval selection temporal chartissa)
+- [x] 7.11 Temporal-akselin kiinteä domain (events per hour ei saa "zoomata" suodatettaessa)
+- [x] 7.12 Aikavälivalinta (brush/interval selection temporal chartissa)
 - [ ] 7.13 Visuaalinen palaute: suodatetut arvot näkyvät himmennettyinä myös normaali-näkymässä (ei vain edit-tilassa)
 
 ---

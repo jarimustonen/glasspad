@@ -23,7 +23,8 @@
   // ============================================================
   // FILTER STATE
   // ============================================================
-  var filterState = Object.create(null);
+  var filterState = Object.create(null);       // discrete: filterState[source][field] = { distinctKey: value }
+  var rangeFilterState = Object.create(null);  // temporal: rangeFilterState[source][field] = { min: ms, max: ms }
   var filteredCache = null;
   var prevFilterCount = 0;
 
@@ -45,6 +46,20 @@
     onFilterChange();
   }
 
+  function setRangeFilter(source, field, min, max) {
+    if (!rangeFilterState[source]) rangeFilterState[source] = Object.create(null);
+    rangeFilterState[source][field] = { min: min, max: max };
+    onFilterChange();
+  }
+
+  function clearRangeFilter(source, field) {
+    if (rangeFilterState[source]) {
+      delete rangeFilterState[source][field];
+      if (Object.keys(rangeFilterState[source]).length === 0) delete rangeFilterState[source];
+    }
+    onFilterChange();
+  }
+
   function clearFieldFilter(source, field) {
     if (filterState[source]) {
       delete filterState[source][field];
@@ -55,6 +70,7 @@
 
   function clearFilters() {
     filterState = Object.create(null);
+    rangeFilterState = Object.create(null);
     onFilterChange();
   }
 
@@ -64,6 +80,9 @@
       for (var field in filterState[src]) {
         count += Object.keys(filterState[src][field]).length;
       }
+    }
+    for (var src2 in rangeFilterState) {
+      count += Object.keys(rangeFilterState[src2]).length;
     }
     return count;
   }
@@ -84,20 +103,66 @@
     var raw = datasets[source];
     if (!raw) return [];
     var srcFilters = filterState[source];
-    if (!srcFilters) { filteredCache[source] = raw; return raw; }
+    var srcRanges = rangeFilterState[source];
+    if (!srcFilters && !srcRanges) { filteredCache[source] = raw; return raw; }
 
-    var fields = Object.keys(srcFilters);
+    var fields = srcFilters ? Object.keys(srcFilters) : [];
+    var rangeFields = srcRanges ? Object.keys(srcRanges) : [];
     var result = raw.filter(function(row) {
       for (var i = 0; i < fields.length; i++) {
         var field = fields[i];
         var allowed = srcFilters[field];
         if (!(distinctKey(row[field]) in allowed)) return false;
       }
+      for (var j = 0; j < rangeFields.length; j++) {
+        var rf = rangeFields[j];
+        var range = srcRanges[rf];
+        var v = row[rf];
+        if (v == null) return false;
+        var t = (typeof v === 'number') ? v : Date.parse(v);
+        if (isNaN(t) || t < range.min || t > range.max) return false;
+      }
       return true;
     });
 
     filteredCache[source] = result;
     return result;
+  }
+
+  // Like getFilteredData but excludes one range filter (so a temporal brush
+  // chart doesn't filter out its own unselected bars)
+  function getFilteredDataExcludingRange(source, excludeRangeField) {
+    var raw = datasets[source];
+    if (!raw) return [];
+    var srcFilters = filterState[source];
+    var srcRanges = rangeFilterState[source];
+
+    var fields = srcFilters ? Object.keys(srcFilters) : [];
+    var rangeFields = [];
+    if (srcRanges) {
+      for (var rf in srcRanges) {
+        if (rf !== excludeRangeField) rangeFields.push(rf);
+      }
+    }
+
+    if (fields.length === 0 && rangeFields.length === 0) return raw;
+
+    return raw.filter(function(row) {
+      for (var i = 0; i < fields.length; i++) {
+        var field = fields[i];
+        var allowed = srcFilters[field];
+        if (!(distinctKey(row[field]) in allowed)) return false;
+      }
+      for (var j = 0; j < rangeFields.length; j++) {
+        var rfield = rangeFields[j];
+        var range = srcRanges[rfield];
+        var v = row[rfield];
+        if (v == null) return false;
+        var t = (typeof v === 'number') ? v : Date.parse(v);
+        if (isNaN(t) || t < range.min || t > range.max) return false;
+      }
+      return true;
+    });
   }
 
   // ============================================================
@@ -176,6 +241,35 @@
       }
     }
     return values;
+  }
+
+  function formatTemporalRange(minMs, maxMs) {
+    var d1 = new Date(minMs), d2 = new Date(maxMs);
+    var sameDay = d1.toDateString() === d2.toDateString();
+    var timeFmt = { hour: '2-digit', minute: '2-digit' };
+    if (sameDay) {
+      return d1.toLocaleDateString() + ' ' +
+        d1.toLocaleTimeString(undefined, timeFmt) + ' – ' +
+        d2.toLocaleTimeString(undefined, timeFmt);
+    }
+    var dateFmt = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    return d1.toLocaleDateString(undefined, dateFmt) + ' – ' +
+      d2.toLocaleDateString(undefined, dateFmt);
+  }
+
+  // Compute [min, max] ISO strings for a temporal field
+  function temporalExtent(data, field) {
+    var min = Infinity, max = -Infinity;
+    for (var i = 0; i < data.length; i++) {
+      var v = data[i][field];
+      if (v == null) continue;
+      var t = (typeof v === 'number') ? v : Date.parse(v);
+      if (isNaN(t)) continue;
+      if (t < min) min = t;
+      if (t > max) max = t;
+    }
+    if (min === Infinity) return null;
+    return [new Date(min).toISOString(), new Date(max).toISOString()];
   }
 
   // Update a named Vega dataset using changeset
@@ -403,10 +497,12 @@
 
     var encoding = JSON.parse(JSON.stringify(cfg.encoding || {}));
 
-    // Fix count axes: hide fractional tick labels (0.5, 1.5 etc)
+    // Fix axes: integer-only count ticks, lock temporal + count domains
+    var temporalEnc = null; // track for count axis domain computation
     ['x', 'y'].forEach(function(ch) {
       var enc = encoding[ch];
       if (!enc) return;
+      if (enc.type === 'temporal' && enc.field) temporalEnc = enc;
       if (enc.aggregate === 'count') {
         if (!enc.axis) enc.axis = {};
         // Integer-only: hide labels AND ticks for fractional values
@@ -416,14 +512,66 @@
       }
     });
 
+    // Lock temporal domain to unfiltered data extent (non-timeUnit only)
+    if (dr.source && rawData.length > 0) {
+      ['x', 'y'].forEach(function(ch) {
+        var enc = encoding[ch];
+        if (!enc) return;
+        if (enc.type === 'temporal' && enc.field && !enc.timeUnit) {
+          var extent = temporalExtent(rawData, enc.field);
+          if (extent) {
+            if (!enc.scale) enc.scale = {};
+            enc.scale.domain = extent;
+          }
+        }
+      });
+    }
+
+    // Detect temporal channel for brush selection
+    var temporalChannel = null;
+    var temporalField = null;
+    var hasTimeUnit = false;
+    ['x', 'y'].forEach(function(ch) {
+      var enc = encoding[ch];
+      if (enc && enc.type === 'temporal' && enc.field && dr.source) {
+        temporalChannel = ch;
+        temporalField = enc.field;
+        if (enc.timeUnit) hasTimeUnit = true;
+      }
+    });
+
     var vlSpec = {
       '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
       width: 'container',
-      height: useStepHeight ? { step: 22 } : height,
-      mark: mark,
-      data: { name: 'source', values: data },
-      encoding: encoding
+      height: useStepHeight ? { step: 22 } : height
     };
+
+    if (hasTimeUnit && dr.source) {
+      // Ghost layer pattern: invisible rawData layer locks both axes,
+      // visible filtered layer shows actual bars
+      var ghostMark = JSON.parse(JSON.stringify(mark));
+      ghostMark.opacity = 0;
+      ghostMark.tooltip = false;
+
+      vlSpec.encoding = encoding;
+      vlSpec.layer = [
+        { data: { name: 'source_raw', values: rawData }, mark: ghostMark },
+        { data: { name: 'source', values: data }, mark: mark }
+      ];
+    } else {
+      vlSpec.mark = mark;
+      vlSpec.data = { name: 'source', values: data };
+      vlSpec.encoding = encoding;
+    }
+
+    // Add interval selection (brush) for non-timeUnit temporal charts only
+    // (timeUnit charts like hours are cyclical — brush range filter doesn't apply)
+    if (temporalChannel && !filterField && !hasTimeUnit) {
+      vlSpec.params = [{
+        name: 'brush',
+        select: { type: 'interval', encodings: [temporalChannel] }
+      }];
+    }
 
     if (markType === 'arc') {
       delete vlSpec.width;
@@ -640,6 +788,38 @@
           });
         }
 
+        // Brush selection listener for non-timeUnit temporal charts
+        if (temporalChannel && temporalField && !filterField && !hasTimeUnit) {
+          var brushDebounce = null;
+          result.view.addSignalListener('brush', function(name, value) {
+            clearTimeout(brushDebounce);
+            brushDebounce = setTimeout(function() {
+              // Vega-Lite may key the range by the raw field or a timeUnit-derived
+              // name (e.g. "hours_ts"). Try all keys and pick the array.
+              var range = null;
+              if (value) {
+                for (var k in value) {
+                  if (Array.isArray(value[k]) && value[k].length === 2) {
+                    range = value[k];
+                    break;
+                  }
+                }
+              }
+              if (range) {
+                var min = +range[0], max = +range[1];
+                if (isFinite(min) && isFinite(max) && min < max) {
+                  setRangeFilter(dr.source, temporalField, min, max);
+                  return;
+                }
+              }
+              // Empty or cleared selection — remove range filter
+              if (rangeFilterState[dr.source] && rangeFilterState[dr.source][temporalField]) {
+                clearRangeFilter(dr.source, temporalField);
+              }
+            }, 80);
+          });
+        }
+
         // Catch up if filters changed during async embed
         var latest = dr.source ? getFilteredData(dr.source) : rawData;
         if (latest !== data) {
@@ -651,6 +831,8 @@
         console.error('Chart "' + section.title + '":', err);
         appendError(div, 'Chart error: ' + err.message);
       });
+
+    var lastFilteredData = data; // Track last data to avoid unnecessary updates
 
     return function updateChart() {
       if (filterMode === 'edit') return; // Don't update while editing
@@ -667,8 +849,12 @@
         }
       }
 
+      // Skip data update if unchanged — preserves brush selection state
       var view = chartViews[sectionKey];
-      if (view) vegaUpdateData(view, 'source', filtered);
+      if (view && filtered !== lastFilteredData) {
+        lastFilteredData = filtered;
+        vegaUpdateData(view, 'source', filtered);
+      }
       updateFilterBtnState();
     };
   }
@@ -966,6 +1152,19 @@
           tag.addEventListener('click', function() { clearFieldFilter(s, f); });
         })(src, field);
         tags.appendChild(tag);
+      }
+    }
+    for (var rsrc in rangeFilterState) {
+      for (var rfield in rangeFilterState[rsrc]) {
+        var range = rangeFilterState[rsrc][rfield];
+        var tag2 = document.createElement('button');
+        tag2.className = 'filter-tag';
+        tag2.textContent = rfield + ': ' + formatTemporalRange(range.min, range.max);
+        tag2.setAttribute('title', 'Remove time range filter');
+        (function(s2, f2) {
+          tag2.addEventListener('click', function() { clearRangeFilter(s2, f2); });
+        })(rsrc, rfield);
+        tags.appendChild(tag2);
       }
     }
     filterBarEl.appendChild(tags);
