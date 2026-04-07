@@ -247,6 +247,22 @@
     return typeof v + ':' + String(v);
   }
 
+  // Infer the JS type of a field from data (first non-null value)
+  function inferFieldType(data, field) {
+    for (var i = 0; i < data.length; i++) {
+      var v = data[i][field];
+      if (v !== null && v !== undefined) return typeof v;
+    }
+    return 'string';
+  }
+
+  // Coerce a string extracted from aria-label back to the field's native type
+  function coerceExtractedValue(strVal, fieldType) {
+    if (fieldType === 'number') { var n = Number(strVal); return isNaN(n) ? strVal : n; }
+    if (fieldType === 'boolean') return strVal === 'true';
+    return strVal;
+  }
+
   function countDistinct(data, field) {
     var seen = Object.create(null);
     for (var i = 0; i < data.length; i++) {
@@ -632,6 +648,7 @@
     // --- Filter edit state ---
     var filterMode = 'view'; // 'view' or 'edit'
     var pendingSelection = null; // { distinctKey: true/false }
+    var selectionRetries = 0;
     var filterBtn = null;
     var editControls = null;
 
@@ -1040,21 +1057,26 @@
     }
 
     // Apply opacity directly to SVG mark elements based on selection state
+    var filterFieldType = filterField ? inferFieldType(rawData, filterField) : 'string';
+
     function renderChartWithSelection() {
       if (!pendingSelection) return;
       var svg = div.querySelector('svg');
       if (!svg) {
-        setTimeout(renderChartWithSelection, 100);
+        if (++selectionRetries < 20) setTimeout(renderChartWithSelection, 100);
         return;
       }
+      selectionRetries = 0;
 
       // Find all mark path/rect elements with aria-label containing filterField values
       var marks = svg.querySelectorAll('.mark-rect path, .mark-arc path');
       for (var i = 0; i < marks.length; i++) {
         var label = marks[i].getAttribute('aria-label') || '';
-        var value = extractFieldFromLabel(label, filterField);
-        if (value !== null) {
-          var key = distinctKey(value);
+        var strValue = extractFieldFromLabel(label, filterField);
+        if (strValue !== null) {
+          // Coerce aria-label string back to the field's native type for correct key lookup
+          var typed = coerceExtractedValue(strValue, filterFieldType);
+          var key = distinctKey(typed);
           var selected = pendingSelection[key] !== false;
           marks[i].style.opacity = selected ? '1' : '0.2';
         }
@@ -1200,8 +1222,11 @@
         break;
       case 'temporal':
         var at = Date.parse(a), bt = Date.parse(b);
-        if (!isNaN(at) && !isNaN(bt)) result = at - bt;
-        else result = String(a).localeCompare(String(b));
+        var aInvalid = isNaN(at), bInvalid = isNaN(bt);
+        if (aInvalid && bInvalid) result = 0;
+        else if (aInvalid) result = 1;
+        else if (bInvalid) result = -1;
+        else result = at - bt;
         break;
       case 'boolean':
         result = (a === b) ? 0 : a ? 1 : -1;
