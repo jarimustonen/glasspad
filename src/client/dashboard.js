@@ -87,6 +87,10 @@
     filterState = Object.create(null);
     rangeFilterState = Object.create(null);
     hourFilterState = Object.create(null);
+    // Clear any Vega brush selection visuals
+    for (var key in chartViews) {
+      try { chartViews[key].signal('brush', {}).run(); } catch (e) { /* no brush */ }
+    }
     onFilterChange();
   }
 
@@ -158,37 +162,54 @@
     return result;
   }
 
-  // Like getFilteredData but excludes one range filter (so a temporal brush
-  // chart doesn't filter out its own unselected bars)
-  function getFilteredDataExcludingRange(source, excludeRangeField) {
+  // Filter data excluding one specific filter (for edit mode and brush self-filtering)
+  // excludeKind: 'discrete', 'range', or 'hour'
+  function getFilteredDataExcluding(source, excludeField, excludeKind) {
     var raw = datasets[source];
     if (!raw) return [];
     var srcFilters = filterState[source];
     var srcRanges = rangeFilterState[source];
+    var srcHours = hourFilterState[source];
 
-    var fields = srcFilters ? Object.keys(srcFilters) : [];
+    var fields = [];
+    if (srcFilters) {
+      for (var f in srcFilters) {
+        if (!(excludeKind === 'discrete' && f === excludeField)) fields.push(f);
+      }
+    }
     var rangeFields = [];
     if (srcRanges) {
       for (var rf in srcRanges) {
-        if (rf !== excludeRangeField) rangeFields.push(rf);
+        if (!(excludeKind === 'range' && rf === excludeField)) rangeFields.push(rf);
+      }
+    }
+    var hourFields = [];
+    if (srcHours) {
+      for (var hf in srcHours) {
+        if (!(excludeKind === 'hour' && hf === excludeField)) hourFields.push(hf);
       }
     }
 
-    if (fields.length === 0 && rangeFields.length === 0) return raw;
+    if (fields.length === 0 && rangeFields.length === 0 && hourFields.length === 0) return raw;
 
     return raw.filter(function(row) {
       for (var i = 0; i < fields.length; i++) {
-        var field = fields[i];
-        var allowed = srcFilters[field];
-        if (!(distinctKey(row[field]) in allowed)) return false;
+        var allowed = srcFilters[fields[i]];
+        if (!(distinctKey(row[fields[i]]) in allowed)) return false;
       }
       for (var j = 0; j < rangeFields.length; j++) {
-        var rfield = rangeFields[j];
-        var range = srcRanges[rfield];
-        var v = row[rfield];
+        var range = srcRanges[rangeFields[j]];
+        var v = row[rangeFields[j]];
         if (v == null) return false;
         var t = (typeof v === 'number') ? v : Date.parse(v);
         if (isNaN(t) || t < range.min || t > range.max) return false;
+      }
+      for (var h = 0; h < hourFields.length; h++) {
+        var hRange = srcHours[hourFields[h]];
+        var hv = row[hourFields[h]];
+        if (hv == null) return false;
+        var hour = new Date(hv).getHours();
+        if (hour < hRange.min || hour > hRange.max) return false;
       }
       return true;
     });
@@ -875,9 +896,14 @@
         var cur = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
         pendingMin = cur ? cur.min : minHourData;
         pendingMax = cur ? cur.max : maxHourData;
-        // Show ALL data in the chart so user sees every bar
+        // Show data with all filters EXCEPT the hour filter being edited
         var view = chartViews[sectionKey];
-        if (view) vegaUpdateData(view, 'source', rawData);
+        if (view) {
+          var editData = dr.source
+            ? getFilteredDataExcluding(dr.source, temporalField, 'hour')
+            : rawData;
+          vegaUpdateData(view, 'source', editData);
+        }
         // Align slider with chart X-axis after layout settles
         requestAnimationFrame(function() {
           alignSliderToChart();
@@ -980,10 +1006,13 @@
         }
       }
 
-      // Show ALL data (unfiltered) so user can select/deselect any value
+      // Show data with all filters EXCEPT the one being edited
       var view = chartViews[sectionKey];
       if (view) {
-        vegaUpdateData(view, 'source', rawData);
+        var editData = dr.source
+          ? getFilteredDataExcluding(dr.source, filterField, 'discrete')
+          : rawData;
+        vegaUpdateData(view, 'source', editData);
       }
       // Wait for browser to paint updated SVG before applying DOM opacity
       requestAnimationFrame(function() {
@@ -1159,9 +1188,15 @@
     var lastFilteredData = data; // Track last data to avoid unnecessary updates
 
     return function updateChart() {
-      if (filterMode === 'edit') return; // Don't update while editing
+      if (filterMode === 'edit' || temporalFilterMode === 'edit') return; // Don't update while editing
 
-      var filtered = dr.source ? getFilteredData(dr.source) : rawData;
+      // Brush-owning charts exclude own range filter to preserve full time context
+      var filtered;
+      if (temporalChannel && !hasTimeUnit && dr.source) {
+        filtered = getFilteredDataExcluding(dr.source, temporalField, 'range');
+      } else {
+        filtered = dr.source ? getFilteredData(dr.source) : rawData;
+      }
       if (!filtered) filtered = [];
 
       if (collapseCtrl && isHorizontalBar(cfg)) {
