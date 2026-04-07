@@ -16,8 +16,19 @@ pub struct DashboardSpec {
     #[serde(default)]
     pub toc: bool,
     #[serde(default)]
+    pub timezone: Option<Timezone>,
+    #[serde(default)]
     pub datasets: BTreeMap<String, DatasetDecl>,
     pub sections: Vec<Section>,
+}
+
+/// Timezone for temporal operations (hour-of-day extraction, display).
+/// If omitted, defaults to browser local time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Timezone {
+    Utc,
+    Local,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

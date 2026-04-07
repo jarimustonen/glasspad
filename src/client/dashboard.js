@@ -20,6 +20,12 @@
     return;
   }
 
+  // Timezone-aware hour extraction (spec.timezone: "utc" | "local" | null)
+  var useUtc = spec.timezone === 'utc';
+  function getHourOfDate(d) {
+    return useUtc ? d.getUTCHours() : d.getHours();
+  }
+
   // ============================================================
   // FILTER STATE
   // ============================================================
@@ -152,7 +158,7 @@
         var hRange = srcHours[hf];
         var hv = row[hf];
         if (hv == null) return false;
-        var hour = new Date(hv).getHours();
+        var hour = getHourOfDate(new Date(hv));
         if (hour < hRange.min || hour > hRange.max) return false;
       }
       return true;
@@ -208,7 +214,7 @@
         var hRange = srcHours[hourFields[h]];
         var hv = row[hourFields[h]];
         if (hv == null) return false;
-        var hour = new Date(hv).getHours();
+        var hour = getHourOfDate(new Date(hv));
         if (hour < hRange.min || hour > hRange.max) return false;
       }
       return true;
@@ -727,7 +733,7 @@
       var allHours = Object.create(null);
       for (var hi = 0; hi < rawData.length; hi++) {
         var hv = rawData[hi][temporalField];
-        if (hv != null) allHours[new Date(hv).getHours()] = true;
+        if (hv != null) allHours[getHourOfDate(new Date(hv))] = true;
       }
       var hourList = Object.keys(allHours).map(Number).sort(function(a, b) { return a - b; });
       var minHourData = hourList.length > 0 ? hourList[0] : 0;
