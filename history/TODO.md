@@ -4,7 +4,7 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Temporal-akselin kiinteä domain ja aikavälivalinta toteutettu (ghost layer + brush/range filter). Seuraavaksi: visuaalinen palaute valituille arvoille normaali-näkymässä.
+Vaihe 7 (interaktiivinen suodatus) valmis. Seuraavaksi: vaihe 8 (list-näkymä) tai vaihe 9 (kaksisuuntaiset toiminnot).
 
 Sopimus: `04-spec-contract.md`
 Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`
@@ -13,7 +13,7 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 
 ## Vaihe 1–6: ✅ Valmis
 
-## Vaihe 7: Interaktiivinen suodatus ✅ (pääosin)
+## Vaihe 7: Interaktiivinen suodatus ✅
 
 - [x] 7.1 Filter state -malli (per dataset, per field, Object.create(null))
 - [x] 7.2 Filter edit mode: 🔍 nappi → All/None/Cancel/Apply kontrollit
@@ -26,10 +26,9 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 - [x] 7.9 Count-akseli: kokonaislukutickkit (labelExpr + conditional tick/grid color)
 - [x] 7.10 CLI --data säilyttää source-identiteetin (cross-filtering toimii)
 
-Puuttuu vielä:
-- [x] 7.11 Temporal-akselin kiinteä domain (events per hour ei saa "zoomata" suodatettaessa)
-- [x] 7.12 Aikavälivalinta (brush/interval selection temporal chartissa)
-- [ ] 7.13 Visuaalinen palaute: suodatetut arvot näkyvät himmennettyinä myös normaali-näkymässä (ei vain edit-tilassa)
+- [x] 7.11 Temporal-akselin kiinteä domain (ghost layer lukitsee akselit suodatettaessa)
+- [x] 7.12 Aikavälivalinta (brush/interval selection non-timeUnit temporal chartissa)
+- [x] ~~7.13~~ Poistettu — suodatetut arvot eivät kuulu normaali-näkymään, vain edit-tilaan
 
 ---
 
