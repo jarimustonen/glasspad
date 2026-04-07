@@ -25,6 +25,7 @@
   // ============================================================
   var filterState = Object.create(null);       // discrete: filterState[source][field] = { distinctKey: value }
   var rangeFilterState = Object.create(null);  // temporal: rangeFilterState[source][field] = { min: ms, max: ms }
+  var hourFilterState = Object.create(null);   // hour-of-day: hourFilterState[source][field] = { min: 0-23, max: 0-23 }
   var filteredCache = null;
   var prevFilterCount = 0;
 
@@ -60,6 +61,20 @@
     onFilterChange();
   }
 
+  function setHourFilter(source, field, minH, maxH) {
+    if (!hourFilterState[source]) hourFilterState[source] = Object.create(null);
+    hourFilterState[source][field] = { min: minH, max: maxH };
+    onFilterChange();
+  }
+
+  function clearHourFilter(source, field) {
+    if (hourFilterState[source]) {
+      delete hourFilterState[source][field];
+      if (Object.keys(hourFilterState[source]).length === 0) delete hourFilterState[source];
+    }
+    onFilterChange();
+  }
+
   function clearFieldFilter(source, field) {
     if (filterState[source]) {
       delete filterState[source][field];
@@ -71,6 +86,7 @@
   function clearFilters() {
     filterState = Object.create(null);
     rangeFilterState = Object.create(null);
+    hourFilterState = Object.create(null);
     onFilterChange();
   }
 
@@ -83,6 +99,9 @@
     }
     for (var src2 in rangeFilterState) {
       count += Object.keys(rangeFilterState[src2]).length;
+    }
+    for (var src3 in hourFilterState) {
+      count += Object.keys(hourFilterState[src3]).length;
     }
     return count;
   }
@@ -104,10 +123,12 @@
     if (!raw) return [];
     var srcFilters = filterState[source];
     var srcRanges = rangeFilterState[source];
-    if (!srcFilters && !srcRanges) { filteredCache[source] = raw; return raw; }
+    var srcHours = hourFilterState[source];
+    if (!srcFilters && !srcRanges && !srcHours) { filteredCache[source] = raw; return raw; }
 
     var fields = srcFilters ? Object.keys(srcFilters) : [];
     var rangeFields = srcRanges ? Object.keys(srcRanges) : [];
+    var hourFields = srcHours ? Object.keys(srcHours) : [];
     var result = raw.filter(function(row) {
       for (var i = 0; i < fields.length; i++) {
         var field = fields[i];
@@ -121,6 +142,14 @@
         if (v == null) return false;
         var t = (typeof v === 'number') ? v : Date.parse(v);
         if (isNaN(t) || t < range.min || t > range.max) return false;
+      }
+      for (var h = 0; h < hourFields.length; h++) {
+        var hf = hourFields[h];
+        var hRange = srcHours[hf];
+        var hv = row[hf];
+        if (hv == null) return false;
+        var hour = new Date(hv).getHours();
+        if (hour < hRange.min || hour > hRange.max) return false;
       }
       return true;
     });
@@ -635,10 +664,244 @@
       s.actions.insertBefore(editControls, s.actions.firstChild);
     }
 
+    // --- Temporal hour filter UI ---
+    var temporalFilterBtn = null;
+    var temporalEditControls = null;
+    var rangeSlider = null;
+    var temporalFilterMode = 'view';
+
+    if (hasTimeUnit && temporalField && dr.source && !filterField) {
+      // Compute hour extent from raw data
+      var allHours = Object.create(null);
+      for (var hi = 0; hi < rawData.length; hi++) {
+        var hv = rawData[hi][temporalField];
+        if (hv != null) allHours[new Date(hv).getHours()] = true;
+      }
+      var hourList = Object.keys(allHours).map(Number).sort(function(a, b) { return a - b; });
+      var minHourData = hourList.length > 0 ? hourList[0] : 0;
+      var maxHourData = hourList.length > 0 ? hourList[hourList.length - 1] : 23;
+
+      temporalFilterBtn = document.createElement('button');
+      temporalFilterBtn.className = 'filter-edit-btn';
+      temporalFilterBtn.textContent = '\uD83D\uDD0D'; // 🔍
+      temporalFilterBtn.title = 'Filter by time range';
+      s.actions.insertBefore(temporalFilterBtn, s.actions.firstChild);
+
+      temporalEditControls = document.createElement('div');
+      temporalEditControls.className = 'filter-edit-controls';
+      temporalEditControls.style.display = 'none';
+
+      // Range slider container
+      rangeSlider = document.createElement('div');
+      rangeSlider.className = 'hour-range-slider';
+
+      var sliderLabel = document.createElement('span');
+      sliderLabel.className = 'hour-range-label';
+
+      var sliderTrack = document.createElement('div');
+      sliderTrack.className = 'hour-range-track';
+
+      var sliderFill = document.createElement('div');
+      sliderFill.className = 'hour-range-fill';
+      sliderTrack.appendChild(sliderFill);
+
+      var handleMin = document.createElement('div');
+      handleMin.className = 'hour-range-handle';
+      handleMin.setAttribute('data-which', 'min');
+      sliderTrack.appendChild(handleMin);
+
+      var handleMax = document.createElement('div');
+      handleMax.className = 'hour-range-handle';
+      handleMax.setAttribute('data-which', 'max');
+      sliderTrack.appendChild(handleMax);
+
+      rangeSlider.appendChild(sliderTrack);
+      rangeSlider.appendChild(sliderLabel);
+
+      var pendingMin = minHourData;
+      var pendingMax = maxHourData;
+
+      function formatHour(h) { return (h < 10 ? '0' : '') + h + ':00'; }
+
+      function alignSliderToChart() {
+        var svg = div.querySelector('svg');
+        if (!svg) return;
+        // Find the plot frame background rect — its bbox gives us the plot area
+        var bg = svg.querySelector('g.mark-group.role-frame > g > path.background');
+        if (!bg) return;
+        var bgRect = bg.getBoundingClientRect();
+        var sliderParentRect = rangeSlider.getBoundingClientRect();
+        var leftOffset = bgRect.left - sliderParentRect.left;
+        sliderTrack.style.marginLeft = leftOffset + 'px';
+        sliderTrack.style.width = bgRect.width + 'px';
+      }
+
+      function updateSliderUI() {
+        var range = maxHourData - minHourData;
+        var pctMin = range > 0 ? ((pendingMin - minHourData) / range) * 100 : 0;
+        var pctMax = range > 0 ? ((pendingMax - minHourData) / range) * 100 : 100;
+        sliderFill.style.left = pctMin + '%';
+        sliderFill.style.width = (pctMax - pctMin) + '%';
+        handleMin.style.left = pctMin + '%';
+        handleMax.style.left = pctMax + '%';
+        sliderLabel.textContent = formatHour(pendingMin) + ' \u2013 ' + formatHour(pendingMax);
+        // Dim bars outside selected range
+        dimBarsOutsideRange(pendingMin, pendingMax);
+      }
+
+      // Dim chart bars outside the selected hour range
+      // Only targets the second (visible) layer's marks, skipping the ghost layer
+      function dimBarsOutsideRange(minH, maxH) {
+        var svg = div.querySelector('svg');
+        if (!svg) return;
+        var markGroups = svg.querySelectorAll('.mark-rect.role-mark:not([class*=brush])');
+        // In a layered spec, there are two mark groups: ghost (index 0) and visible (index 1)
+        var targetGroup = markGroups.length > 1 ? markGroups[markGroups.length - 1] : markGroups[0];
+        if (!targetGroup) return;
+        var marks = targetGroup.querySelectorAll('path');
+        for (var mi = 0; mi < marks.length; mi++) {
+          var label = marks[mi].getAttribute('aria-label') || '';
+          var hMatch = label.match(/(\d{1,2}):00/);
+          if (hMatch) {
+            var barHour = parseInt(hMatch[1], 10);
+            marks[mi].style.opacity = (barHour >= minH && barHour <= maxH) ? '1' : '0.15';
+          }
+        }
+      }
+
+      function clearBarDimming() {
+        var svg = div.querySelector('svg');
+        if (!svg) return;
+        var marks = svg.querySelectorAll('.mark-rect.role-mark path');
+        for (var ci = 0; ci < marks.length; ci++) {
+          marks[ci].style.opacity = '';
+        }
+      }
+
+      function hourFromPct(pct) {
+        var range = maxHourData - minHourData;
+        var h = Math.round(minHourData + (pct / 100) * range);
+        return Math.max(minHourData, Math.min(maxHourData, h));
+      }
+
+      function startDrag(e, which) {
+        e.preventDefault();
+        var trackRect = sliderTrack.getBoundingClientRect();
+        function onMove(ev) {
+          var clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
+          var pct = Math.max(0, Math.min(100, ((clientX - trackRect.left) / trackRect.width) * 100));
+          var h = hourFromPct(pct);
+          if (which === 'min') {
+            pendingMin = Math.min(h, pendingMax);
+          } else {
+            pendingMax = Math.max(h, pendingMin);
+          }
+          updateSliderUI();
+        }
+        function onUp() {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          document.removeEventListener('touchmove', onMove);
+          document.removeEventListener('touchend', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        document.addEventListener('touchmove', onMove);
+        document.addEventListener('touchend', onUp);
+      }
+
+      handleMin.addEventListener('mousedown', function(e) { startDrag(e, 'min'); });
+      handleMin.addEventListener('touchstart', function(e) { startDrag(e, 'min'); });
+      handleMax.addEventListener('mousedown', function(e) { startDrag(e, 'max'); });
+      handleMax.addEventListener('touchstart', function(e) { startDrag(e, 'max'); });
+
+      var tResetBtn = document.createElement('button');
+      tResetBtn.className = 'filter-edit-cancel';
+      tResetBtn.textContent = 'Reset';
+      tResetBtn.title = 'Reset to full range';
+
+      var tCancelBtn = document.createElement('button');
+      tCancelBtn.className = 'filter-edit-cancel';
+      tCancelBtn.textContent = 'Cancel';
+
+      var tApplyBtn = document.createElement('button');
+      tApplyBtn.className = 'filter-edit-apply';
+      tApplyBtn.textContent = 'Apply \u2713';
+
+      function enterTemporalEdit() {
+        temporalFilterMode = 'edit';
+        temporalFilterBtn.style.display = 'none';
+        temporalEditControls.style.display = '';
+        rangeSlider.style.display = '';
+        // Init from current filter or full range
+        var cur = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
+        pendingMin = cur ? cur.min : minHourData;
+        pendingMax = cur ? cur.max : maxHourData;
+        // Show ALL data in the chart so user sees every bar
+        var view = chartViews[sectionKey];
+        if (view) vegaUpdateData(view, 'source', rawData);
+        // Align slider with chart X-axis after layout settles
+        requestAnimationFrame(function() {
+          alignSliderToChart();
+          updateSliderUI();
+        });
+      }
+
+      function exitTemporalEdit() {
+        temporalFilterMode = 'view';
+        temporalFilterBtn.style.display = '';
+        temporalEditControls.style.display = 'none';
+        rangeSlider.style.display = 'none';
+        clearBarDimming();
+        // Restore filtered data
+        var view = chartViews[sectionKey];
+        if (view) {
+          var filtered = dr.source ? getFilteredData(dr.source) : rawData;
+          vegaUpdateData(view, 'source', filtered);
+        }
+      }
+
+      temporalFilterBtn.addEventListener('click', enterTemporalEdit);
+
+      tResetBtn.addEventListener('click', function() {
+        pendingMin = minHourData;
+        pendingMax = maxHourData;
+        updateSliderUI();
+      });
+
+      tCancelBtn.addEventListener('click', exitTemporalEdit);
+
+      tApplyBtn.addEventListener('click', function() {
+        temporalFilterMode = 'view';
+        temporalFilterBtn.style.display = '';
+        temporalEditControls.style.display = 'none';
+        rangeSlider.style.display = 'none';
+        clearBarDimming();
+        if (pendingMin <= minHourData && pendingMax >= maxHourData) {
+          clearHourFilter(dr.source, temporalField);
+        } else {
+          setHourFilter(dr.source, temporalField, pendingMin, pendingMax);
+        }
+      });
+
+      temporalEditControls.appendChild(tResetBtn);
+      temporalEditControls.appendChild(tCancelBtn);
+      temporalEditControls.appendChild(tApplyBtn);
+      s.actions.insertBefore(temporalEditControls, s.actions.firstChild);
+
+      rangeSlider.style.display = 'none';
+      wrapper.parentNode.insertBefore(rangeSlider, wrapper.nextSibling);
+    }
+
     function updateFilterBtnState() {
-      if (!filterBtn) return;
-      var hasFilter = filterState[dr.source] && filterState[dr.source][filterField];
-      filterBtn.classList.toggle('filter-active', !!hasFilter);
+      if (filterBtn) {
+        var hasFilter = filterState[dr.source] && filterState[dr.source][filterField];
+        filterBtn.classList.toggle('filter-active', !!hasFilter);
+      }
+      if (temporalFilterBtn) {
+        var hasHourFilter = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
+        temporalFilterBtn.classList.toggle('filter-active', !!hasHourFilter);
+      }
     }
 
     function enterEditMode() {
@@ -1165,6 +1428,20 @@
           tag2.addEventListener('click', function() { clearRangeFilter(s2, f2); });
         })(rsrc, rfield);
         tags.appendChild(tag2);
+      }
+    }
+    for (var hsrc in hourFilterState) {
+      for (var hfield in hourFilterState[hsrc]) {
+        var hrange = hourFilterState[hsrc][hfield];
+        var htag = document.createElement('button');
+        htag.className = 'filter-tag';
+        var fmtH = function(h) { return (h < 10 ? '0' : '') + h + ':00'; };
+        htag.textContent = hfield + ': ' + fmtH(hrange.min) + ' \u2013 ' + fmtH(hrange.max);
+        htag.setAttribute('title', 'Remove hour filter');
+        (function(s3, f3) {
+          htag.addEventListener('click', function() { clearHourFilter(s3, f3); });
+        })(hsrc, hfield);
+        tags.appendChild(htag);
       }
     }
     filterBarEl.appendChild(tags);
