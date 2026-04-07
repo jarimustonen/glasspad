@@ -446,6 +446,14 @@
       setLabel: function(label) {
         collapsedLabel = label;
         if (!expanded) bottomBtn.textContent = collapsedLabel;
+      },
+      isExpanded: function() { return expanded; },
+      setExpanded: function(exp) {
+        if (exp !== expanded) {
+          expanded = exp;
+          render();
+          if (onToggle) onToggle(expanded);
+        }
       }
     };
   }
@@ -828,11 +836,18 @@
       tApplyBtn.className = 'filter-edit-apply';
       tApplyBtn.textContent = 'Apply \u2713';
 
+      var wasExpandedBeforeEdit = false;
+
       function enterTemporalEdit() {
         temporalFilterMode = 'edit';
         temporalFilterBtn.style.display = 'none';
         temporalEditControls.style.display = '';
         rangeSlider.style.display = '';
+        // Expand collapsed chart so all bars are visible
+        if (collapseCtrl) {
+          wasExpandedBeforeEdit = collapseCtrl.isExpanded();
+          collapseCtrl.setExpanded(true);
+        }
         // Init from current filter or full range
         var cur = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
         pendingMin = cur ? cur.min : minHourData;
@@ -853,6 +868,10 @@
         temporalEditControls.style.display = 'none';
         rangeSlider.style.display = 'none';
         clearBarDimming();
+        // Restore collapse state
+        if (collapseCtrl) {
+          collapseCtrl.setExpanded(wasExpandedBeforeEdit);
+        }
         // Restore filtered data
         var view = chartViews[sectionKey];
         if (view) {
@@ -904,10 +923,18 @@
       }
     }
 
+    var wasExpandedBeforeDiscreteEdit = false;
+
     function enterEditMode() {
       filterMode = 'edit';
       filterBtn.style.display = 'none';
       editControls.style.display = '';
+
+      // Expand collapsed chart so all values are visible
+      if (collapseCtrl) {
+        wasExpandedBeforeDiscreteEdit = collapseCtrl.isExpanded();
+        collapseCtrl.setExpanded(true);
+      }
 
       // Initialize pending selection from current filter or all-selected
       pendingSelection = Object.create(null);
@@ -953,6 +980,9 @@
       filterBtn.style.display = '';
       editControls.style.display = 'none';
 
+      // Restore collapse state
+      if (collapseCtrl) collapseCtrl.setExpanded(wasExpandedBeforeDiscreteEdit);
+
       // Restore filtered data and clear opacity overrides
       var view = chartViews[sectionKey];
       if (view) {
@@ -966,6 +996,9 @@
       filterMode = 'view';
       filterBtn.style.display = '';
       editControls.style.display = 'none';
+
+      // Restore collapse state
+      if (collapseCtrl) collapseCtrl.setExpanded(wasExpandedBeforeDiscreteEdit);
 
       // Collect selected values
       var selected = [];
