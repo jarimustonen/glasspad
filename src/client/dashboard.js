@@ -403,6 +403,19 @@
 
     var encoding = JSON.parse(JSON.stringify(cfg.encoding || {}));
 
+    // Fix count axes: hide fractional tick labels (0.5, 1.5 etc)
+    ['x', 'y'].forEach(function(ch) {
+      var enc = encoding[ch];
+      if (!enc) return;
+      if (enc.aggregate === 'count') {
+        if (!enc.axis) enc.axis = {};
+        // Integer-only: hide labels AND ticks for fractional values
+        enc.axis.labelExpr = "datum.value === floor(datum.value) ? format(datum.value, 'd') : ''";
+        enc.axis.tickColor = { expr: "datum.value === floor(datum.value) ? '#888' : 'transparent'" };
+        enc.axis.gridColor = { expr: "datum.value === floor(datum.value) ? '#ddd' : 'transparent'" };
+      }
+    });
+
     var vlSpec = {
       '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
       width: 'container',
