@@ -409,8 +409,8 @@
   }
 
   function datasetHasField(data, field) {
-    for (var i = 0; i < Math.min(data.length, 10); i++) {
-      if (field in data[i]) return true;
+    for (var i = 0; i < data.length; i++) {
+      if (data[i] && field in data[i]) return true;
     }
     return false;
   }
@@ -583,12 +583,10 @@
 
     var encoding = JSON.parse(JSON.stringify(cfg.encoding || {}));
 
-    // Fix axes: integer-only count ticks, lock temporal + count domains
-    var temporalEnc = null; // track for count axis domain computation
+    // Fix axes: integer-only count ticks
     ['x', 'y'].forEach(function(ch) {
       var enc = encoding[ch];
       if (!enc) return;
-      if (enc.type === 'temporal' && enc.field) temporalEnc = enc;
       if (enc.aggregate === 'count') {
         if (!enc.axis) enc.axis = {};
         // Integer-only: hide labels AND ticks for fractional values
@@ -766,11 +764,17 @@
       var handleMin = document.createElement('div');
       handleMin.className = 'hour-range-handle';
       handleMin.setAttribute('data-which', 'min');
+      handleMin.setAttribute('tabindex', '0');
+      handleMin.setAttribute('role', 'slider');
+      handleMin.setAttribute('aria-label', 'Minimum hour');
       sliderTrack.appendChild(handleMin);
 
       var handleMax = document.createElement('div');
       handleMax.className = 'hour-range-handle';
       handleMax.setAttribute('data-which', 'max');
+      handleMax.setAttribute('tabindex', '0');
+      handleMax.setAttribute('role', 'slider');
+      handleMax.setAttribute('aria-label', 'Maximum hour');
       sliderTrack.appendChild(handleMax);
 
       rangeSlider.appendChild(sliderTrack);
@@ -802,6 +806,12 @@
         sliderFill.style.width = (pctMax - pctMin) + '%';
         handleMin.style.left = pctMin + '%';
         handleMax.style.left = pctMax + '%';
+        handleMin.setAttribute('aria-valuemin', minHourData);
+        handleMin.setAttribute('aria-valuemax', pendingMax);
+        handleMin.setAttribute('aria-valuenow', pendingMin);
+        handleMax.setAttribute('aria-valuemin', pendingMin);
+        handleMax.setAttribute('aria-valuemax', maxHourData);
+        handleMax.setAttribute('aria-valuenow', pendingMax);
         sliderLabel.textContent = formatHour(pendingMin) + ' \u2013 ' + formatHour(pendingMax);
         // Dim bars outside selected range
         dimBarsOutsideRange(pendingMin, pendingMax);
@@ -861,17 +871,35 @@
           document.removeEventListener('mouseup', onUp);
           document.removeEventListener('touchmove', onMove);
           document.removeEventListener('touchend', onUp);
+          document.removeEventListener('touchcancel', onUp);
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
         document.addEventListener('touchmove', onMove);
         document.addEventListener('touchend', onUp);
+        document.addEventListener('touchcancel', onUp);
       }
 
       handleMin.addEventListener('mousedown', function(e) { startDrag(e, 'min'); });
       handleMin.addEventListener('touchstart', function(e) { startDrag(e, 'min'); });
       handleMax.addEventListener('mousedown', function(e) { startDrag(e, 'max'); });
       handleMax.addEventListener('touchstart', function(e) { startDrag(e, 'max'); });
+
+      // Keyboard accessibility for slider handles
+      function handleSliderKey(e, which) {
+        var delta = (e.key === 'ArrowRight' || e.key === 'ArrowUp') ? 1
+          : (e.key === 'ArrowLeft' || e.key === 'ArrowDown') ? -1 : 0;
+        if (!delta) return;
+        e.preventDefault();
+        if (which === 'min') {
+          pendingMin = Math.max(minHourData, Math.min(pendingMax, pendingMin + delta));
+        } else {
+          pendingMax = Math.max(pendingMin, Math.min(maxHourData, pendingMax + delta));
+        }
+        updateSliderUI();
+      }
+      handleMin.addEventListener('keydown', function(e) { handleSliderKey(e, 'min'); });
+      handleMax.addEventListener('keydown', function(e) { handleSliderKey(e, 'max'); });
 
       var tResetBtn = document.createElement('button');
       tResetBtn.className = 'filter-edit-cancel';
