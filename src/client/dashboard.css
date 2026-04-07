@@ -124,6 +124,16 @@ tbody tr:hover { background: #f9fafb; }
   color: #fff; font-weight: 600;
 }
 .filter-edit-apply:hover { background: #1d4ed8; }
+.filter-edit-btn:focus-visible,
+.filter-edit-cancel:focus-visible,
+.filter-edit-apply:focus-visible,
+.filter-tag:focus-visible,
+.filter-bar-reset:focus-visible,
+.collapse-top-link:focus-visible,
+.table-show-more:focus-visible,
+.hour-range-handle:focus-visible {
+  outline: 2px solid #3b82f6; outline-offset: 2px;
+}
 
 /* Hour range slider */
 .hour-range-slider {
@@ -171,6 +181,7 @@ tbody tr:hover { background: #f9fafb; }
   padding: 0.25rem 0.6rem; font-size: 0.8rem;
   background: #dbeafe; border: 1px solid #93c5fd; border-radius: 999px;
   color: #1e40af; cursor: pointer;
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .filter-tag:hover { background: #bfdbfe; text-decoration: line-through; }
 .filter-bar-reset {
@@ -214,11 +225,25 @@ tbody tr:hover { background: #f9fafb; }
   color: #1e40af; border-left-color: #3b82f6;
   background: #eff6ff; font-weight: 500;
 }
-body.has-toc { padding-left: 240px; }
+body.has-toc > h1,
+body.has-toc > .description,
+body.has-toc > .filter-bar,
+body.has-toc > .dashboard-grid,
+body.has-toc > .dashboard-stack,
+body.has-toc > div[id="dashboard"] {
+  margin-left: 240px;
+}
 
 @media (max-width: 768px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   body { padding: 1rem; }
   .toc-sidebar { display: none; }
-  body.has-toc { padding-left: 1rem; }
+  body.has-toc > h1,
+  body.has-toc > .description,
+  body.has-toc > .filter-bar,
+  body.has-toc > .dashboard-grid,
+  body.has-toc > .dashboard-stack,
+  body.has-toc > div[id="dashboard"] {
+    margin-left: 0;
+  }
 }

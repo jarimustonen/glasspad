@@ -1381,7 +1381,7 @@
       }
       tbody.innerHTML = html;
 
-      var needsCollapse = totalRows > INITIAL_ROWS;
+      var needsCollapse = totalRows > INITIAL_ROWS + 2; // margin to avoid gradient over barely-clipped content
       if (needsCollapse && !collapseCtrl) {
         wrapper.classList.add('collapsed');
         var label = 'Show all ' + totalRows + ' rows';
