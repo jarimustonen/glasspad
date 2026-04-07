@@ -21,25 +21,34 @@
   }
 
   // ============================================================
-  // FILTER STATE (Object.create(null) for safe maps)
-  // { "events": { "country": { "string:IN": "IN" }, "device": { "string:mobile": "mobile" } } }
-  // Within same field: OR. Across fields: AND.
+  // FILTER STATE
   // ============================================================
   var filterState = Object.create(null);
-  var filteredCache = null; // memoized per onFilterChange cycle
-  var prevFilterCount = 0; // for pulse-only-on-add
+  var filteredCache = null;
+  var prevFilterCount = 0;
 
-  function toggleFilter(source, field, value) {
-    if (!filterState[source]) filterState[source] = Object.create(null);
-    var fieldFilters = filterState[source];
-    if (!fieldFilters[field]) fieldFilters[field] = Object.create(null);
-    var key = distinctKey(value);
-    if (key in fieldFilters[field]) {
-      delete fieldFilters[field][key];
-      if (Object.keys(fieldFilters[field]).length === 0) delete fieldFilters[field];
-      if (Object.keys(filterState[source]).length === 0) delete filterState[source];
+  function setFilter(source, field, selectedValues) {
+    // selectedValues: array of values to include
+    if (!selectedValues || selectedValues.length === 0) {
+      // Clear this field's filter
+      if (filterState[source]) {
+        delete filterState[source][field];
+        if (Object.keys(filterState[source]).length === 0) delete filterState[source];
+      }
     } else {
-      fieldFilters[field][key] = value;
+      if (!filterState[source]) filterState[source] = Object.create(null);
+      filterState[source][field] = Object.create(null);
+      for (var i = 0; i < selectedValues.length; i++) {
+        filterState[source][field][distinctKey(selectedValues[i])] = selectedValues[i];
+      }
+    }
+    onFilterChange();
+  }
+
+  function clearFieldFilter(source, field) {
+    if (filterState[source]) {
+      delete filterState[source][field];
+      if (Object.keys(filterState[source]).length === 0) delete filterState[source];
     }
     onFilterChange();
   }
@@ -57,6 +66,15 @@
       }
     }
     return count;
+  }
+
+  function getFieldFilterValues(source, field) {
+    if (!filterState[source] || !filterState[source][field]) return null;
+    var vals = [];
+    for (var key in filterState[source][field]) {
+      vals.push(filterState[source][field][key]);
+    }
+    return vals;
   }
 
   function getFilteredData(source) {
@@ -88,13 +106,13 @@
   var sectionRegistry = [];
 
   function onFilterChange() {
-    filteredCache = null; // invalidate cache
+    filteredCache = null;
     var newCount = getActiveFilterCount();
     for (var i = 0; i < sectionRegistry.length; i++) {
       try { sectionRegistry[i].update(); }
       catch (e) { console.error('Section update error:', e); }
     }
-    renderFilterBar(newCount > prevFilterCount); // pulse only on add
+    renderFilterBar(newCount > prevFilterCount);
     prevFilterCount = newCount;
   }
 
@@ -144,6 +162,39 @@
     return Object.keys(seen).length;
   }
 
+  function getDistinctValues(data, field) {
+    var seen = Object.create(null);
+    var values = [];
+    for (var i = 0; i < data.length; i++) {
+      var v = data[i][field];
+      if (v !== null && v !== undefined) {
+        var key = distinctKey(v);
+        if (!(key in seen)) {
+          seen[key] = true;
+          values.push(v);
+        }
+      }
+    }
+    return values;
+  }
+
+  // Update a named Vega dataset using changeset
+  function vegaUpdateData(view, name, rows) {
+    var cs = vega.changeset().remove(function() { return true; }).insert(rows);
+    view.change(name, cs).run();
+  }
+
+  // Extract a field value from a Vega SVG mark's aria-label
+  // e.g. "country: US; _count: 26" → extractFieldFromLabel(label, 'country') → 'US'
+  function extractFieldFromLabel(label, field) {
+    var pattern = field + ': ';
+    var idx = label.indexOf(pattern);
+    if (idx === -1) return null;
+    var start = idx + pattern.length;
+    var end = label.indexOf(';', start);
+    return end === -1 ? label.slice(start).trim() : label.slice(start, end).trim();
+  }
+
   function getMarkType(mark) {
     if (typeof mark === 'string') return mark;
     if (mark && typeof mark === 'object') return mark.type;
@@ -169,7 +220,7 @@
     return xIsQuant && yIsCat;
   }
 
-  // Track inline datasets so filtering works even when CLI injected inline_data
+  // Track inline datasets
   var inlineDatasetCounter = 0;
 
   function getDataResult(section) {
@@ -178,11 +229,8 @@
       return { ok: true, data: datasets[section.source], source: section.source };
     }
     if (section.inline_data) {
-      // Register inline data as a synthetic dataset so filtering can reference it
       var syntheticName = section.id || ('_inline_' + inlineDatasetCounter++);
-      if (!(syntheticName in datasets)) {
-        datasets[syntheticName] = section.inline_data;
-      }
+      if (!(syntheticName in datasets)) datasets[syntheticName] = section.inline_data;
       return { ok: true, data: section.inline_data, source: syntheticName };
     }
     return { ok: false, error: 'No data source configured' };
@@ -212,7 +260,7 @@
   }
 
   // ============================================================
-  // COLLAPSE TOGGLE — returns controller for dynamic updates
+  // COLLAPSE TOGGLE
   // ============================================================
   function addCollapseToggle(actionsEl, wrapper, initialLabel, onToggle) {
     var expanded = false;
@@ -269,11 +317,8 @@
       setVisible: function(visible) {
         bottomBtn.style.display = visible ? '' : 'none';
         topLink.style.display = (visible && expanded) ? '' : 'none';
-        if (!visible) {
-          wrapper.classList.remove('collapsed');
-        } else if (!expanded) {
-          wrapper.classList.add('collapsed');
-        }
+        if (!visible) wrapper.classList.remove('collapsed');
+        else if (!expanded) wrapper.classList.add('collapsed');
       },
       setLabel: function(label) {
         collapsedLabel = label;
@@ -283,7 +328,7 @@
   }
 
   // ============================================================
-  // SECTION CARD STRUCTURE
+  // SECTION CARD
   // ============================================================
   function createSectionCard(section, index) {
     var card = document.createElement('div');
@@ -311,7 +356,7 @@
   }
 
   // ============================================================
-  // CHART
+  // CHART with filter edit mode
   // ============================================================
   var CHART_COLLAPSED_HEIGHT = 350;
   var CHART_COLLAPSE_THRESHOLD = 10;
@@ -326,7 +371,6 @@
     var sectionKey = section.id || ('section-' + index);
     var filterField = section.interactive_filter && section.interactive_filter.field;
 
-    // Validate interactive filter at mount
     if (filterField) {
       if (!dr.source) {
         appendError(s.body, 'interactive_filter requires dataset source');
@@ -337,12 +381,10 @@
       }
     }
 
-    var data = (dr.source ? getFilteredData(dr.source) : dr.data) || [];
+    var rawData = dr.data || [];
+    var data = (dr.source ? getFilteredData(dr.source) : rawData) || [];
     var mark = normalizeMark(cfg.mark);
     var markType = getMarkType(cfg.mark);
-
-    // Add cursor to mark for interactive charts
-    if (filterField) mark.cursor = 'pointer';
 
     var useStepHeight = isHorizontalBar(cfg);
     var height = 300;
@@ -383,25 +425,214 @@
         function(exp) { wrapper.style.maxHeight = exp ? '' : CHART_COLLAPSED_HEIGHT + 'px'; });
     }
 
+    // --- Filter edit state ---
+    var filterMode = 'view'; // 'view' or 'edit'
+    var pendingSelection = null; // { distinctKey: true/false }
+    var filterBtn = null;
+    var editControls = null;
+
+    if (filterField && dr.source) {
+      // Filter button in header
+      filterBtn = document.createElement('button');
+      filterBtn.className = 'filter-edit-btn';
+      filterBtn.textContent = '\uD83D\uDD0D'; // 🔍
+      filterBtn.title = 'Edit filter';
+      filterBtn.addEventListener('click', enterEditMode);
+      s.actions.insertBefore(filterBtn, s.actions.firstChild);
+
+      // Edit controls (hidden initially)
+      editControls = document.createElement('div');
+      editControls.className = 'filter-edit-controls';
+      editControls.style.display = 'none';
+
+      var selectAllBtn = document.createElement('button');
+      selectAllBtn.className = 'filter-edit-cancel';
+      selectAllBtn.textContent = 'All';
+      selectAllBtn.title = 'Select all';
+      selectAllBtn.addEventListener('click', function() { selectAll(true); });
+
+      var selectNoneBtn = document.createElement('button');
+      selectNoneBtn.className = 'filter-edit-cancel';
+      selectNoneBtn.textContent = 'None';
+      selectNoneBtn.title = 'Deselect all';
+      selectNoneBtn.addEventListener('click', function() { selectAll(false); });
+
+      var cancelBtn = document.createElement('button');
+      cancelBtn.className = 'filter-edit-cancel';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', cancelEdit);
+
+      var applyBtn = document.createElement('button');
+      applyBtn.className = 'filter-edit-apply';
+      applyBtn.textContent = 'Apply \u2713';
+      applyBtn.addEventListener('click', applyEdit);
+
+      editControls.appendChild(selectAllBtn);
+      editControls.appendChild(selectNoneBtn);
+      editControls.appendChild(cancelBtn);
+      editControls.appendChild(applyBtn);
+      s.actions.insertBefore(editControls, s.actions.firstChild);
+    }
+
+    function updateFilterBtnState() {
+      if (!filterBtn) return;
+      var hasFilter = filterState[dr.source] && filterState[dr.source][filterField];
+      filterBtn.classList.toggle('filter-active', !!hasFilter);
+    }
+
+    function enterEditMode() {
+      filterMode = 'edit';
+      filterBtn.style.display = 'none';
+      editControls.style.display = '';
+
+      // Initialize pending selection from current filter or all-selected
+      pendingSelection = Object.create(null);
+      var allValues = getDistinctValues(rawData, filterField);
+      var currentFilter = getFieldFilterValues(dr.source, filterField);
+
+      for (var i = 0; i < allValues.length; i++) {
+        var key = distinctKey(allValues[i]);
+        if (currentFilter) {
+          // Match against current filter
+          pendingSelection[key] = false;
+          for (var j = 0; j < currentFilter.length; j++) {
+            if (distinctKey(currentFilter[j]) === key) {
+              pendingSelection[key] = true;
+              break;
+            }
+          }
+        } else {
+          pendingSelection[key] = true; // All selected by default
+        }
+      }
+
+      // Show ALL data (unfiltered) so user can select/deselect any value
+      var view = chartViews[sectionKey];
+      if (view) {
+        vegaUpdateData(view, 'source', rawData);
+      }
+      // Wait for browser to paint updated SVG before applying DOM opacity
+      requestAnimationFrame(function() {
+        renderChartWithSelection();
+      });
+    }
+
+    function selectAll(selected) {
+      if (!pendingSelection) return;
+      for (var k in pendingSelection) pendingSelection[k] = selected;
+      renderChartWithSelection();
+    }
+
+    function cancelEdit() {
+      filterMode = 'view';
+      pendingSelection = null;
+      filterBtn.style.display = '';
+      editControls.style.display = 'none';
+
+      // Restore filtered data and clear opacity overrides
+      var view = chartViews[sectionKey];
+      if (view) {
+        var filtered = dr.source ? getFilteredData(dr.source) : rawData;
+        vegaUpdateData(view, 'source', filtered);
+      }
+      resetMarkOpacity();
+    }
+
+    function applyEdit() {
+      filterMode = 'view';
+      filterBtn.style.display = '';
+      editControls.style.display = 'none';
+
+      // Collect selected values
+      var selected = [];
+      var allValues = getDistinctValues(rawData, filterField);
+      var allSelected = true;
+
+      for (var i = 0; i < allValues.length; i++) {
+        var key = distinctKey(allValues[i]);
+        if (pendingSelection[key] !== false) {
+          selected.push(allValues[i]);
+        } else {
+          allSelected = false;
+        }
+      }
+
+      pendingSelection = null;
+
+      if (allSelected) {
+        // All selected = clear filter
+        clearFieldFilter(dr.source, filterField);
+      } else {
+        setFilter(dr.source, filterField, selected);
+      }
+    }
+
+    function resetMarkOpacity() {
+      var svg = div.querySelector('svg');
+      if (!svg) return;
+      var marks = svg.querySelectorAll('.mark-rect path, .mark-arc path');
+      for (var i = 0; i < marks.length; i++) {
+        marks[i].style.opacity = '';
+      }
+    }
+
+    // Apply opacity directly to SVG mark elements based on selection state
+    function renderChartWithSelection() {
+      if (!pendingSelection) return;
+      var svg = div.querySelector('svg');
+      if (!svg) {
+        setTimeout(renderChartWithSelection, 100);
+        return;
+      }
+
+      // Find all mark path/rect elements with aria-label containing filterField values
+      var marks = svg.querySelectorAll('.mark-rect path, .mark-arc path');
+      for (var i = 0; i < marks.length; i++) {
+        var label = marks[i].getAttribute('aria-label') || '';
+        var value = extractFieldFromLabel(label, filterField);
+        if (value !== null) {
+          var key = distinctKey(value);
+          var selected = pendingSelection[key] !== false;
+          marks[i].style.opacity = selected ? '1' : '0.2';
+        }
+      }
+    }
+
+    // Wire up Vega embed
     vegaEmbed(div, vlSpec, { actions: false, renderer: 'svg' })
       .then(function(result) {
         chartViews[sectionKey] = result.view;
 
         if (filterField && dr.source) {
+          // Click handler: toggle selection in edit mode, enter edit mode from view
           result.view.addEventListener('click', function(event, item) {
             if (!item || !item.datum) return;
             if (!Object.prototype.hasOwnProperty.call(item.datum, filterField)) return;
             var value = item.datum[filterField];
             if (value == null) return;
-            toggleFilter(dr.source, filterField, value);
+
+            if (filterMode === 'edit') {
+              // Toggle this value's selection
+              var key = distinctKey(value);
+              pendingSelection[key] = !pendingSelection[key];
+              renderChartWithSelection();
+            } else {
+              // Enter edit mode and deselect everything except clicked
+              enterEditMode();
+              // Deselect all, then select only clicked
+              for (var k in pendingSelection) pendingSelection[k] = false;
+              pendingSelection[distinctKey(value)] = true;
+              renderChartWithSelection();
+            }
           });
         }
 
         // Catch up if filters changed during async embed
-        var latest = dr.source ? getFilteredData(dr.source) : dr.data;
+        var latest = dr.source ? getFilteredData(dr.source) : rawData;
         if (latest !== data) {
-          result.view.data('source', latest || []).run();
+          vegaUpdateData(result.view, 'source', latest || []);
         }
+        updateFilterBtnState();
       })
       .catch(function(err) {
         console.error('Chart "' + section.title + '":', err);
@@ -409,10 +640,11 @@
       });
 
     return function updateChart() {
-      var filtered = dr.source ? getFilteredData(dr.source) : dr.data;
+      if (filterMode === 'edit') return; // Don't update while editing
+
+      var filtered = dr.source ? getFilteredData(dr.source) : rawData;
       if (!filtered) filtered = [];
 
-      // Update collapse labels for horizontal bars
       if (collapseCtrl && isHorizontalBar(cfg)) {
         var yField = (cfg.encoding.y || {}).field;
         if (yField) {
@@ -422,10 +654,9 @@
         }
       }
 
-      // Just swap data — chart height stays fixed so layout is stable
       var view = chartViews[sectionKey];
-      if (!view) return;
-      view.data('source', filtered).run();
+      if (view) vegaUpdateData(view, 'source', filtered);
+      updateFilterBtnState();
     };
   }
 
@@ -493,10 +724,8 @@
     }
 
     var sortState = null;
-
     var wrapper = document.createElement('div');
     wrapper.className = 'table-wrapper';
-
     var table = document.createElement('table');
     var thead = document.createElement('thead');
     var tbody = document.createElement('tbody');
@@ -517,13 +746,11 @@
         th.setAttribute('aria-sort', isActive ? (sortState.ascending ? 'ascending' : 'descending') : 'none');
         if (isActive) th.className = sortState.ascending ? 'sort-asc' : 'sort-desc';
         if (col.width) th.style.width = col.width + 'px';
-
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'table-sort-button';
         btn.setAttribute('data-field', col.field);
         btn.textContent = col.title || col.field;
-
         var indicator = document.createElement('span');
         indicator.className = 'sort-indicator';
         if (isActive) indicator.textContent = sortState.ascending ? ' \u25B2' : ' \u25BC';
@@ -559,17 +786,16 @@
       }
       tbody.innerHTML = html;
 
-      // Dynamic collapse management
       var needsCollapse = totalRows > INITIAL_ROWS;
       if (needsCollapse && !collapseCtrl) {
         wrapper.classList.add('collapsed');
-        var showAllText = 'Show all ' + totalRows + ' rows';
-        if (allData.length > MAX_ROWS) showAllText += ' (of ' + allData.length + ' total)';
-        collapseCtrl = addCollapseToggle(s.actions, wrapper, showAllText);
-      } else if (collapseCtrl) {
         var label = 'Show all ' + totalRows + ' rows';
         if (allData.length > MAX_ROWS) label += ' (of ' + allData.length + ' total)';
-        collapseCtrl.setLabel(label);
+        collapseCtrl = addCollapseToggle(s.actions, wrapper, label);
+      } else if (collapseCtrl) {
+        var lbl = 'Show all ' + totalRows + ' rows';
+        if (allData.length > MAX_ROWS) lbl += ' (of ' + allData.length + ' total)';
+        collapseCtrl.setLabel(lbl);
         collapseCtrl.setVisible(needsCollapse);
       }
     }
@@ -596,7 +822,6 @@
   function mountStats(s, section) {
     var dr = getDataResult(section);
 
-    // Aggregation mode (primary)
     if (section.stats && section.stats.items) {
       if (!dr.ok) { appendError(s.body, dr.error); return null; }
       var grid = document.createElement('div');
@@ -615,7 +840,6 @@
       return function updateStats() { rebuild(); };
     }
 
-    // Inline fallback (label/value pairs, no filtering)
     if (section.inline_data) {
       renderInlineStats(s.body, section.inline_data);
       return null;
@@ -660,19 +884,16 @@
         return true;
       });
     }
-
     var agg = item.aggregate, field = item.field;
     if (agg === 'count') return formatCount(filtered.length);
     if (!field) return '\u26a0 missing field';
     if (agg === 'distinct') return formatCount(countDistinct(filtered, field));
-
     var nums = [];
     for (var j = 0; j < filtered.length; j++) {
       var n = filtered[j][field];
       if (typeof n === 'number' && isFinite(n)) nums.push(n);
     }
     if (nums.length === 0) return '\u2014';
-
     if (agg === 'sum') { var sum = 0; for (var si = 0; si < nums.length; si++) sum += nums[si]; return formatDecimal(sum); }
     if (agg === 'avg') { var tot = 0; for (var ai = 0; ai < nums.length; ai++) tot += nums[ai]; return formatDecimal(tot / nums.length); }
     if (agg === 'min') { var min = nums[0]; for (var mi = 1; mi < nums.length; mi++) if (nums[mi] < min) min = nums[mi]; return formatDecimal(min); }
@@ -722,17 +943,16 @@
     for (var src in filterState) {
       for (var field in filterState[src]) {
         var values = filterState[src][field];
-        for (var key in values) {
-          var value = values[key];
-          var tag = document.createElement('button');
-          tag.className = 'filter-tag';
-          tag.textContent = src + ' \u00b7 ' + field + ': ' + formatCell(value);
-          tag.setAttribute('title', 'Remove filter');
-          (function(s, f, v) {
-            tag.addEventListener('click', function() { toggleFilter(s, f, v); });
-          })(src, field, value);
-          tags.appendChild(tag);
-        }
+        var names = [];
+        for (var key in values) names.push(formatCell(values[key]));
+        var tag = document.createElement('button');
+        tag.className = 'filter-tag';
+        tag.textContent = field + ': ' + names.join(', ');
+        tag.setAttribute('title', 'Remove filter');
+        (function(s, f) {
+          tag.addEventListener('click', function() { clearFieldFilter(s, f); });
+        })(src, field);
+        tags.appendChild(tag);
       }
     }
     filterBarEl.appendChild(tags);
@@ -743,7 +963,6 @@
     resetBtn.addEventListener('click', clearFilters);
     filterBarEl.appendChild(resetBtn);
 
-    // Pulse only when adding filters
     filterBarEl.classList.remove('filter-bar-pulse');
     if (shouldPulse) {
       void filterBarEl.offsetWidth;
@@ -764,30 +983,18 @@
     var updateFn = null;
     try {
       switch (section.type) {
-        case 'chart':
-          updateFn = mountChart(s, section, i, layoutMeta);
-          break;
-        case 'table':
-          updateFn = mountTable(s, section);
-          break;
-        case 'stats':
-          updateFn = mountStats(s, section);
-          break;
-        case 'list':
-          appendError(s.body, 'List rendering coming soon');
-          break;
-        default:
-          appendError(s.body, 'Unknown section type: ' + String(section.type));
+        case 'chart': updateFn = mountChart(s, section, i, layoutMeta); break;
+        case 'table': updateFn = mountTable(s, section); break;
+        case 'stats': updateFn = mountStats(s, section); break;
+        case 'list': appendError(s.body, 'List rendering coming soon'); break;
+        default: appendError(s.body, 'Unknown section type: ' + String(section.type));
       }
     } catch (e) {
       appendError(s.body, 'Render error: ' + e.message);
       console.error('Section "' + section.title + '":', e);
     }
 
-    if (updateFn) {
-      sectionRegistry.push({ section: section, update: updateFn });
-    }
-
+    if (updateFn) sectionRegistry.push({ section: section, update: updateFn });
     if (layoutMeta.spanFull) s.card.classList.add('span-full');
     container.appendChild(s.card);
   });

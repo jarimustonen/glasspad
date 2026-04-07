@@ -99,6 +99,32 @@ tbody tr:hover { background: #f9fafb; }
 }
 .table-show-more:hover { background: #e5e7eb; }
 
+/* Filter edit mode controls */
+.filter-edit-btn {
+  background: none; border: 1px solid #e5e7eb; border-radius: 6px;
+  padding: 0.2rem 0.5rem; font-size: 0.85rem; cursor: pointer;
+  color: #6b7280; transition: all 0.15s;
+}
+.filter-edit-btn:hover { background: #f3f4f6; color: #374151; }
+.filter-edit-btn.filter-active {
+  background: #dbeafe; border-color: #93c5fd; color: #1e40af;
+}
+.filter-edit-controls {
+  display: flex; gap: 0.4rem; align-items: center;
+}
+.filter-edit-cancel {
+  background: none; border: 1px solid #e5e7eb; border-radius: 6px;
+  padding: 0.2rem 0.6rem; font-size: 0.8rem; cursor: pointer;
+  color: #6b7280;
+}
+.filter-edit-cancel:hover { background: #f3f4f6; }
+.filter-edit-apply {
+  background: #2563eb; border: none; border-radius: 6px;
+  padding: 0.25rem 0.7rem; font-size: 0.8rem; cursor: pointer;
+  color: #fff; font-weight: 600;
+}
+.filter-edit-apply:hover { background: #1d4ed8; }
+
 /* Filter bar */
 .filter-bar {
   display: flex; align-items: center; gap: 0.75rem;
