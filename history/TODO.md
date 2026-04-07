@@ -28,7 +28,9 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 
 - [x] 7.11 Temporal-akselin kiinteä domain (ghost layer lukitsee akselit suodatettaessa)
 - [x] 7.12 Aikavälivalinta (brush/interval selection non-timeUnit temporal chartissa)
-- [x] ~~7.13~~ Poistettu — suodatetut arvot eivät kuulu normaali-näkymään, vain edit-tilaan
+- [x] 7.13 Hour-of-day range filter (dual-handle slider, dimming, filter bar tag)
+- [x] 7.14 Range filter tila (rangeFilterState + hourFilterState, getFilteredData)
+- [x] 7.15 Auto-expand collapsed chart filter edit modessa (palautetaan tila lopuksi)
 
 ---
 
@@ -88,9 +90,7 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 ## Rinnakkaisuusanalyysi
 
 ```
-Vaiheet 1–7: ✅ Pääosin tehty
-    │
-    ├── 7.11–7.13: Suodatuksen viimeistely
+Vaiheet 1–7: ✅ Valmis
     │
     ├──────────────────────┐
     │                      │
