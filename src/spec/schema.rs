@@ -14,6 +14,8 @@ pub struct DashboardSpec {
     #[serde(default)]
     pub layout: Layout,
     #[serde(default)]
+    pub toc: bool,
+    #[serde(default)]
     pub datasets: BTreeMap<String, DatasetDecl>,
     pub sections: Vec<Section>,
 }

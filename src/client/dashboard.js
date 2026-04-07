@@ -1521,4 +1521,78 @@
     container.appendChild(s.card);
   });
 
+  // ============================================================
+  // TABLE OF CONTENTS (sidebar)
+  // ============================================================
+  if (spec.toc) {
+    var tocNav = document.createElement('nav');
+    tocNav.className = 'toc-sidebar';
+
+    var tocTitle = document.createElement('div');
+    tocTitle.className = 'toc-title';
+    tocTitle.textContent = 'Contents';
+    tocNav.appendChild(tocTitle);
+
+    var tocList = document.createElement('ul');
+    tocList.className = 'toc-list';
+
+    var clickedIndex = -1; // track manual click to override scroll-based highlight
+
+    spec.sections.forEach(function(section, i) {
+      var sectionId = section.id || ('section-' + i);
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#' + sectionId;
+      a.textContent = section.title;
+      a.addEventListener('click', function(e) {
+        e.preventDefault();
+        clickedIndex = i;
+        setTocActive(i);
+        var target = document.getElementById(sectionId);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      li.appendChild(a);
+      tocList.appendChild(li);
+    });
+
+    tocNav.appendChild(tocList);
+    document.body.appendChild(tocNav);
+    document.body.classList.add('has-toc');
+
+    // Highlight active section on scroll
+    var tocLinks = tocList.querySelectorAll('a');
+    var sectionEls = [];
+    spec.sections.forEach(function(section, i) {
+      var el = document.getElementById(section.id || ('section-' + i));
+      if (el) sectionEls.push({ el: el, link: tocLinks[i] });
+    });
+
+    function setTocActive(idx) {
+      for (var j = 0; j < sectionEls.length; j++) {
+        sectionEls[j].link.classList.toggle('toc-active', j === idx);
+      }
+    }
+
+    function updateTocHighlight() {
+      var scrollY = window.scrollY || document.documentElement.scrollTop;
+      var active = null;
+      for (var i = 0; i < sectionEls.length; i++) {
+        if (sectionEls[i].el.offsetTop <= scrollY + 100) active = i;
+      }
+      // If user clicked a link and scroll hasn't moved away, keep clicked selection
+      if (clickedIndex >= 0) {
+        if (active === clickedIndex || (active !== null &&
+            Math.abs(sectionEls[active].el.offsetTop - sectionEls[clickedIndex].el.offsetTop) < 10)) {
+          active = clickedIndex;
+        } else {
+          clickedIndex = -1; // scroll moved away, clear override
+        }
+      }
+      setTocActive(active);
+    }
+
+    window.addEventListener('scroll', updateTocHighlight, { passive: true });
+    updateTocHighlight();
+  }
+
 })();
