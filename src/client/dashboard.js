@@ -1261,14 +1261,14 @@
     function rebuildTbody() {
       var allData = dr.source ? getFilteredData(dr.source) : dr.data;
       if (!allData) allData = [];
-      var totalRows = Math.min(allData.length, MAX_ROWS);
-      var sourceData = allData.slice(0, totalRows);
-      var displayData = sourceData.slice();
-
+      // Sort full dataset first, then truncate for display
+      var displayData = allData.slice();
       if (sortState) {
         var sf = sortState.field, sa = sortState.ascending, st = sortTypes[sf] || 'string';
         displayData.sort(function(a, b) { return compareValues(a[sf], b[sf], st, sa); });
       }
+      var totalRows = Math.min(displayData.length, MAX_ROWS);
+      displayData = displayData.slice(0, totalRows);
 
       var html = '';
       for (var r = 0; r < displayData.length; r++) {
