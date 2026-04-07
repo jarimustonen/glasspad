@@ -344,13 +344,12 @@
     // Add cursor to mark for interactive charts
     if (filterField) mark.cursor = 'pointer';
 
+    var useStepHeight = isHorizontalBar(cfg);
     var height = 300;
-    if (layoutMeta.categories > 0) {
-      height = Math.max(200, layoutMeta.categories * 22 + 60);
-    }
 
     var wrapper = document.createElement('div');
     wrapper.className = 'chart-container';
+    if (useStepHeight) wrapper.classList.add('chart-step-height');
     if (layoutMeta.shouldCollapse) {
       wrapper.classList.add('collapsed');
       wrapper.style.maxHeight = CHART_COLLAPSED_HEIGHT + 'px';
@@ -360,13 +359,15 @@
     wrapper.appendChild(div);
     s.body.appendChild(wrapper);
 
+    var encoding = JSON.parse(JSON.stringify(cfg.encoding || {}));
+
     var vlSpec = {
       '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
       width: 'container',
-      height: height,
+      height: useStepHeight ? { step: 22 } : height,
       mark: mark,
       data: { name: 'source', values: data },
-      encoding: cfg.encoding || {}
+      encoding: encoding
     };
 
     if (markType === 'arc') {
@@ -408,20 +409,23 @@
       });
 
     return function updateChart() {
-      var view = chartViews[sectionKey];
-      if (!view) return;
       var filtered = dr.source ? getFilteredData(dr.source) : dr.data;
-      view.data('source', filtered || []).run();
+      if (!filtered) filtered = [];
 
-      // Update collapse for horizontal bars with dynamic category count
+      // Update collapse labels for horizontal bars
       if (collapseCtrl && isHorizontalBar(cfg)) {
         var yField = (cfg.encoding.y || {}).field;
         if (yField) {
-          var cats = countDistinct(filtered || [], yField);
+          var cats = countDistinct(filtered, yField);
           collapseCtrl.setLabel('Show all ' + cats + ' categories');
           collapseCtrl.setVisible(cats > CHART_COLLAPSE_THRESHOLD);
         }
       }
+
+      // Just swap data — chart height stays fixed so layout is stable
+      var view = chartViews[sectionKey];
+      if (!view) return;
+      view.data('source', filtered).run();
     };
   }
 

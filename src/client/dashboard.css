@@ -37,6 +37,7 @@ h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
 
 /* Charts */
 .chart-container { width: 100%; position: relative; overflow-x: auto; }
+.chart-step-height { min-height: 300px; }
 .chart-container.collapsed { overflow-x: auto; overflow-y: hidden; }
 .chart-container.collapsed::after {
   content: '';
