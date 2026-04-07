@@ -21,21 +21,21 @@
   }
 
   // ============================================================
-  // FILTER STATE
-  // Per-dataset, per-field, Set of selected values
-  // { "events": { "country": Set(["IN","US"]), "device": Set(["mobile"]) } }
+  // FILTER STATE (Object.create(null) for safe maps)
+  // { "events": { "country": { "string:IN": "IN" }, "device": { "string:mobile": "mobile" } } }
   // Within same field: OR. Across fields: AND.
   // ============================================================
-  var filterState = {};
+  var filterState = Object.create(null);
+  var filteredCache = null; // memoized per onFilterChange cycle
+  var prevFilterCount = 0; // for pulse-only-on-add
 
   function toggleFilter(source, field, value) {
-    if (!filterState[source]) filterState[source] = {};
+    if (!filterState[source]) filterState[source] = Object.create(null);
     var fieldFilters = filterState[source];
-    if (!fieldFilters[field]) fieldFilters[field] = {};
+    if (!fieldFilters[field]) fieldFilters[field] = Object.create(null);
     var key = distinctKey(value);
-    if (fieldFilters[field][key]) {
+    if (key in fieldFilters[field]) {
       delete fieldFilters[field][key];
-      // Clean up empty
       if (Object.keys(fieldFilters[field]).length === 0) delete fieldFilters[field];
       if (Object.keys(filterState[source]).length === 0) delete filterState[source];
     } else {
@@ -45,7 +45,7 @@
   }
 
   function clearFilters() {
-    filterState = {};
+    filterState = Object.create(null);
     onFilterChange();
   }
 
@@ -60,46 +60,42 @@
   }
 
   function getFilteredData(source) {
+    if (!filteredCache) filteredCache = Object.create(null);
+    if (source in filteredCache) return filteredCache[source];
+
     var raw = datasets[source];
     if (!raw) return [];
     var srcFilters = filterState[source];
-    if (!srcFilters) return raw;
+    if (!srcFilters) { filteredCache[source] = raw; return raw; }
 
-    return raw.filter(function(row) {
-      for (var field in srcFilters) {
+    var fields = Object.keys(srcFilters);
+    var result = raw.filter(function(row) {
+      for (var i = 0; i < fields.length; i++) {
+        var field = fields[i];
         var allowed = srcFilters[field];
-        var keys = Object.keys(allowed);
-        if (keys.length === 0) continue;
-        var rowKey = distinctKey(row[field]);
-        var match = false;
-        for (var i = 0; i < keys.length; i++) {
-          if (keys[i] === rowKey) { match = true; break; }
-        }
-        if (!match) return false; // AND across fields
+        if (!(distinctKey(row[field]) in allowed)) return false;
       }
       return true;
     });
-  }
 
-  function isValueFiltered(source, field, value) {
-    if (!filterState[source] || !filterState[source][field]) return false;
-    return !!filterState[source][field][distinctKey(value)];
+    filteredCache[source] = result;
+    return result;
   }
 
   // ============================================================
-  // SECTION REGISTRY — each section registers an update function
+  // SECTION REGISTRY
   // ============================================================
   var sectionRegistry = [];
 
   function onFilterChange() {
+    filteredCache = null; // invalidate cache
+    var newCount = getActiveFilterCount();
     for (var i = 0; i < sectionRegistry.length; i++) {
-      try {
-        sectionRegistry[i].update();
-      } catch (e) {
-        console.error('Section update error:', e);
-      }
+      try { sectionRegistry[i].update(); }
+      catch (e) { console.error('Section update error:', e); }
     }
-    renderFilterBar();
+    renderFilterBar(newCount > prevFilterCount); // pulse only on add
+    prevFilterCount = newCount;
   }
 
   // ============================================================
@@ -140,7 +136,7 @@
   }
 
   function countDistinct(data, field) {
-    var seen = {};
+    var seen = Object.create(null);
     for (var i = 0; i < data.length; i++) {
       var v = data[i][field];
       if (v !== null && v !== undefined) seen[distinctKey(v)] = true;
@@ -182,10 +178,11 @@
     return { ok: false, error: 'No data source configured' };
   }
 
-  function getFilteredDataResult(section) {
-    var dr = getDataResult(section);
-    if (!dr.ok || !dr.source) return dr;
-    return { ok: true, data: getFilteredData(dr.source), source: dr.source };
+  function datasetHasField(data, field) {
+    for (var i = 0; i < Math.min(data.length, 10); i++) {
+      if (field in data[i]) return true;
+    }
+    return false;
   }
 
   function getSectionLayoutMeta(section, dataResult) {
@@ -205,10 +202,11 @@
   }
 
   // ============================================================
-  // COLLAPSE TOGGLE
+  // COLLAPSE TOGGLE — returns controller for dynamic updates
   // ============================================================
-  function addCollapseToggle(actionsEl, wrapper, showAllText, onToggle) {
+  function addCollapseToggle(actionsEl, wrapper, initialLabel, onToggle) {
     var expanded = false;
+    var collapsedLabel = initialLabel;
     var wrapperId = wrapper.id || ('collapse-' + Math.random().toString(36).slice(2, 8));
     wrapper.id = wrapperId;
 
@@ -222,12 +220,11 @@
 
     var bottomBtn = document.createElement('button');
     bottomBtn.className = 'table-show-more';
-    bottomBtn.textContent = showAllText;
+    bottomBtn.textContent = collapsedLabel;
     bottomBtn.setAttribute('aria-controls', wrapperId);
     bottomBtn.setAttribute('aria-expanded', 'false');
 
-    function toggle() {
-      expanded = !expanded;
+    function render() {
       var expStr = String(expanded);
       bottomBtn.setAttribute('aria-expanded', expStr);
       topLink.setAttribute('aria-expanded', expStr);
@@ -237,10 +234,15 @@
         topLink.style.display = '';
       } else {
         wrapper.classList.add('collapsed');
-        bottomBtn.textContent = showAllText;
+        bottomBtn.textContent = collapsedLabel;
         topLink.style.display = 'none';
-        wrapper.parentElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
+    }
+
+    function toggle() {
+      expanded = !expanded;
+      render();
+      if (!expanded) wrapper.parentElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (onToggle) onToggle(expanded);
     }
 
@@ -252,6 +254,22 @@
     } else {
       wrapper.parentNode.appendChild(bottomBtn);
     }
+
+    return {
+      setVisible: function(visible) {
+        bottomBtn.style.display = visible ? '' : 'none';
+        topLink.style.display = (visible && expanded) ? '' : 'none';
+        if (!visible) {
+          wrapper.classList.remove('collapsed');
+        } else if (!expanded) {
+          wrapper.classList.add('collapsed');
+        }
+      },
+      setLabel: function(label) {
+        collapsedLabel = label;
+        if (!expanded) bottomBtn.textContent = collapsedLabel;
+      }
+    };
   }
 
   // ============================================================
@@ -287,7 +305,7 @@
   // ============================================================
   var CHART_COLLAPSED_HEIGHT = 350;
   var CHART_COLLAPSE_THRESHOLD = 10;
-  var chartViews = {};
+  var chartViews = Object.create(null);
 
   function mountChart(s, section, index, layoutMeta) {
     var cfg = section.chart;
@@ -296,9 +314,25 @@
     if (!dr.ok) { appendError(s.body, dr.error); return null; }
 
     var sectionKey = section.id || ('section-' + index);
-    var data = getFilteredData(dr.source) || dr.data || [];
+    var filterField = section.interactive_filter && section.interactive_filter.field;
+
+    // Validate interactive filter at mount
+    if (filterField) {
+      if (!dr.source) {
+        appendError(s.body, 'interactive_filter requires dataset source');
+        filterField = null;
+      } else if (!datasetHasField(dr.data, filterField)) {
+        appendError(s.body, 'interactive_filter field "' + filterField + '" not found in data');
+        filterField = null;
+      }
+    }
+
+    var data = (dr.source ? getFilteredData(dr.source) : dr.data) || [];
     var mark = normalizeMark(cfg.mark);
     var markType = getMarkType(cfg.mark);
+
+    // Add cursor to mark for interactive charts
+    if (filterField) mark.cursor = 'pointer';
 
     var height = 300;
     if (layoutMeta.categories > 0) {
@@ -331,25 +365,31 @@
       vlSpec.view = { stroke: null };
     }
 
-    // Add Vega selection for interactive charts
-    var filterField = section.interactive_filter && section.interactive_filter.field;
+    var collapseCtrl = null;
+    if (layoutMeta.shouldCollapse) {
+      collapseCtrl = addCollapseToggle(s.actions, wrapper,
+        'Show all ' + layoutMeta.categories + ' categories',
+        function(exp) { wrapper.style.maxHeight = exp ? '' : CHART_COLLAPSED_HEIGHT + 'px'; });
+    }
 
     vegaEmbed(div, vlSpec, { actions: false, renderer: 'svg' })
       .then(function(result) {
         chartViews[sectionKey] = result.view;
 
-        // Wire click handler for interactive filter
         if (filterField && dr.source) {
           result.view.addEventListener('click', function(event, item) {
-            if (item && item.datum) {
-              var value = item.datum[filterField];
-              if (value !== undefined && value !== null) {
-                toggleFilter(dr.source, filterField, value);
-              }
-            }
+            if (!item || !item.datum) return;
+            if (!Object.prototype.hasOwnProperty.call(item.datum, filterField)) return;
+            var value = item.datum[filterField];
+            if (value == null) return;
+            toggleFilter(dr.source, filterField, value);
           });
-          // Show pointer cursor on interactive charts
-          div.style.cursor = 'pointer';
+        }
+
+        // Catch up if filters changed during async embed
+        var latest = dr.source ? getFilteredData(dr.source) : dr.data;
+        if (latest !== data) {
+          result.view.data('source', latest || []).run();
         }
       })
       .catch(function(err) {
@@ -357,18 +397,21 @@
         appendError(div, 'Chart error: ' + err.message);
       });
 
-    if (layoutMeta.shouldCollapse) {
-      addCollapseToggle(s.actions, wrapper, 'Show all ' + layoutMeta.categories + ' categories', function(exp) {
-        wrapper.style.maxHeight = exp ? '' : CHART_COLLAPSED_HEIGHT + 'px';
-      });
-    }
-
-    // Return update function
     return function updateChart() {
       var view = chartViews[sectionKey];
       if (!view) return;
       var filtered = dr.source ? getFilteredData(dr.source) : dr.data;
       view.data('source', filtered || []).run();
+
+      // Update collapse for horizontal bars with dynamic category count
+      if (collapseCtrl && isHorizontalBar(cfg)) {
+        var yField = (cfg.encoding.y || {}).field;
+        if (yField) {
+          var cats = countDistinct(filtered || [], yField);
+          collapseCtrl.setLabel('Show all ' + cats + ' categories');
+          collapseCtrl.setVisible(cats > CHART_COLLAPSE_THRESHOLD);
+        }
+      }
     };
   }
 
@@ -429,7 +472,7 @@
     var dr = getDataResult(section);
     if (!dr.ok) { appendError(s.body, dr.error); return null; }
 
-    var sortTypes = {};
+    var sortTypes = Object.create(null);
     for (var c = 0; c < cfg.columns.length; c++) {
       var col = cfg.columns[c];
       sortTypes[col.field] = col.sort || detectSortType(dr.data, col.field);
@@ -448,7 +491,7 @@
     wrapper.appendChild(table);
     s.body.appendChild(wrapper);
 
-    var collapseAdded = false;
+    var collapseCtrl = null;
 
     function buildThead() {
       var tr = document.createElement('tr');
@@ -502,17 +545,18 @@
       }
       tbody.innerHTML = html;
 
-      // Manage collapse state
-      if (totalRows > INITIAL_ROWS) {
-        if (!collapseAdded) {
-          wrapper.classList.add('collapsed');
-          var showAllText = 'Show all ' + totalRows + ' rows';
-          if (allData.length > MAX_ROWS) showAllText += ' (of ' + allData.length + ' total)';
-          addCollapseToggle(s.actions, wrapper, showAllText);
-          collapseAdded = true;
-        }
-      } else {
-        wrapper.classList.remove('collapsed');
+      // Dynamic collapse management
+      var needsCollapse = totalRows > INITIAL_ROWS;
+      if (needsCollapse && !collapseCtrl) {
+        wrapper.classList.add('collapsed');
+        var showAllText = 'Show all ' + totalRows + ' rows';
+        if (allData.length > MAX_ROWS) showAllText += ' (of ' + allData.length + ' total)';
+        collapseCtrl = addCollapseToggle(s.actions, wrapper, showAllText);
+      } else if (collapseCtrl) {
+        var label = 'Show all ' + totalRows + ' rows';
+        if (allData.length > MAX_ROWS) label += ' (of ' + allData.length + ' total)';
+        collapseCtrl.setLabel(label);
+        collapseCtrl.setVisible(needsCollapse);
       }
     }
 
@@ -529,9 +573,7 @@
     buildThead();
     rebuildTbody();
 
-    return function updateTable() {
-      rebuildTbody();
-    };
+    return function updateTable() { rebuildTbody(); };
   }
 
   // ============================================================
@@ -540,33 +582,33 @@
   function mountStats(s, section) {
     var dr = getDataResult(section);
 
-    // Inline stats (no filtering)
-    if (!section.stats && section.inline_data) {
+    // Aggregation mode (primary)
+    if (section.stats && section.stats.items) {
+      if (!dr.ok) { appendError(s.body, dr.error); return null; }
+      var grid = document.createElement('div');
+      grid.className = 'stats-grid';
+      s.body.appendChild(grid);
+      var items = section.stats.items;
+
+      function rebuild() {
+        var data = dr.source ? getFilteredData(dr.source) : dr.data || [];
+        grid.innerHTML = '';
+        for (var i = 0; i < items.length; i++) {
+          grid.appendChild(statCard(items[i].label, computeAggregate(items[i], data)));
+        }
+      }
+      rebuild();
+      return function updateStats() { rebuild(); };
+    }
+
+    // Inline fallback (label/value pairs, no filtering)
+    if (section.inline_data) {
       renderInlineStats(s.body, section.inline_data);
       return null;
     }
-    if (!section.stats || !section.stats.items) {
-      appendError(s.body, 'No stats config');
-      return null;
-    }
-    if (!dr.ok) { appendError(s.body, dr.error); return null; }
 
-    var grid = document.createElement('div');
-    grid.className = 'stats-grid';
-    s.body.appendChild(grid);
-
-    var items = section.stats.items;
-
-    function rebuild() {
-      var data = dr.source ? getFilteredData(dr.source) : dr.data || [];
-      grid.innerHTML = '';
-      for (var i = 0; i < items.length; i++) {
-        grid.appendChild(statCard(items[i].label, computeAggregate(items[i], data)));
-      }
-    }
-
-    rebuild();
-    return function updateStats() { rebuild(); };
+    appendError(s.body, 'No stats config');
+    return null;
   }
 
   function renderInlineStats(parent, rows) {
@@ -636,14 +678,14 @@
   var filterBarEl = null;
 
   function createFilterBar() {
+    if (!container.parentNode) return;
     filterBarEl = document.createElement('div');
     filterBarEl.className = 'filter-bar';
     filterBarEl.style.display = 'none';
-    // Insert before dashboard
     container.parentNode.insertBefore(filterBarEl, container);
   }
 
-  function renderFilterBar() {
+  function renderFilterBar(shouldPulse) {
     if (!filterBarEl) return;
     var count = getActiveFilterCount();
     if (count === 0) {
@@ -670,7 +712,7 @@
           var value = values[key];
           var tag = document.createElement('button');
           tag.className = 'filter-tag';
-          tag.textContent = field + ': ' + formatCell(value);
+          tag.textContent = src + ' \u00b7 ' + field + ': ' + formatCell(value);
           tag.setAttribute('title', 'Remove filter');
           (function(s, f, v) {
             tag.addEventListener('click', function() { toggleFilter(s, f, v); });
@@ -687,10 +729,12 @@
     resetBtn.addEventListener('click', clearFilters);
     filterBarEl.appendChild(resetBtn);
 
-    // Pulse animation
+    // Pulse only when adding filters
     filterBarEl.classList.remove('filter-bar-pulse');
-    void filterBarEl.offsetWidth; // force reflow
-    filterBarEl.classList.add('filter-bar-pulse');
+    if (shouldPulse) {
+      void filterBarEl.offsetWidth;
+      filterBarEl.classList.add('filter-bar-pulse');
+    }
   }
 
   // ============================================================

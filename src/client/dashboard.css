@@ -130,9 +130,6 @@ tbody tr:hover { background: #f9fafb; }
 }
 .filter-bar-pulse { animation: filter-pulse 0.5s ease-out; }
 
-/* Interactive chart cursor */
-.chart-container[style*="cursor"] svg { cursor: pointer; }
-
 @media (max-width: 768px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   body { padding: 1rem; }
