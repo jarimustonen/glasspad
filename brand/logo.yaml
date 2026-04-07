@@ -1,0 +1,15 @@
+file:
+  filename: logo.avif
+  hash: sha256:d6069beee89721be715003a9f0f9e858de8ac4cd113750c361b2b8a233737ec3
+image:
+  width: 1024
+  height: 1024
+seed: 316495114
+gemini:
+  model_version: gemini-2.5-flash-image
+  response_id: pc7Taa-mEI2NvdIPsbi9yQQ
+  usage:
+    prompt_tokens: 159
+    candidates_tokens: 1302
+    total_tokens: 1461
+  finish_reason: FinishReason.STOP
