@@ -169,12 +169,22 @@
     return xIsQuant && yIsCat;
   }
 
+  // Track inline datasets so filtering works even when CLI injected inline_data
+  var inlineDatasetCounter = 0;
+
   function getDataResult(section) {
     if (section.source) {
       if (!(section.source in datasets)) return { ok: false, error: 'Unknown dataset: ' + section.source };
       return { ok: true, data: datasets[section.source], source: section.source };
     }
-    if (section.inline_data) return { ok: true, data: section.inline_data, source: null };
+    if (section.inline_data) {
+      // Register inline data as a synthetic dataset so filtering can reference it
+      var syntheticName = section.id || ('_inline_' + inlineDatasetCounter++);
+      if (!(syntheticName in datasets)) {
+        datasets[syntheticName] = section.inline_data;
+      }
+      return { ok: true, data: section.inline_data, source: syntheticName };
+    }
     return { ok: false, error: 'No data source configured' };
   }
 
