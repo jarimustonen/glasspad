@@ -312,10 +312,16 @@
   function extractFieldFromLabel(label, field) {
     var pattern = field + ': ';
     var idx = label.indexOf(pattern);
-    if (idx === -1) return null;
-    var start = idx + pattern.length;
-    var end = label.indexOf(';', start);
-    return end === -1 ? label.slice(start).trim() : label.slice(start, end).trim();
+    // Ensure match is at a field boundary (start of string or after "; ")
+    while (idx !== -1) {
+      if (idx === 0 || label.substring(idx - 2, idx) === '; ') {
+        var start = idx + pattern.length;
+        var end = label.indexOf(';', start);
+        return end === -1 ? label.slice(start).trim() : label.slice(start, end).trim();
+      }
+      idx = label.indexOf(pattern, idx + 1);
+    }
+    return null;
   }
 
   function getMarkType(mark) {
