@@ -4,58 +4,36 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Client-side renderöinti valmis, UX-korjaukset tehty. Seuraavaksi: interaktiivinen suodatus.
+Interaktiivinen suodatus toteutettu (filter edit mode). Seuraavaksi: temporal-akselin kiinteä domain + aikavälivalinta, visuaalinen palaute valituille arvoille.
 
 Sopimus: `04-spec-contract.md`
-Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`
+Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`
 
 ---
 
-## Vaihe 1: Tutkimus ✅
-## Vaihe 2: PoC ✅
-## Vaihe 3: Spec contract ✅
-## Vaihe 4: Turvallisuus ✅
-## Vaihe 5: Data layer ✅
+## Vaihe 1–6: ✅ Valmis
 
-## Vaihe 6: Client-side renderöinti ✅
+## Vaihe 7: Interaktiivinen suodatus ✅ (pääosin)
 
-- [x] 6.1 Spec + datasets JSON selaimeen (safe script tags)
-- [x] 6.2 JS-moduuli: parsii spec + datasets, renderöi kaikki sectionit
-- [x] 6.3 Chart: vegaEmbed, view-instanssit tallennettu chartViews-registriin
-- [x] 6.4 Table: DOM-pohjainen, thead kerran + tbody päivitetään sortilla
-- [x] 6.5 Stats: aggregaatiot client-sidessa (count, distinct, sum, avg, min, max, where)
-- [x] 6.6 Renderer.rs: HTML-runko + include_str! JS/CSS erillisistä tiedostoista
-- [x] 6.7 Vakio section-rakenne: createSectionCard → {card, body, actions}
-- [x] 6.8 Collapsible charts/tables: show more/less toggle, gradient fade
-- [x] 6.9 Taulukon sarakesorttaus: asc→desc→original, tyyppikohtainen (number/string/temporal/boolean)
-- [x] 6.10 SortType enum schemassa (validoidaan parse-vaiheessa)
-- [x] 6.11 Tooltips kaikissa charteissa (normalizeMark)
-- [x] 6.12 Dynaaminen korkeus horizontal bar charteille
-- [x] 6.13 Auto-span: taulukot + paljon kategorioita → koko leveys
-- [x] 6.14 Accessibility: aria-sort, aria-expanded, aria-controls, button-sort, focus-visible
-- [x] 6.15 Docs päivitetty kanoniseen schemaan
-- [x] 6.16 HTML-sanitoija (ammonia) body_format: sanitized_html valmis käyttöön
+- [x] 7.1 Filter state -malli (per dataset, per field, Object.create(null))
+- [x] 7.2 Filter edit mode: 🔍 nappi → All/None/Cancel/Apply kontrollit
+- [x] 7.3 Multi-select: klikkaa palkkeja valitaksesi/poistaaksesi, DOM-pohjainen opacity
+- [x] 7.4 Suodatetun datan syöttö kaikkiin saman source:n sectioneihin (vega.changeset)
+- [x] 7.5 Filter bar (tagit, reset all, pulse vain lisäyksessä)
+- [x] 7.6 Section-tilan säilyminen (taulukko-sort, collapse-tila päivittyvät dynaamisesti)
+- [x] 7.7 Filtered cache (memoized per onFilterChange-sykli)
+- [x] 7.8 Step-based chart height + CSS min-height vakaus
+- [x] 7.9 Count-akseli: kokonaislukutickkit (labelExpr + conditional tick/grid color)
+- [x] 7.10 CLI --data säilyttää source-identiteetin (cross-filtering toimii)
 
 Puuttuu vielä:
-- [ ] 5.7 API: multipart upload (nyt CLI injektoi inline)
+- [ ] 7.11 Temporal-akselin kiinteä domain (events per hour ei saa "zoomata" suodatettaessa)
+- [ ] 7.12 Aikavälivalinta (brush/interval selection temporal chartissa)
+- [ ] 7.13 Visuaalinen palaute: suodatetut arvot näkyvät himmennettyinä myös normaali-näkymässä (ei vain edit-tilassa)
 
 ---
 
-## Vaihe 7: Interaktiivinen suodatus ⬜
-
-> Ref: `04-spec-contract.md` §6, `06-arch-interactive-filtering.md`
-> Pohja valmis: client-side renderöinti, chartViews-registry, vakio section-rakenne
-
-- [ ] 7.1 Filter state -malli (per dataset, per field, Set<arvo>)
-- [ ] 7.2 Chart-klikkaus → toggle filter (interactive_filter.field)
-- [ ] 7.3 Suodatetun datan syöttö kaikkiin saman source:n sectioneihin
-- [ ] 7.4 Kaikkien sectionien uudelleenrenderöinti suodatetulla datalla
-- [ ] 7.5 Filter bar (kelluva, tagit, reset-nappi)
-- [ ] 7.6 Pulse-animaatio kun suodatus muuttuu
-- [ ] 7.7 Section-tilan säilyminen (taulukko-sort, collapse-tila)
-- [ ] 7.8 Testaus analytics-esimerkkidatalla
-
-## Vaihe 8: Rikkaat datanäkymät (list) ⬜                  ← rinnastettavissa vaiheen 7 kanssa
+## Vaihe 8: Rikkaat datanäkymät (list) ⬜
 
 > Ref: `04-spec-contract.md` §2 (list), `07-arch-rich-data-views.md`
 
@@ -84,7 +62,7 @@ Puuttuu vielä:
 - [ ] 10.1 PID-tiedosto `~/.glasspad/server.pid`
 - [ ] 10.2 `glasspad stop` -komento
 - [ ] 10.3 `GLASSPAD_PORT` ympäristömuuttuja
-- [ ] 10.4 Skill-päivitys (uusi schema, --data, sort, tooltip)
+- [ ] 10.4 Skill-päivitys (filter edit mode, --data, sort, tooltip)
 - [ ] 10.5 README päivitys
 - [ ] 10.6 `cargo install` ja testaus toisessa repossa
 
@@ -99,27 +77,27 @@ Puuttuu vielä:
 - [ ] OpenClaw-päätelaite → `08 §Tulevaisuus`
 - [ ] Columnar Dataset (Vec<Row> → headers + Vec<Vec<CellValue>>)
 - [ ] Fetch-endpoint isoille dataseteille
-- [ ] Advanced filters -paneeli
 - [ ] Detail-moodit: overlay, fullscreen
 - [ ] Deprecated-kenttien normalisointi (data:→datasets:, chart.data→inline_data)
 - [ ] A2UI-yhteensopivuus
 - [ ] Docker-image
 - [ ] SQLite-persistenssi
+- [ ] API: multipart upload (nyt CLI injektoi inline)
 
 ---
 
 ## Rinnakkaisuusanalyysi
 
 ```
-Vaiheet 1–6: ✅ Tehty
+Vaiheet 1–7: ✅ Pääosin tehty
+    │
+    ├── 7.11–7.13: Suodatuksen viimeistely
     │
     ├──────────────────────┐
     │                      │
-Vaihe 7: Suodatus      Vaihe 8: List              ← RINNAKKAIN
+Vaihe 8: List          Vaihe 9: Toiminnot     ← RINNAKKAIN
     │                      │
     ├──────────────────────┘
-    │
-Vaihe 9: Toiminnot (--wait)
     │
 Vaihe 10–11: Viimeistely, MCP
 ```
