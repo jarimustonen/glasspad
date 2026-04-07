@@ -4,7 +4,7 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Interaktiivinen suodatus toteutettu (filter edit mode). Seuraavaksi: temporal-akselin kiinteä domain + aikavälivalinta, visuaalinen palaute valituille arvoille.
+Temporal-akselin kiinteä domain ja aikavälivalinta toteutettu (ghost layer + brush/range filter). Seuraavaksi: visuaalinen palaute valituille arvoille normaali-näkymässä.
 
 Sopimus: `04-spec-contract.md`
 Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`
