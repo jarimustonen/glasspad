@@ -364,4 +364,97 @@ sections:
         assert!(stats.items[1].where_clause.is_some());
         assert_eq!(stats.items[2].field.as_deref(), Some("country"));
     }
+
+    #[test]
+    fn toc_default_false() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert!(!spec.toc);
+    }
+
+    #[test]
+    fn toc_explicit_true() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+toc: true
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert!(spec.toc);
+    }
+
+    #[test]
+    fn timezone_utc() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+timezone: utc
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.timezone, Some(Timezone::Utc));
+    }
+
+    #[test]
+    fn timezone_local() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+timezone: local
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.timezone, Some(Timezone::Local));
+    }
+
+    #[test]
+    fn timezone_default_none() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.timezone, None);
+    }
+
+    #[test]
+    fn table_column_sort_type() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Data"
+    type: table
+    inline_data: [{ ts: "2026-01-01", n: 1 }]
+    table:
+      columns:
+        - { field: ts, title: "Time", sort: temporal }
+        - { field: n, title: "Num", sort: number }
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        let cols = &spec.sections[0].table.as_ref().unwrap().columns;
+        assert_eq!(cols[0].sort, Some(SortType::Temporal));
+        assert_eq!(cols[1].sort, Some(SortType::Number));
+    }
 }

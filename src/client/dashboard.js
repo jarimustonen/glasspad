@@ -1659,40 +1659,46 @@
     document.body.appendChild(tocNav);
     document.body.classList.add('has-toc');
 
-    // Highlight active section on scroll
+    // Highlight active section using IntersectionObserver (avoids synchronous offsetTop)
     var tocLinks = tocList.querySelectorAll('a');
-    var sectionEls = [];
-    spec.sections.forEach(function(section, i) {
-      var el = document.getElementById(section.id || ('section-' + i));
-      if (el) sectionEls.push({ el: el, link: tocLinks[i] });
-    });
 
-    function setTocActive(idx) {
-      for (var j = 0; j < sectionEls.length; j++) {
-        sectionEls[j].link.classList.toggle('toc-active', j === idx);
+    function setTocActive(specIndex) {
+      for (var j = 0; j < tocLinks.length; j++) {
+        tocLinks[j].classList.toggle('toc-active', j === specIndex);
       }
     }
 
-    function updateTocHighlight() {
-      var scrollY = window.scrollY || document.documentElement.scrollTop;
-      var active = null;
-      for (var i = 0; i < sectionEls.length; i++) {
-        if (sectionEls[i].el.offsetTop <= scrollY + 100) active = i;
-      }
-      // If user clicked a link and scroll hasn't moved away, keep clicked selection
-      if (clickedIndex >= 0) {
-        if (active === clickedIndex || (active !== null &&
-            Math.abs(sectionEls[active].el.offsetTop - sectionEls[clickedIndex].el.offsetTop) < 10)) {
-          active = clickedIndex;
-        } else {
-          clickedIndex = -1; // scroll moved away, clear override
+    if (typeof IntersectionObserver !== 'undefined') {
+      var activeTocIndex = 0;
+      var observer = new IntersectionObserver(function(entries) {
+        // Only update from scroll if no click override is active
+        if (clickedIndex >= 0) return;
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            var idx = Number(entry.target.dataset.tocIndex);
+            if (!isNaN(idx)) { activeTocIndex = idx; setTocActive(idx); }
+          }
+        });
+      }, { rootMargin: '-80px 0px -60% 0px' });
+
+      spec.sections.forEach(function(section, i) {
+        var el = document.getElementById(section.id || ('section-' + i));
+        if (el) {
+          el.dataset.tocIndex = String(i);
+          observer.observe(el);
         }
-      }
-      setTocActive(active);
+      });
+
+      // Clear click override after scroll settles
+      var clickClearTimer = null;
+      window.addEventListener('scroll', function() {
+        if (clickedIndex < 0) return;
+        clearTimeout(clickClearTimer);
+        clickClearTimer = setTimeout(function() { clickedIndex = -1; }, 300);
+      }, { passive: true });
     }
 
-    window.addEventListener('scroll', updateTocHighlight, { passive: true });
-    updateTocHighlight();
+    setTocActive(0);
   }
 
 })();

@@ -257,6 +257,8 @@ mod tests {
             title: "Test".to_string(),
             description: None,
             layout: Layout::default(),
+            toc: false,
+            timezone: None,
             datasets: BTreeMap::new(),
             sections: vec![Section {
                 id: None,
