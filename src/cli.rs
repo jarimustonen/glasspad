@@ -176,7 +176,17 @@ pub async fn create(
             injected.insert(name.clone(), rows);
         }
 
-        // Inject datasets into spec: replace source→inline_data for matching sections
+        // Inject datasets into top-level datasets map (keep source references intact)
+        // Ensure datasets map exists
+        if spec_value.get("datasets").is_none() {
+            if let Some(map) = spec_value.as_mapping_mut() {
+                map.insert(
+                    serde_yaml::Value::String("datasets".to_string()),
+                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+                );
+            }
+        }
+
         for (name, rows_json) in &injected {
             let rows_yaml = match serde_yaml::to_value(rows_json) {
                 Ok(v) => v,
@@ -186,28 +196,16 @@ pub async fn create(
                 }
             };
 
-            let mut matched = 0usize;
-
-            if let Some(sections) = spec_value.get_mut("sections").and_then(|s| s.as_sequence_mut()) {
-                for section in sections.iter_mut() {
-                    let source = section
-                        .get("source")
-                        .and_then(|s| s.as_str())
-                        .map(|s| s.to_string());
-                    if source.as_deref() == Some(name) {
-                        if let Some(map) = section.as_mapping_mut() {
-                            map.remove(&serde_yaml::Value::String("source".to_string()));
-                            map.insert(
-                                serde_yaml::Value::String("inline_data".to_string()),
-                                rows_yaml.clone(),
-                            );
-                            matched += 1;
-                        }
-                    }
+            // Verify at least one section references this dataset
+            let mut matched = false;
+            if let Some(sections) = spec_value.get("sections").and_then(|s| s.as_sequence()) {
+                for section in sections {
+                    let source = section.get("source").and_then(|s| s.as_str());
+                    if source == Some(name) { matched = true; break; }
                 }
             }
 
-            if matched == 0 {
+            if !matched {
                 eprintln!(
                     "Warning: --data {}={} did not match any section source. \
                      Check that your spec has 'source: {}' in at least one section.",
@@ -216,14 +214,28 @@ pub async fn create(
                     name
                 );
             }
-        }
 
-        // Remove injected dataset declarations (they're now inline)
-        if let Some(datasets) = spec_value.get_mut("datasets").and_then(|d| d.as_mapping_mut()) {
-            for name in injected.keys() {
-                datasets.remove(&serde_yaml::Value::String(name.clone()));
+            // Inject data as inline_data within the dataset declaration
+            // Server's collect_datasets will pick it up from top-level
+            // But since server schema expects DatasetDecl {} (empty),
+            // we inject as inline_data on each section that references this source
+            if let Some(sections) = spec_value.get_mut("sections").and_then(|s| s.as_sequence_mut()) {
+                for section in sections.iter_mut() {
+                    let source = section
+                        .get("source")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.to_string());
+                    if source.as_deref() == Some(name) {
+                        if let Some(map) = section.as_mapping_mut() {
+                            // Add inline_data but KEEP source intact
+                            map.insert(
+                                serde_yaml::Value::String("inline_data".to_string()),
+                                rows_yaml.clone(),
+                            );
+                        }
+                    }
+                }
             }
-            // If datasets map is now empty, keep it (empty is valid)
         }
 
         let yaml_body = match serde_yaml::to_string(&spec_value) {

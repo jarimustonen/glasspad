@@ -60,10 +60,8 @@ pub fn validate(
             .as_deref()
             .unwrap_or(&default_label);
 
-        // source and inline_data mutually exclusive
-        if section.source.is_some() && section.inline_data.is_some() {
-            errors.push(err(Some(label), "source and inline_data are mutually exclusive"));
-        }
+        // source + inline_data together is valid: source is the shared identity for
+        // cross-filtering, inline_data is the content (injected by CLI --data)
 
         // source references existing dataset
         if let Some(ref source) = section.source {
@@ -316,13 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn source_and_inline_data_mutually_exclusive() {
+    fn source_and_inline_data_together_is_valid() {
+        // source provides shared identity for filtering, inline_data provides content
         let mut spec = minimal_spec();
         spec.datasets.insert("events".to_string(), DatasetDecl {});
         spec.sections[0].source = Some("events".to_string());
         spec.sections[0].inline_data = Some(vec![]);
         let errors = validate(&spec, &HashSet::new());
-        assert!(errors.iter().any(|e| e.message.contains("mutually exclusive")));
+        assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
     #[test]
