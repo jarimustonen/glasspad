@@ -184,21 +184,6 @@
     view.change(name, cs).run();
   }
 
-  // Get min/max of a temporal field from data (for locking axis domain)
-  function getTemporalExtent(data, field) {
-    var min = null, max = null;
-    for (var i = 0; i < data.length; i++) {
-      var v = data[i][field];
-      if (v === null || v === undefined) continue;
-      var t = (typeof v === 'string') ? Date.parse(v) : v;
-      if (isNaN(t)) continue;
-      if (min === null || t < min) min = t;
-      if (max === null || t > max) max = t;
-    }
-    if (min === null) return null;
-    return [min, max];
-  }
-
   // Extract a field value from a Vega SVG mark's aria-label
   // e.g. "country: US; _count: 26" → extractFieldFromLabel(label, 'country') → 'US'
   function extractFieldFromLabel(label, field) {
@@ -417,26 +402,6 @@
     s.body.appendChild(wrapper);
 
     var encoding = JSON.parse(JSON.stringify(cfg.encoding || {}));
-
-    // Fix count axes: integer ticks only (no 0.05, 0.10 etc)
-    ['x', 'y'].forEach(function(ch) {
-      if (encoding[ch] && encoding[ch].aggregate === 'count') {
-        if (!encoding[ch].axis) encoding[ch].axis = {};
-        encoding[ch].axis.tickMinStep = 1;
-      }
-    });
-
-    // Fix temporal axes: lock domain to full data range so filtering doesn't zoom
-    ['x', 'y'].forEach(function(ch) {
-      if (encoding[ch] && encoding[ch].type === 'temporal' && encoding[ch].field) {
-        var field = encoding[ch].field;
-        var extent = getTemporalExtent(rawData, field);
-        if (extent) {
-          if (!encoding[ch].scale) encoding[ch].scale = {};
-          encoding[ch].scale.domain = extent;
-        }
-      }
-    });
 
     var vlSpec = {
       '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',
