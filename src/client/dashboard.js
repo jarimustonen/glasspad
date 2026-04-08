@@ -823,10 +823,12 @@
         var hv = rawData[hi][temporalField];
         if (hv != null) allUnits[extractTimeUnit(new Date(hv), tu)] = true;
       }
-      // unitList: sorted unique values; slider works on indices 0..N-1
+      // unitList: sorted unique bin values; slider works on boundary indices 0..N
+      // where N = unitList.length.  Boundary i sits at the left edge of bin i
+      // (boundary N = right edge of last bin).  Selected bins: [minIdx, maxIdx).
       var unitList = Object.keys(allUnits).map(Number).sort(function(a, b) { return a - b; });
-      var minUnitData = 0;                        // index into unitList
-      var maxUnitData = Math.max(0, unitList.length - 1); // index into unitList
+      var minUnitData = 0;                        // boundary index (always 0)
+      var maxUnitData = unitList.length;           // boundary index (= N, right edge of last bin)
 
       temporalFilterBtn = document.createElement('button');
       temporalFilterBtn.className = 'filter-edit-btn';
@@ -888,12 +890,10 @@
         if (!bg) return;
         var bgRect = bg.getBoundingClientRect();
         var sliderParentRect = rangeSlider.getBoundingClientRect();
-        // Offset slider track so stops align with bar centers, not bin boundaries
-        // For N bins: first bar center is at 0.5/N, last at (N-0.5)/N of plot width
-        var N = unitList.length;
-        var halfBin = N > 0 ? bgRect.width * 0.5 / N : 0;
-        var trackWidth = N > 1 ? bgRect.width * (N - 1) / N : bgRect.width;
-        var leftOffset = bgRect.left - sliderParentRect.left + halfBin;
+        // Slider track spans full plot width so stops land on bar boundaries:
+        // stop 0 = left edge of first bar, stop N-1 = right edge of last bar
+        var trackWidth = bgRect.width;
+        var leftOffset = bgRect.left - sliderParentRect.left;
         sliderTrack.style.marginLeft = leftOffset + 'px';
         sliderTrack.style.width = trackWidth + 'px';
       }
@@ -912,12 +912,20 @@
         handleMax.setAttribute('aria-valuemin', pendingMin);
         handleMax.setAttribute('aria-valuemax', maxUnitData);
         handleMax.setAttribute('aria-valuenow', pendingMax);
-        sliderLabel.textContent = formatUnit(pendingMin) + ' \u2013 ' + formatUnit(pendingMax);
+        // Label shows selected bins (not boundaries):
+        // [min, max) boundaries → bins min..max-1
+        if (pendingMin >= pendingMax) {
+          sliderLabel.textContent = '\u2013'; // empty selection
+        } else if (pendingMax - pendingMin === 1) {
+          sliderLabel.textContent = formatUnit(pendingMin); // single bin
+        } else {
+          sliderLabel.textContent = formatUnit(pendingMin) + ' \u2013 ' + formatUnit(pendingMax - 1);
+        }
         // Dim bars outside selected range
         dimBarsOutsideRange(pendingMin, pendingMax);
       }
 
-      // Dim chart bars outside the selected index range
+      // Dim chart bars outside the selected boundary range [minIdx, maxIdx)
       // Only targets the second (visible) layer's marks, skipping the ghost layer
       function dimBarsOutsideRange(minIdx, maxIdx) {
         var svg = div.querySelector('svg');
@@ -926,22 +934,22 @@
         var targetGroup = markGroups.length > 1 ? markGroups[markGroups.length - 1] : markGroups[0];
         if (!targetGroup) return;
         var marks = targetGroup.querySelectorAll('path');
-        var minVal = unitList[minIdx] !== undefined ? unitList[minIdx] : minIdx;
-        var maxVal = unitList[maxIdx] !== undefined ? unitList[maxIdx] : maxIdx;
+        // Build a set of included bin values from boundary indices [minIdx, maxIdx)
+        var includedBins = Object.create(null);
+        for (var bi = minIdx; bi < maxIdx && bi < unitList.length; bi++) {
+          includedBins[unitList[bi]] = true;
+        }
         for (var mi = 0; mi < marks.length; mi++) {
           var label = marks[mi].getAttribute('aria-label') || '';
-          // Extract temporal field value from aria-label and compute its timeUnit value
           var dateStr = extractFieldFromLabel(label, temporalField);
           if (dateStr) {
             var barUnit = extractTimeUnit(new Date(dateStr), tu);
-            marks[mi].style.opacity = (barUnit >= minVal && barUnit <= maxVal) ? '1' : '0.15';
+            marks[mi].style.opacity = includedBins[barUnit] ? '1' : '0.15';
           } else {
-            // Fallback: try matching hour pattern for hours timeUnit
             var hMatch = label.match(/(\d{1,2}):00/);
             if (hMatch) {
               var barHour = parseInt(hMatch[1], 10);
-              var barIdx = unitList.indexOf(barHour);
-              marks[mi].style.opacity = (barIdx >= minIdx && barIdx <= maxIdx) ? '1' : '0.15';
+              marks[mi].style.opacity = includedBins[barHour] ? '1' : '0.15';
             }
           }
         }
@@ -1043,8 +1051,9 @@
         var cur = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
         if (cur) {
           pendingMin = Math.max(0, unitList.indexOf(cur.min));
-          pendingMax = Math.max(0, unitList.indexOf(cur.max));
-          if (pendingMax < 0) pendingMax = maxUnitData;
+          // cur.max is the last included bin; boundary = its index + 1
+          var maxBinIdx = unitList.indexOf(cur.max);
+          pendingMax = maxBinIdx >= 0 ? maxBinIdx + 1 : maxUnitData;
         } else {
           pendingMin = minUnitData;
           pendingMax = maxUnitData;
@@ -1100,10 +1109,14 @@
         clearBarDimming();
         if (pendingMin <= minUnitData && pendingMax >= maxUnitData) {
           clearHourFilter(dr.source, temporalField);
+        } else if (pendingMin >= pendingMax) {
+          // Empty selection — clear filter
+          clearHourFilter(dr.source, temporalField);
         } else {
-          // Convert slider indices to actual unit values for filtering
-          var actualMin = unitList[pendingMin] !== undefined ? unitList[pendingMin] : pendingMin;
-          var actualMax = unitList[pendingMax] !== undefined ? unitList[pendingMax] : pendingMax;
+          // Convert boundary indices to actual bin values for filtering
+          // Selected bins: [pendingMin, pendingMax) → values unitList[pendingMin]..unitList[pendingMax-1]
+          var actualMin = unitList[pendingMin];
+          var actualMax = unitList[pendingMax - 1];
           setHourFilter(dr.source, temporalField, actualMin, actualMax, tu);
         }
       });
