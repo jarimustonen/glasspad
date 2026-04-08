@@ -26,6 +26,36 @@
     return useUtc ? d.getUTCHours() : d.getHours();
   }
 
+  // Extract a temporal unit value from a Date for the given timeUnit
+  function extractTimeUnit(d, timeUnit) {
+    switch (timeUnit) {
+      case 'hours': case 'utchours': return getHourOfDate(d);
+      case 'day': case 'date': case 'utcday': case 'utcdate':
+        return useUtc ? d.getUTCDate() : d.getDate();
+      case 'month': case 'utcmonth':
+        return (useUtc ? d.getUTCMonth() : d.getMonth()) + 1; // 1-12
+      case 'year': case 'utcyear':
+        return useUtc ? d.getUTCFullYear() : d.getFullYear();
+      default: return getHourOfDate(d); // fallback to hours
+    }
+  }
+
+  // Format a time unit value for display
+  function formatTimeUnitValue(val, timeUnit) {
+    switch (timeUnit) {
+      case 'hours': case 'utchours':
+        return (val < 10 ? '0' : '') + val + ':00';
+      case 'day': case 'date': case 'utcday': case 'utcdate':
+        return 'Day ' + val;
+      case 'month': case 'utcmonth':
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return months[val - 1] || String(val);
+      case 'year': case 'utcyear':
+        return String(val);
+      default: return String(val);
+    }
+  }
+
   // ============================================================
   // FILTER STATE
   // ============================================================
@@ -36,9 +66,8 @@
   var prevFilterCount = 0;
 
   function setFilter(source, field, selectedValues) {
-    // selectedValues: array of values to include
-    if (!selectedValues || selectedValues.length === 0) {
-      // Clear this field's filter
+    // selectedValues: null = clear filter, [] = empty set (show nothing), [...] = include these
+    if (selectedValues == null) {
       if (filterState[source]) {
         delete filterState[source][field];
         if (Object.keys(filterState[source]).length === 0) delete filterState[source];
@@ -67,9 +96,9 @@
     onFilterChange();
   }
 
-  function setHourFilter(source, field, minH, maxH) {
+  function setHourFilter(source, field, minH, maxH, timeUnit) {
     if (!hourFilterState[source]) hourFilterState[source] = Object.create(null);
-    hourFilterState[source][field] = { min: minH, max: maxH };
+    hourFilterState[source][field] = { min: minH, max: maxH, timeUnit: timeUnit || 'hours' };
     onFilterChange();
   }
 
@@ -158,8 +187,8 @@
         var hRange = srcHours[hf];
         var hv = row[hf];
         if (hv == null) return false;
-        var hour = getHourOfDate(new Date(hv));
-        if (hour < hRange.min || hour > hRange.max) return false;
+        var unitVal = extractTimeUnit(new Date(hv), hRange.timeUnit || 'hours');
+        if (unitVal < hRange.min || unitVal > hRange.max) return false;
       }
       return true;
     });
@@ -168,9 +197,14 @@
     return result;
   }
 
-  // Filter data excluding one specific filter (for edit mode and brush self-filtering)
-  // excludeKind: 'discrete', 'range', or 'hour'
+  // Cached version of getFilteredDataExcluding (invalidated with filteredCache)
+  var excludeCache = null;
+
   function getFilteredDataExcluding(source, excludeField, excludeKind) {
+    if (!excludeCache) excludeCache = Object.create(null);
+    var cacheKey = source + '|' + excludeField + '|' + excludeKind;
+    if (cacheKey in excludeCache) return excludeCache[cacheKey];
+
     var raw = datasets[source];
     if (!raw) return [];
     var srcFilters = filterState[source];
@@ -214,11 +248,13 @@
         var hRange = srcHours[hourFields[h]];
         var hv = row[hourFields[h]];
         if (hv == null) return false;
-        var hour = getHourOfDate(new Date(hv));
-        if (hour < hRange.min || hour > hRange.max) return false;
+        var unitVal = extractTimeUnit(new Date(hv), hRange.timeUnit || 'hours');
+        if (unitVal < hRange.min || unitVal > hRange.max) return false;
       }
       return true;
     });
+    excludeCache[cacheKey] = result;
+    return result;
   }
 
   // ============================================================
@@ -228,6 +264,7 @@
 
   function onFilterChange() {
     filteredCache = null;
+    excludeCache = null;
     var newCount = getActiveFilterCount();
     for (var i = 0; i < sectionRegistry.length; i++) {
       try { sectionRegistry[i].update(); }
@@ -317,15 +354,16 @@
 
   function formatTemporalRange(minMs, maxMs) {
     var d1 = new Date(minMs), d2 = new Date(maxMs);
-    var sameDay = d1.toDateString() === d2.toDateString();
-    var timeFmt = { hour: '2-digit', minute: '2-digit' };
+    var tzOpt = useUtc ? { timeZone: 'UTC' } : {};
+    var timeFmt = Object.assign({ hour: '2-digit', minute: '2-digit' }, tzOpt);
+    var sameDay = d1.toLocaleDateString(undefined, tzOpt) === d2.toLocaleDateString(undefined, tzOpt);
     if (sameDay) {
-      return d1.toLocaleDateString() + ' ' +
-        d1.toLocaleTimeString(undefined, timeFmt) + ' – ' +
+      return d1.toLocaleDateString(undefined, tzOpt) + ' ' +
+        d1.toLocaleTimeString(undefined, timeFmt) + ' \u2013 ' +
         d2.toLocaleTimeString(undefined, timeFmt);
     }
-    var dateFmt = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    return d1.toLocaleDateString(undefined, dateFmt) + ' – ' +
+    var dateFmt = Object.assign({ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }, tzOpt);
+    return d1.toLocaleDateString(undefined, dateFmt) + ' \u2013 ' +
       d2.toLocaleDateString(undefined, dateFmt);
   }
 
@@ -615,12 +653,16 @@
     var temporalChannel = null;
     var temporalField = null;
     var hasTimeUnit = false;
+    var temporalTimeUnit = null;
     ['x', 'y'].forEach(function(ch) {
       var enc = encoding[ch];
       if (enc && enc.type === 'temporal' && enc.field && dr.source) {
         temporalChannel = ch;
         temporalField = enc.field;
-        if (enc.timeUnit) hasTimeUnit = true;
+        if (enc.timeUnit) {
+          hasTimeUnit = true;
+          temporalTimeUnit = enc.timeUnit;
+        }
       }
     });
 
@@ -720,22 +762,23 @@
       s.actions.insertBefore(editControls, s.actions.firstChild);
     }
 
-    // --- Temporal hour filter UI ---
+    // --- Temporal unit filter UI ---
     var temporalFilterBtn = null;
     var temporalEditControls = null;
     var rangeSlider = null;
     var temporalFilterMode = 'view';
 
     if (hasTimeUnit && temporalField && dr.source && !filterField) {
-      // Compute hour extent from raw data
-      var allHours = Object.create(null);
+      // Compute unit extent from raw data (works for hours, days, months, years)
+      var tu = temporalTimeUnit || 'hours';
+      var allUnits = Object.create(null);
       for (var hi = 0; hi < rawData.length; hi++) {
         var hv = rawData[hi][temporalField];
-        if (hv != null) allHours[getHourOfDate(new Date(hv))] = true;
+        if (hv != null) allUnits[extractTimeUnit(new Date(hv), tu)] = true;
       }
-      var hourList = Object.keys(allHours).map(Number).sort(function(a, b) { return a - b; });
-      var minHourData = hourList.length > 0 ? hourList[0] : 0;
-      var maxHourData = hourList.length > 0 ? hourList[hourList.length - 1] : 23;
+      var unitList = Object.keys(allUnits).map(Number).sort(function(a, b) { return a - b; });
+      var minUnitData = unitList.length > 0 ? unitList[0] : 0;
+      var maxUnitData = unitList.length > 0 ? unitList[unitList.length - 1] : 23;
 
       temporalFilterBtn = document.createElement('button');
       temporalFilterBtn.className = 'filter-edit-btn';
@@ -780,10 +823,10 @@
       rangeSlider.appendChild(sliderTrack);
       rangeSlider.appendChild(sliderLabel);
 
-      var pendingMin = minHourData;
-      var pendingMax = maxHourData;
+      var pendingMin = minUnitData;
+      var pendingMax = maxUnitData;
 
-      function formatHour(h) { return (h < 10 ? '0' : '') + h + ':00'; }
+      function formatUnit(v) { return formatTimeUnitValue(v, tu); }
 
       function alignSliderToChart() {
         var svg = div.querySelector('svg');
@@ -799,20 +842,20 @@
       }
 
       function updateSliderUI() {
-        var range = maxHourData - minHourData;
-        var pctMin = range > 0 ? ((pendingMin - minHourData) / range) * 100 : 0;
-        var pctMax = range > 0 ? ((pendingMax - minHourData) / range) * 100 : 100;
+        var range = maxUnitData - minUnitData;
+        var pctMin = range > 0 ? ((pendingMin - minUnitData) / range) * 100 : 0;
+        var pctMax = range > 0 ? ((pendingMax - minUnitData) / range) * 100 : 100;
         sliderFill.style.left = pctMin + '%';
         sliderFill.style.width = (pctMax - pctMin) + '%';
         handleMin.style.left = pctMin + '%';
         handleMax.style.left = pctMax + '%';
-        handleMin.setAttribute('aria-valuemin', minHourData);
+        handleMin.setAttribute('aria-valuemin', minUnitData);
         handleMin.setAttribute('aria-valuemax', pendingMax);
         handleMin.setAttribute('aria-valuenow', pendingMin);
         handleMax.setAttribute('aria-valuemin', pendingMin);
-        handleMax.setAttribute('aria-valuemax', maxHourData);
+        handleMax.setAttribute('aria-valuemax', maxUnitData);
         handleMax.setAttribute('aria-valuenow', pendingMax);
-        sliderLabel.textContent = formatHour(pendingMin) + ' \u2013 ' + formatHour(pendingMax);
+        sliderLabel.textContent = formatUnit(pendingMin) + ' \u2013 ' + formatUnit(pendingMax);
         // Dim bars outside selected range
         dimBarsOutsideRange(pendingMin, pendingMax);
       }
@@ -847,9 +890,9 @@
       }
 
       function hourFromPct(pct) {
-        var range = maxHourData - minHourData;
-        var h = Math.round(minHourData + (pct / 100) * range);
-        return Math.max(minHourData, Math.min(maxHourData, h));
+        var range = maxUnitData - minUnitData;
+        var h = Math.round(minUnitData + (pct / 100) * range);
+        return Math.max(minUnitData, Math.min(maxUnitData, h));
       }
 
       function startDrag(e, which) {
@@ -892,9 +935,9 @@
         if (!delta) return;
         e.preventDefault();
         if (which === 'min') {
-          pendingMin = Math.max(minHourData, Math.min(pendingMax, pendingMin + delta));
+          pendingMin = Math.max(minUnitData, Math.min(pendingMax, pendingMin + delta));
         } else {
-          pendingMax = Math.max(pendingMin, Math.min(maxHourData, pendingMax + delta));
+          pendingMax = Math.max(pendingMin, Math.min(maxUnitData, pendingMax + delta));
         }
         updateSliderUI();
       }
@@ -928,8 +971,8 @@
         }
         // Init from current filter or full range
         var cur = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
-        pendingMin = cur ? cur.min : minHourData;
-        pendingMax = cur ? cur.max : maxHourData;
+        pendingMin = cur ? cur.min : minUnitData;
+        pendingMax = cur ? cur.max : maxUnitData;
         // Show data with all filters EXCEPT the hour filter being edited
         var view = chartViews[sectionKey];
         if (view) {
@@ -966,8 +1009,8 @@
       temporalFilterBtn.addEventListener('click', enterTemporalEdit);
 
       tResetBtn.addEventListener('click', function() {
-        pendingMin = minHourData;
-        pendingMax = maxHourData;
+        pendingMin = minUnitData;
+        pendingMax = maxUnitData;
         updateSliderUI();
       });
 
@@ -979,10 +1022,10 @@
         temporalEditControls.style.display = 'none';
         rangeSlider.style.display = 'none';
         clearBarDimming();
-        if (pendingMin <= minHourData && pendingMax >= maxHourData) {
+        if (pendingMin <= minUnitData && pendingMax >= maxUnitData) {
           clearHourFilter(dr.source, temporalField);
         } else {
-          setHourFilter(dr.source, temporalField, pendingMin, pendingMax);
+          setHourFilter(dr.source, temporalField, pendingMin, pendingMax, tu);
         }
       });
 
@@ -1568,9 +1611,9 @@
         var hrange = hourFilterState[hsrc][hfield];
         var htag = document.createElement('button');
         htag.className = 'filter-tag';
-        var fmtH = function(h) { return (h < 10 ? '0' : '') + h + ':00'; };
-        htag.textContent = hfield + ': ' + fmtH(hrange.min) + ' \u2013 ' + fmtH(hrange.max);
-        htag.setAttribute('title', 'Remove hour filter');
+        var htu = hrange.timeUnit || 'hours';
+        htag.textContent = hfield + ': ' + formatTimeUnitValue(hrange.min, htu) + ' \u2013 ' + formatTimeUnitValue(hrange.max, htu);
+        htag.setAttribute('title', 'Remove time filter');
         (function(s3, f3) {
           htag.addEventListener('click', function() { clearHourFilter(s3, f3); });
         })(hsrc, hfield);
