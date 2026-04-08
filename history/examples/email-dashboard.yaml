@@ -38,7 +38,7 @@ sections:
     chart:
       mark: bar
       encoding:
-        x: { field: date, type: temporal, timeUnit: day }
+        x: { field: date, type: temporal, timeUnit: yearmonthdate }
         y: { aggregate: count, type: quantitative, title: "messages" }
 
   - id: all-messages

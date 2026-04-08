@@ -27,31 +27,46 @@
   }
 
   // Extract a temporal unit value from a Date for the given timeUnit
+  // Vega-Lite: 'day' = day-of-week (0=Sun..6=Sat), 'date' = day-of-month (1-31)
   function extractTimeUnit(d, timeUnit) {
     switch (timeUnit) {
       case 'hours': case 'utchours': return getHourOfDate(d);
-      case 'day': case 'date': case 'utcday': case 'utcdate':
-        return useUtc ? d.getUTCDate() : d.getDate();
+      case 'day': case 'utcday':
+        return useUtc ? d.getUTCDay() : d.getDay(); // 0=Sun, 6=Sat
+      case 'date': case 'utcdate':
+        return useUtc ? d.getUTCDate() : d.getDate(); // 1-31
       case 'month': case 'utcmonth':
         return (useUtc ? d.getUTCMonth() : d.getMonth()) + 1; // 1-12
       case 'year': case 'utcyear':
         return useUtc ? d.getUTCFullYear() : d.getFullYear();
-      default: return getHourOfDate(d); // fallback to hours
+      case 'yearmonthdate': case 'utcyearmonthdate':
+        // Truncate to midnight and return as ms timestamp (unique per day)
+        if (useUtc) return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      default: return getHourOfDate(d);
     }
   }
+
+  var DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   // Format a time unit value for display
   function formatTimeUnitValue(val, timeUnit) {
     switch (timeUnit) {
       case 'hours': case 'utchours':
         return (val < 10 ? '0' : '') + val + ':00';
-      case 'day': case 'date': case 'utcday': case 'utcdate':
-        return 'Day ' + val;
+      case 'day': case 'utcday':
+        return DAY_NAMES[val] || String(val);
+      case 'date': case 'utcdate':
+        return String(val); // day-of-month number
       case 'month': case 'utcmonth':
         var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         return months[val - 1] || String(val);
       case 'year': case 'utcyear':
         return String(val);
+      case 'yearmonthdate': case 'utcyearmonthdate':
+        // val is ms timestamp truncated to midnight
+        var d = new Date(val);
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
       default: return String(val);
     }
   }
@@ -769,16 +784,17 @@
     var temporalFilterMode = 'view';
 
     if (hasTimeUnit && temporalField && dr.source && !filterField) {
-      // Compute unit extent from raw data (works for hours, days, months, years)
+      // Collect sorted unique time unit values from raw data
       var tu = temporalTimeUnit || 'hours';
       var allUnits = Object.create(null);
       for (var hi = 0; hi < rawData.length; hi++) {
         var hv = rawData[hi][temporalField];
         if (hv != null) allUnits[extractTimeUnit(new Date(hv), tu)] = true;
       }
+      // unitList: sorted unique values; slider works on indices 0..N-1
       var unitList = Object.keys(allUnits).map(Number).sort(function(a, b) { return a - b; });
-      var minUnitData = unitList.length > 0 ? unitList[0] : 0;
-      var maxUnitData = unitList.length > 0 ? unitList[unitList.length - 1] : 23;
+      var minUnitData = 0;                        // index into unitList
+      var maxUnitData = Math.max(0, unitList.length - 1); // index into unitList
 
       temporalFilterBtn = document.createElement('button');
       temporalFilterBtn.className = 'filter-edit-btn';
@@ -826,7 +842,11 @@
       var pendingMin = minUnitData;
       var pendingMax = maxUnitData;
 
-      function formatUnit(v) { return formatTimeUnitValue(v, tu); }
+      // Format a slider index as display text (index → actual value → text)
+      function formatUnit(idx) {
+        var val = unitList[idx];
+        return val !== undefined ? formatTimeUnitValue(val, tu) : String(idx);
+      }
 
       function alignSliderToChart() {
         var svg = div.querySelector('svg');
@@ -836,9 +856,14 @@
         if (!bg) return;
         var bgRect = bg.getBoundingClientRect();
         var sliderParentRect = rangeSlider.getBoundingClientRect();
-        var leftOffset = bgRect.left - sliderParentRect.left;
+        // Offset slider track so stops align with bar centers, not bin boundaries
+        // For N bins: first bar center is at 0.5/N, last at (N-0.5)/N of plot width
+        var N = unitList.length;
+        var halfBin = N > 0 ? bgRect.width * 0.5 / N : 0;
+        var trackWidth = N > 1 ? bgRect.width * (N - 1) / N : bgRect.width;
+        var leftOffset = bgRect.left - sliderParentRect.left + halfBin;
         sliderTrack.style.marginLeft = leftOffset + 'px';
-        sliderTrack.style.width = bgRect.width + 'px';
+        sliderTrack.style.width = trackWidth + 'px';
       }
 
       function updateSliderUI() {
@@ -860,22 +885,32 @@
         dimBarsOutsideRange(pendingMin, pendingMax);
       }
 
-      // Dim chart bars outside the selected hour range
+      // Dim chart bars outside the selected index range
       // Only targets the second (visible) layer's marks, skipping the ghost layer
-      function dimBarsOutsideRange(minH, maxH) {
+      function dimBarsOutsideRange(minIdx, maxIdx) {
         var svg = div.querySelector('svg');
         if (!svg) return;
         var markGroups = svg.querySelectorAll('.mark-rect.role-mark:not([class*=brush])');
-        // In a layered spec, there are two mark groups: ghost (index 0) and visible (index 1)
         var targetGroup = markGroups.length > 1 ? markGroups[markGroups.length - 1] : markGroups[0];
         if (!targetGroup) return;
         var marks = targetGroup.querySelectorAll('path');
+        var minVal = unitList[minIdx] !== undefined ? unitList[minIdx] : minIdx;
+        var maxVal = unitList[maxIdx] !== undefined ? unitList[maxIdx] : maxIdx;
         for (var mi = 0; mi < marks.length; mi++) {
           var label = marks[mi].getAttribute('aria-label') || '';
-          var hMatch = label.match(/(\d{1,2}):00/);
-          if (hMatch) {
-            var barHour = parseInt(hMatch[1], 10);
-            marks[mi].style.opacity = (barHour >= minH && barHour <= maxH) ? '1' : '0.15';
+          // Extract temporal field value from aria-label and compute its timeUnit value
+          var dateStr = extractFieldFromLabel(label, temporalField);
+          if (dateStr) {
+            var barUnit = extractTimeUnit(new Date(dateStr), tu);
+            marks[mi].style.opacity = (barUnit >= minVal && barUnit <= maxVal) ? '1' : '0.15';
+          } else {
+            // Fallback: try matching hour pattern for hours timeUnit
+            var hMatch = label.match(/(\d{1,2}):00/);
+            if (hMatch) {
+              var barHour = parseInt(hMatch[1], 10);
+              var barIdx = unitList.indexOf(barHour);
+              marks[mi].style.opacity = (barIdx >= minIdx && barIdx <= maxIdx) ? '1' : '0.15';
+            }
           }
         }
       }
@@ -897,6 +932,9 @@
 
       function startDrag(e, which) {
         e.preventDefault();
+        // Bring dragged handle to front so it stays grabbable when overlapping
+        handleMin.style.zIndex = (which === 'min') ? '3' : '2';
+        handleMax.style.zIndex = (which === 'max') ? '3' : '2';
         var trackRect = sliderTrack.getBoundingClientRect();
         function onMove(ev) {
           var clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
@@ -969,10 +1007,16 @@
           wasExpandedBeforeEdit = collapseCtrl.isExpanded();
           collapseCtrl.setExpanded(true);
         }
-        // Init from current filter or full range
+        // Init from current filter (convert actual values back to indices) or full range
         var cur = hourFilterState[dr.source] && hourFilterState[dr.source][temporalField];
-        pendingMin = cur ? cur.min : minUnitData;
-        pendingMax = cur ? cur.max : maxUnitData;
+        if (cur) {
+          pendingMin = Math.max(0, unitList.indexOf(cur.min));
+          pendingMax = Math.max(0, unitList.indexOf(cur.max));
+          if (pendingMax < 0) pendingMax = maxUnitData;
+        } else {
+          pendingMin = minUnitData;
+          pendingMax = maxUnitData;
+        }
         // Show data with all filters EXCEPT the hour filter being edited
         var view = chartViews[sectionKey];
         if (view) {
@@ -1025,7 +1069,10 @@
         if (pendingMin <= minUnitData && pendingMax >= maxUnitData) {
           clearHourFilter(dr.source, temporalField);
         } else {
-          setHourFilter(dr.source, temporalField, pendingMin, pendingMax, tu);
+          // Convert slider indices to actual unit values for filtering
+          var actualMin = unitList[pendingMin] !== undefined ? unitList[pendingMin] : pendingMin;
+          var actualMax = unitList[pendingMax] !== undefined ? unitList[pendingMax] : pendingMax;
+          setHourFilter(dr.source, temporalField, actualMin, actualMax, tu);
         }
       });
 

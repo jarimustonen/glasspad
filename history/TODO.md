@@ -4,10 +4,10 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Vaihe 7 (interaktiivinen suodatus) valmis. Seuraavaksi: vaihe 8 (list-näkymä) tai vaihe 9 (kaksisuuntaiset toiminnot).
+Vaihe 7 valmis (suodatus, aikafiltteri, TOC, mbox-tuki). Review v2+v3 korjaukset tehty. Seuraavaksi: vaihe 8 (list-näkymä).
 
 Sopimus: `04-spec-contract.md`
-Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`
+Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`, `review-cross-filtering-v2.md`, `review-cross-filtering-v3.md`
 
 ---
 
@@ -25,12 +25,40 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 - [x] 7.8 Step-based chart height + CSS min-height vakaus
 - [x] 7.9 Count-akseli: kokonaislukutickkit (labelExpr + conditional tick/grid color)
 - [x] 7.10 CLI --data säilyttää source-identiteetin (cross-filtering toimii)
-
 - [x] 7.11 Temporal-akselin kiinteä domain (ghost layer lukitsee akselit suodatettaessa)
 - [x] 7.12 Aikavälivalinta (brush/interval selection non-timeUnit temporal chartissa)
-- [x] 7.13 Hour-of-day range filter (dual-handle slider, dimming, filter bar tag)
+- [x] 7.13 Aikayksikkö range filter (dual-handle slider, dimming, indeksipohjainen)
 - [x] 7.14 Range filter tila (rangeFilterState + hourFilterState, getFilteredData)
-- [x] 7.15 Auto-expand collapsed chart filter edit modessa (palautetaan tila lopuksi)
+- [x] 7.15 Auto-expand collapsed chart filter edit modessa
+- [x] 7.16 TOC-sivupalkki (toc: true, IntersectionObserver, scroll-to-section)
+- [x] 7.17 Timezone-tuki (spec.timezone: utc/local, getHourOfDate, formatTemporalRange)
+- [x] 7.18 Mbox/EML -parseri (mail-parser, CLI --data emails=inbox.mbox)
+- [x] 7.19 Email-testidata (20 synteettistä viestiä, email-dashboard.yaml)
+
+Review-korjaukset (v2+v3):
+- [x] Sort full dataset before truncating table rows
+- [x] Boundary-aware extractFieldFromLabel (substring-bugi)
+- [x] Type-aware filter selection (coerceExtractedValue)
+- [x] Retry limit renderChartWithSelection (max 20)
+- [x] Invalid dates → end in temporal sort
+- [x] Edit mode context preservation (getFilteredDataExcluding)
+- [x] Brush visual clear on Reset all
+- [x] Block updates during temporal edit mode
+- [x] "None" = empty allowed set, not clear filter
+- [x] getFilteredDataExcluding cached per filter cycle
+- [x] TimeUnit-generic slider (hours/day/date/month/year/yearmonthdate)
+- [x] Slider bar-center alignment (halfBin offset)
+- [x] Mbox read bytes not string (UTF-8 safe)
+- [x] Missing mbox fields → CellValue::Null
+- [x] Slider handle z-index (viimeksi tartuttu päällimmäisenä)
+- [x] Focus-visible CSS kaikille painikkeille
+- [x] Filter tag max-width + ellipsis
+- [x] datasetHasField tarkistaa kaikki rivit
+- [x] touchcancel handler slider dragissa
+- [x] Slider keyboard accessibility (ARIA, arrow keys)
+- [x] Table collapse gradient threshold +2
+- [x] Table overflow-x: auto
+- [x] SVG favicon
 
 ---
 
@@ -76,8 +104,11 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 ## Tulevaisuus (ei aikataulua)
 
 - [ ] Refaktori: SVG DOM scraping → Vega signals/params (filter selection opacity, slider alignment, bar dimming)
+- [ ] Aikafiltteri: drill-down granulaarisuus (viikko→päivä→tunti toggle-painike)
+- [ ] Aikafiltteri: konfiguroitava viikon ensimmäinen päivä (ma/su)
 - [ ] Refaktori: mountChart()-funktion pilkkominen (buildSpec, filterControls, brushSync, collapse)
 - [ ] Mark schema: tuki object-muodolle (Rust: `serde_json::Value`, nyt `String`)
+- [ ] Unified filter state model (filterState + rangeFilterState + hourFilterState → yksi rakenne)
 - [ ] OpenClaw-päätelaite → `08 §Tulevaisuus`
 - [ ] Columnar Dataset (Vec<Row> → headers + Vec<Vec<CellValue>>)
 - [ ] Fetch-endpoint isoille dataseteille
