@@ -649,6 +649,38 @@
       }
     });
 
+    // Temporal + timeUnit: place labels at bin midpoints (not boundaries)
+    // Continuous time scales ignore tickBand/bandPosition, so we compute
+    // midpoint timestamps from the data and set axis.values explicitly.
+    ['x', 'y'].forEach(function(ch) {
+      var enc = encoding[ch];
+      if (!enc) return;
+      if (enc.type === 'temporal' && enc.timeUnit && dr.source) {
+        var srcData = rawData.length > 0 ? rawData : data;
+        // Collect unique bin-start timestamps
+        var seen = {};
+        var binStarts = [];
+        for (var i = 0; i < srcData.length; i++) {
+          var v = srcData[i][enc.field];
+          if (v == null) continue;
+          var ts = extractTimeUnit(new Date(v), enc.timeUnit);
+          if (!seen[ts]) { seen[ts] = true; binStarts.push(ts); }
+        }
+        binStarts.sort(function(a, b) { return a - b; });
+        // Compute bin duration and midpoints
+        if (binStarts.length > 1) {
+          var midpoints = [];
+          var halfBin = (binStarts[1] - binStarts[0]) / 2;
+          for (var j = 0; j < binStarts.length; j++) {
+            midpoints.push(binStarts[j] + halfBin);
+          }
+          if (!enc.axis) enc.axis = {};
+          enc.axis.values = midpoints;
+          enc.axis.ticks = false;
+        }
+      }
+    });
+
     // Lock temporal domain to unfiltered data extent (non-timeUnit only)
     if (dr.source && rawData.length > 0) {
       ['x', 'y'].forEach(function(ch) {
