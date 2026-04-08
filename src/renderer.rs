@@ -7,6 +7,7 @@ use crate::spec::schema::Layout;
 
 const CSS: &str = include_str!("client/dashboard.css");
 const CLIENT_JS: &str = include_str!("client/dashboard.js");
+const LOGO_SVG: &str = include_str!("client/logo.svg");
 
 /// Render a complete HTML page for a pad.
 /// Server generates only the shell — all section rendering happens client-side.
@@ -46,6 +47,7 @@ pub fn render_dashboard(pad: &Pad) -> String {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="{favicon}">
   <title>{title}</title>
   <script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
   <script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
@@ -64,6 +66,7 @@ pub fn render_dashboard(pad: &Pad) -> String {
         title = html_escape(&spec.title),
         description = description_html,
         layout = layout_class,
+        favicon = svg_favicon_data_uri(LOGO_SVG),
         spec_tag = spec_tag,
         data_tag = data_tag,
         css = CSS,
@@ -106,4 +109,20 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Encode an SVG string as a data: URI suitable for a favicon link href.
+fn svg_favicon_data_uri(svg: &str) -> String {
+    let encoded: String = svg
+        .chars()
+        .map(|c| match c {
+            ' ' => "%20".to_string(),
+            '#' => "%23".to_string(),
+            '"' => "%22".to_string(),
+            '<' => "%3C".to_string(),
+            '>' => "%3E".to_string(),
+            _ => c.to_string(),
+        })
+        .collect();
+    format!("data:image/svg+xml,{encoded}")
 }
