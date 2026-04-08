@@ -163,9 +163,25 @@ pub async fn create(
                         }
                     }
                 }
+                "mbox" | "eml" => {
+                    let dataset = match crate::data::mbox::parse_mbox_str(&data_str) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Error parsing mbox {}: {}", path.display(), e);
+                            std::process::exit(1);
+                        }
+                    };
+                    match serde_json::to_value(&dataset) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Error serializing dataset: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
                 other => {
                     eprintln!(
-                        "Unsupported data format '.{}' for {}. Use .csv or .json",
+                        "Unsupported data format '.{}' for {}. Use .csv, .json, .mbox, or .eml",
                         other,
                         path.display()
                     );
