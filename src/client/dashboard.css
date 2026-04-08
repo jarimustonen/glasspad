@@ -48,6 +48,7 @@ h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
 .chart-container .vega-embed { width: 100%; }
 
 /* Tables */
+.section-body { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 thead th {
   text-align: left; padding: 0; border-bottom: 2px solid #e5e7eb;
@@ -72,6 +73,7 @@ tbody td {
   padding: 0.55rem 0.75rem; border-bottom: 1px solid #f3f4f6;
   max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+table { margin-right: 0.5rem; }
 tbody tr:hover { background: #f9fafb; }
 
 /* Stats */
