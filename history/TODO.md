@@ -79,6 +79,19 @@ Review-korjaukset (v2+v3):
 - [x] 8.5 Detail → back-navigaatio
 - [x] 8.6 List reagoi suodatuksiin
 
+Testaus:
+- Testidashboard: `history/examples/email-list-dashboard.yaml` + `email-search-results.json` (20 sähköpostia)
+- Luo testinäkymä: `glasspad create --file history/examples/email-list-dashboard.yaml --data emails=history/examples/email-search-results.json`
+- Testattu browser-automaatiolla (`test-browser.sh`): list-kortit renderöityvät (20 kpl), detail-näkymä avautuu klikkaamalla, back-navigaatio toimii, cross-filtering suodattaa listaa (by-sender/by-folder), detail sulkeutuu automaattisesti jos kohde suodattuu pois
+- HTML body: `<p>`, `<b>`, `<ul>/<li>`, `<br>`, `<a>`, `<img>`, `<table>` renderöityvät, `onerror`/`<script>` strippataan (sanitizer)
+- Text body: renderöityy `textContent`:ina rivinvaihtoineen (per-rivi `body_format`-kenttä ohjaa)
+- `cid:`-kuvat: tagi säilyy mutta kuva ei näy (inline-liitteitä ei pureta). Ei estä käyttöä.
+
+Jatkokehitys (ei vielä tehty):
+- [ ] Rows- ja compact-layoutien visuaalinen testaus selaimessa
+- [ ] Detail-näkymän päivitys suodatuksen muuttuessa (nyt pysyy paikallaan jos kohde läpäisee)
+- [ ] Liitetiedostojen näyttö erillisenä komponenttina (nyt vain tekstikenttä)
+
 ## Vaihe 9: Kaksisuuntaiset toiminnot ⬜
 
 > Ref: `04-spec-contract.md` §7, `08-arch-bidirectional-actions.md`
