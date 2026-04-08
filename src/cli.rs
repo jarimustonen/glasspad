@@ -125,12 +125,36 @@ pub async fn create(
                 .unwrap_or("")
                 .to_ascii_lowercase();
 
-            let data_str = std::fs::read_to_string(path).unwrap_or_else(|e| {
-                eprintln!("Error reading data file {}: {}", path.display(), e);
-                std::process::exit(1);
-            });
-
             let rows: serde_json::Value = match ext.as_str() {
+                "mbox" | "eml" => {
+                    // Read as raw bytes — email files may contain non-UTF-8 content
+                    let data_bytes = std::fs::read(path).unwrap_or_else(|e| {
+                        eprintln!("Error reading data file {}: {}", path.display(), e);
+                        std::process::exit(1);
+                    });
+                    let dataset = match crate::data::mbox::parse_mbox_bytes(&data_bytes) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Error parsing email {}: {}", path.display(), e);
+                            std::process::exit(1);
+                        }
+                    };
+                    match serde_json::to_value(&dataset) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Error serializing dataset: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ => {
+                // Text-based formats: read as UTF-8 string
+                let data_str = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                    eprintln!("Error reading data file {}: {}", path.display(), e);
+                    std::process::exit(1);
+                });
+
+                match ext.as_str() {
                 "csv" => {
                     let dataset = match crate::data::csv::parse_csv_str(&data_str) {
                         Ok(d) => d,
@@ -163,22 +187,6 @@ pub async fn create(
                         }
                     }
                 }
-                "mbox" | "eml" => {
-                    let dataset = match crate::data::mbox::parse_mbox_str(&data_str) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            eprintln!("Error parsing mbox {}: {}", path.display(), e);
-                            std::process::exit(1);
-                        }
-                    };
-                    match serde_json::to_value(&dataset) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            eprintln!("Error serializing dataset: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
                 other => {
                     eprintln!(
                         "Unsupported data format '.{}' for {}. Use .csv, .json, .mbox, or .eml",
@@ -187,7 +195,9 @@ pub async fn create(
                     );
                     std::process::exit(1);
                 }
-            };
+            } // inner match (text formats)
+            } // _ => (text branch)
+            }; // outer match
 
             injected.insert(name.clone(), rows);
         }
