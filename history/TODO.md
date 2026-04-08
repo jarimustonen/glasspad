@@ -4,7 +4,7 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Vaihe 7 valmis (suodatus, aikafiltteri, TOC, mbox-tuki). Review v2+v3 korjaukset tehty. Seuraavaksi: vaihe 8 (list-näkymä).
+Vaihe 7 valmis (suodatus, aikafiltteri, TOC, mbox-tuki). Review v2+v3 korjaukset + temporal chart UX-parannukset tehty. Seuraavaksi: vaihe 8 (list-näkymä).
 
 Sopimus: `04-spec-contract.md`
 Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`, `review-cross-filtering-v2.md`, `review-cross-filtering-v3.md`
@@ -47,7 +47,7 @@ Review-korjaukset (v2+v3):
 - [x] "None" = empty allowed set, not clear filter
 - [x] getFilteredDataExcluding cached per filter cycle
 - [x] TimeUnit-generic slider (hours/day/date/month/year/yearmonthdate)
-- [x] Slider bar-center alignment (halfBin offset)
+- [x] Slider bar-center alignment → korvattu: midpoint axis labels + N+1 boundary slider
 - [x] Mbox read bytes not string (UTF-8 safe)
 - [x] Missing mbox fields → CellValue::Null
 - [x] Slider handle z-index (viimeksi tartuttu päällimmäisenä)
@@ -59,6 +59,12 @@ Review-korjaukset (v2+v3):
 - [x] Table collapse gradient threshold +2
 - [x] Table overflow-x: auto
 - [x] SVG favicon
+- [x] Axis labels centered under bars (midpoint timestamps via axis.values)
+- [x] Slider N+1 boundary stops (half-open interval [min, max) model)
+- [x] Bar click/drag selection in temporal filter mode
+- [x] extractFieldFromLabel: handle timeUnit suffix in aria-labels
+- [x] Browser test automation (test-browser.sh, osascript + Brave)
+- [x] GUI debugging guide (AGENTS-GUI-DEBUGGING.md)
 
 ---
 
