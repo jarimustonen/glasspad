@@ -184,6 +184,7 @@ pub struct DetailConfig {
 pub enum BodyFormat {
     #[default]
     Text,
+    #[serde(rename = "sanitized_html")]
     SanitizedHtml,
 }
 

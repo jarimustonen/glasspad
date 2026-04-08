@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::data::types::{CellValue, Dataset};
 use crate::models::Pad;
 use crate::security::json_embed::safe_json_script_tag;
-use crate::spec::schema::Layout;
+use crate::security::sanitize::sanitize_html;
+use crate::spec::schema::{BodyFormat, Layout, SectionType};
 
 const CSS: &str = include_str!("client/dashboard.css");
 const CLIENT_JS: &str = include_str!("client/dashboard.js");
@@ -38,7 +39,9 @@ pub fn render_dashboard(pad: &Pad) -> String {
     };
     let spec_tag = safe_json_script_tag("glasspad-spec", &spec_json);
 
-    let datasets_json = datasets_to_json(&pad.datasets);
+    // Sanitize HTML body fields for list sections with body_format: sanitized_html
+    let sanitized_datasets = sanitize_body_fields(spec, &pad.datasets);
+    let datasets_json = datasets_to_json(&sanitized_datasets);
     let data_tag = safe_json_script_tag("glasspad-data", &datasets_json);
 
     format!(
@@ -72,6 +75,87 @@ pub fn render_dashboard(pad: &Pad) -> String {
         css = CSS,
         js = CLIENT_JS,
     )
+}
+
+/// Collect (source, body_field) pairs that need HTML sanitization from list sections,
+/// then return datasets with those fields sanitized.
+/// Per-row body_format field ("html"/"text") is respected: only "html" rows are sanitized.
+fn sanitize_body_fields(
+    spec: &crate::spec::schema::DashboardSpec,
+    datasets: &BTreeMap<String, Dataset>,
+) -> BTreeMap<String, Dataset> {
+    // Collect which (source, body_field) pairs need sanitization
+    let mut to_sanitize: HashSet<(String, String)> = HashSet::new();
+    for section in &spec.sections {
+        if section.section_type != SectionType::List {
+            continue;
+        }
+        let source = match &section.source {
+            Some(s) => s.clone(),
+            None => continue,
+        };
+        let list = match &section.list {
+            Some(l) => l,
+            None => continue,
+        };
+        let detail = match &list.detail {
+            Some(d) => d,
+            None => continue,
+        };
+        let body_field = match &detail.body_field {
+            Some(f) => f.clone(),
+            None => continue,
+        };
+        let format = detail.body_format.as_ref().cloned().unwrap_or_default();
+        if format == BodyFormat::SanitizedHtml {
+            to_sanitize.insert((source, body_field));
+        }
+    }
+
+    if to_sanitize.is_empty() {
+        return datasets.clone();
+    }
+
+    datasets
+        .iter()
+        .map(|(name, data)| {
+            let fields_for_source: Vec<&str> = to_sanitize
+                .iter()
+                .filter(|(src, _)| src == name)
+                .map(|(_, field)| field.as_str())
+                .collect();
+
+            if fields_for_source.is_empty() {
+                return (name.clone(), data.clone());
+            }
+
+            let sanitized: Dataset = data
+                .iter()
+                .map(|row| {
+                    // Check per-row body_format: only sanitize if "html" (or absent = use section default)
+                    let row_format = row
+                        .get("body_format")
+                        .and_then(|v| if let CellValue::String(s) = v { Some(s.as_str()) } else { None });
+                    let is_html = row_format != Some("text");
+
+                    row.iter()
+                        .map(|(k, v)| {
+                            if is_html && fields_for_source.contains(&k.as_str()) {
+                                if let CellValue::String(html) = v {
+                                    (k.clone(), CellValue::String(sanitize_html(html)))
+                                } else {
+                                    (k.clone(), v.clone())
+                                }
+                            } else {
+                                (k.clone(), v.clone())
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+            (name.clone(), sanitized)
+        })
+        .collect()
 }
 
 fn datasets_to_json(datasets: &BTreeMap<String, Dataset>) -> serde_json::Value {

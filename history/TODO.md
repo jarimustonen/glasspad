@@ -4,7 +4,7 @@ AI scratchpad for rich data views.
 
 ## Status
 
-Vaihe 7 valmis (suodatus, aikafiltteri, TOC, mbox-tuki). Review v2+v3 korjaukset + temporal chart UX-parannukset tehty. Seuraavaksi: vaihe 8 (list-näkymä).
+Vaihe 8 valmis (list-näkymä: cards/rows/compact, detail-navigaatio, body_format text/sanitized_html, suodatusreaktiot). Seuraavaksi: vaihe 9 (kaksisuuntaiset toiminnot).
 
 Sopimus: `04-spec-contract.md`
 Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-integration-v1.md`, `review-client-rendering.md`, `review-ui-improvements.md`, `review-cross-filtering.md`, `review-cross-filtering-v2.md`, `review-cross-filtering-v3.md`
@@ -68,16 +68,16 @@ Review-korjaukset (v2+v3):
 
 ---
 
-## Vaihe 8: Rikkaat datanäkymät (list) ⬜
+## Vaihe 8: Rikkaat datanäkymät (list) ✅
 
 > Ref: `04-spec-contract.md` §2 (list), `07-arch-rich-data-views.md`
 
-- [ ] 8.1 List-section renderöinti (cards, rows, compact)
-- [ ] 8.2 `id_field` pakollinen, validointi
-- [ ] 8.3 Detail-näkymä (replace-moodi)
-- [ ] 8.4 `body_format: text` / `sanitized_html` renderöinti
-- [ ] 8.5 Detail → back-navigaatio
-- [ ] 8.6 List reagoi suodatuksiin
+- [x] 8.1 List-section renderöinti (cards, rows, compact)
+- [x] 8.2 `id_field` pakollinen, validointi
+- [x] 8.3 Detail-näkymä (replace-moodi)
+- [x] 8.4 `body_format: text` / `sanitized_html` renderöinti
+- [x] 8.5 Detail → back-navigaatio
+- [x] 8.6 List reagoi suodatuksiin
 
 ## Vaihe 9: Kaksisuuntaiset toiminnot ⬜
 

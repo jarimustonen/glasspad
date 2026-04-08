@@ -228,19 +228,11 @@ fn validate_list(
         }
     };
 
-    // Actions require id_field
-    let has_actions = list
-        .detail
-        .as_ref()
-        .and_then(|d| d.actions.as_ref())
-        .is_some_and(|a| !a.is_empty());
-
-    let is_selectable = section.selectable.unwrap_or(false);
-
-    if (has_actions || is_selectable) && list.id_field.is_none() {
+    // id_field is required for all list sections (detail view navigation)
+    if list.id_field.is_none() {
         errors.push(err(
             Some(label),
-            "list with actions or selectable requires list.id_field",
+            "list section requires list.id_field",
         ));
     }
 }
@@ -458,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn list_actions_without_id_field() {
+    fn list_without_id_field() {
         let mut spec = minimal_spec();
         spec.sections[0].section_type = SectionType::List;
         spec.sections[0].stats = None;
@@ -470,16 +462,7 @@ mod tests {
             meta_field: None,
             preview_field: None,
             item_click: None,
-            detail: Some(DetailConfig {
-                fields: None,
-                body_field: None,
-                body_format: None,
-                actions: Some(vec![ActionDef {
-                    id: "delete".to_string(),
-                    label: "Delete".to_string(),
-                    style: None,
-                }]),
-            }),
+            detail: None,
             on_action: None,
         });
         let errors = validate(&spec, &HashSet::new());
@@ -487,15 +470,14 @@ mod tests {
     }
 
     #[test]
-    fn list_selectable_without_id_field() {
+    fn list_with_id_field_valid() {
         let mut spec = minimal_spec();
         spec.sections[0].section_type = SectionType::List;
         spec.sections[0].stats = None;
-        spec.sections[0].selectable = Some(true);
         spec.sections[0].list = Some(ListConfig {
-            id_field: None,
+            id_field: Some("id".to_string()),
             layout: None,
-            title_field: None,
+            title_field: Some("subject".to_string()),
             subtitle_field: None,
             meta_field: None,
             preview_field: None,
@@ -504,7 +486,7 @@ mod tests {
             on_action: None,
         });
         let errors = validate(&spec, &HashSet::new());
-        assert!(errors.iter().any(|e| e.message.contains("requires list.id_field")));
+        assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
     #[test]

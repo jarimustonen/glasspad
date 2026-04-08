@@ -482,7 +482,7 @@
 
   function getSectionLayoutMeta(section, dataResult) {
     var meta = { spanFull: false, categories: 0, shouldCollapse: false };
-    if (section.type === 'table') { meta.spanFull = true; return meta; }
+    if (section.type === 'table' || section.type === 'list') { meta.spanFull = true; return meta; }
     if (section.type === 'chart' && section.chart && isHorizontalBar(section.chart)) {
       if (dataResult.ok && dataResult.data) {
         var yField = (section.chart.encoding.y || {}).field;
@@ -1810,6 +1810,240 @@
   }
 
   // ============================================================
+  // LIST
+  // ============================================================
+  var LIST_INITIAL_ITEMS = 20;
+  var LIST_MAX_ITEMS = 500;
+
+  function mountList(s, section) {
+    var cfg = section.list;
+    if (!cfg) { appendError(s.body, 'No list config'); return null; }
+    var dr = getDataResult(section);
+    if (!dr.ok) { appendError(s.body, dr.error); return null; }
+
+    var idField = cfg.id_field;
+    if (!idField) { appendError(s.body, 'list requires id_field'); return null; }
+
+    var layout = cfg.layout || 'cards';
+    var titleField = cfg.title_field;
+    var subtitleField = cfg.subtitle_field;
+    var metaField = cfg.meta_field;
+    var previewField = cfg.preview_field;
+    var detailCfg = cfg.detail || null;
+    var bodyField = detailCfg && detailCfg.body_field;
+    var bodyFormat = (detailCfg && detailCfg.body_format) || 'text';
+
+    var listContainer = document.createElement('div');
+    listContainer.className = 'list-container';
+    if (layout === 'rows') listContainer.classList.add('list-layout-rows');
+    else if (layout === 'compact') listContainer.classList.add('list-layout-compact');
+    s.body.appendChild(listContainer);
+
+    var collapseCtrl = null;
+    var currentDetailId = null; // id of item shown in detail view
+
+    function getData() {
+      return dr.source ? getFilteredData(dr.source) : dr.data || [];
+    }
+
+    function findItem(data, id) {
+      for (var i = 0; i < data.length; i++) {
+        if (data[i][idField] === id) return data[i];
+      }
+      return null;
+    }
+
+    function renderList() {
+      listContainer.innerHTML = '';
+      var data = getData();
+
+      // Count display
+      var countEl = document.createElement('div');
+      countEl.className = 'list-count';
+      var totalData = dr.source ? (datasets[dr.source] || []) : dr.data || [];
+      if (data.length < totalData.length) {
+        countEl.textContent = data.length + ' / ' + totalData.length + ' items';
+      } else {
+        countEl.textContent = data.length + ' items';
+      }
+      listContainer.appendChild(countEl);
+
+      var displayData = data.slice(0, LIST_MAX_ITEMS);
+      var wrapper = document.createElement('div');
+      wrapper.className = 'list-items-wrapper';
+
+      for (var i = 0; i < displayData.length; i++) {
+        wrapper.appendChild(renderListItem(displayData[i]));
+      }
+      listContainer.appendChild(wrapper);
+
+      // Collapse if many items
+      var needsCollapse = displayData.length > LIST_INITIAL_ITEMS;
+      if (needsCollapse && !collapseCtrl) {
+        wrapper.classList.add('collapsed');
+        wrapper.style.maxHeight = (LIST_INITIAL_ITEMS * 56) + 'px';
+        wrapper.style.overflow = 'hidden';
+        wrapper.style.position = 'relative';
+        // Add gradient
+        var grad = document.createElement('div');
+        grad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:60px;background:linear-gradient(transparent,white);pointer-events:none;';
+        wrapper.appendChild(grad);
+
+        collapseCtrl = addCollapseToggle(s.actions, wrapper,
+          'Show all ' + displayData.length + ' items',
+          function(exp) {
+            wrapper.style.maxHeight = exp ? '' : (LIST_INITIAL_ITEMS * 56) + 'px';
+            wrapper.style.overflow = exp ? '' : 'hidden';
+            grad.style.display = exp ? 'none' : '';
+          });
+      } else if (collapseCtrl) {
+        collapseCtrl.setLabel('Show all ' + displayData.length + ' items');
+        collapseCtrl.setVisible(needsCollapse);
+        if (!needsCollapse) {
+          wrapper.style.maxHeight = '';
+          wrapper.style.overflow = '';
+        }
+      }
+    }
+
+    function renderListItem(item) {
+      var card = document.createElement('div');
+      card.className = 'list-item-card';
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+
+      var header = document.createElement('div');
+      header.className = 'list-item-header';
+
+      if (titleField && item[titleField] != null) {
+        var title = document.createElement('div');
+        title.className = 'list-item-title';
+        title.textContent = formatCell(item[titleField]);
+        header.appendChild(title);
+      }
+      if (metaField && item[metaField] != null) {
+        var meta = document.createElement('div');
+        meta.className = 'list-item-meta';
+        meta.textContent = formatCell(item[metaField]);
+        header.appendChild(meta);
+      }
+      card.appendChild(header);
+
+      if (subtitleField && item[subtitleField] != null) {
+        var sub = document.createElement('div');
+        sub.className = 'list-item-subtitle';
+        sub.textContent = formatCell(item[subtitleField]);
+        card.appendChild(sub);
+      }
+      if (previewField && item[previewField] != null) {
+        var preview = document.createElement('div');
+        preview.className = 'list-item-preview';
+        preview.textContent = formatCell(item[previewField]);
+        card.appendChild(preview);
+      }
+
+      var itemId = item[idField];
+      function openDetail() { showDetail(itemId); }
+      card.addEventListener('click', openDetail);
+      card.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(); }
+      });
+
+      return card;
+    }
+
+    function showDetail(itemId) {
+      currentDetailId = itemId;
+      listContainer.innerHTML = '';
+
+      var data = getData();
+      var item = findItem(data, itemId);
+      if (!item) {
+        // Item filtered out — fall back to list
+        currentDetailId = null;
+        renderList();
+        return;
+      }
+
+      var view = document.createElement('div');
+      view.className = 'list-detail-view';
+
+      // Back button
+      var backBtn = document.createElement('button');
+      backBtn.className = 'list-detail-back';
+      backBtn.innerHTML = '\u2190 Back to list';
+      backBtn.addEventListener('click', function() {
+        currentDetailId = null;
+        renderList();
+      });
+      view.appendChild(backBtn);
+
+      // Title
+      if (titleField && item[titleField] != null) {
+        var detailTitle = document.createElement('div');
+        detailTitle.className = 'list-detail-title';
+        detailTitle.textContent = formatCell(item[titleField]);
+        view.appendChild(detailTitle);
+      }
+
+      // Detail fields
+      if (detailCfg && detailCfg.fields && detailCfg.fields.length > 0) {
+        var fieldsGrid = document.createElement('div');
+        fieldsGrid.className = 'list-detail-fields';
+        for (var i = 0; i < detailCfg.fields.length; i++) {
+          var fDef = detailCfg.fields[i];
+          var label = document.createElement('div');
+          label.className = 'list-detail-field-label';
+          label.textContent = fDef.title || fDef.field;
+          fieldsGrid.appendChild(label);
+
+          var val = document.createElement('div');
+          val.className = 'list-detail-field-value';
+          val.textContent = formatCell(item[fDef.field]);
+          fieldsGrid.appendChild(val);
+        }
+        view.appendChild(fieldsGrid);
+      }
+
+      // Body — determine format per item: use item.body_format if present, else section config
+      if (bodyField && item[bodyField] != null) {
+        var itemFormat = bodyFormat;
+        if (item.body_format === 'html') itemFormat = 'sanitized_html';
+        else if (item.body_format === 'text') itemFormat = 'text';
+
+        var bodyEl = document.createElement('div');
+        if (itemFormat === 'sanitized_html') {
+          bodyEl.className = 'list-detail-body-html';
+          bodyEl.innerHTML = item[bodyField]; // already sanitized server-side
+        } else {
+          bodyEl.className = 'list-detail-body';
+          bodyEl.textContent = item[bodyField];
+        }
+        view.appendChild(bodyEl);
+      }
+
+      listContainer.appendChild(view);
+    }
+
+    // Initial render
+    renderList();
+
+    return function updateList() {
+      if (currentDetailId !== null) {
+        // Check if current detail item still passes filter
+        var data = getData();
+        if (!findItem(data, currentDetailId)) {
+          currentDetailId = null;
+          renderList();
+        }
+        // else: detail stays open (item still visible)
+      } else {
+        renderList();
+      }
+    };
+  }
+
+  // ============================================================
   // RENDER ALL SECTIONS
   // ============================================================
   createFilterBar();
@@ -1825,7 +2059,7 @@
         case 'chart': updateFn = mountChart(s, section, i, layoutMeta); break;
         case 'table': updateFn = mountTable(s, section); break;
         case 'stats': updateFn = mountStats(s, section); break;
-        case 'list': appendError(s.body, 'List rendering coming soon'); break;
+        case 'list': updateFn = mountList(s, section); break;
         default: appendError(s.body, 'Unknown section type: ' + String(section.type));
       }
     } catch (e) {

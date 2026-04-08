@@ -11,6 +11,7 @@ pub fn sanitize_html(input: &str) -> String {
         "blockquote", "pre", "code",
         "table", "thead", "tbody", "tr", "th", "td",
         "div", "span", "hr",
+        "img",
     ] {
         allowed_tags.insert(*tag);
     }
@@ -18,18 +19,26 @@ pub fn sanitize_html(input: &str) -> String {
     let mut builder = ammonia::Builder::new();
     builder.tags(allowed_tags);
 
-    // Only allow href on <a> tags, no other attributes
+    // Allow href on <a>, src/alt/width/height on <img>
     let mut allowed_attrs = std::collections::HashMap::new();
     let mut a_attrs = HashSet::new();
     a_attrs.insert("href");
     allowed_attrs.insert("a", a_attrs);
+    let mut img_attrs = HashSet::new();
+    img_attrs.insert("src");
+    img_attrs.insert("alt");
+    img_attrs.insert("width");
+    img_attrs.insert("height");
+    allowed_attrs.insert("img", img_attrs);
     builder.tag_attributes(allowed_attrs);
 
-    // Links must be http/https only
+    // Allowed URL schemes for links and images
     let mut url_schemes = HashSet::new();
     url_schemes.insert("http");
     url_schemes.insert("https");
     url_schemes.insert("mailto");
+    url_schemes.insert("cid");    // email inline images
+    url_schemes.insert("data");   // data: URIs for embedded images
     builder.url_schemes(url_schemes);
 
     // Force target=_blank on links for safety
@@ -92,11 +101,22 @@ mod tests {
     }
 
     #[test]
-    fn strips_img_tag() {
+    fn allows_img_with_safe_attrs() {
+        let input = r#"<img src="https://example.com/photo.jpg" alt="Photo" width="100">"#;
+        let result = sanitize_html(input);
+        assert!(result.contains("img"));
+        assert!(result.contains("https://example.com/photo.jpg"));
+        assert!(result.contains("alt"));
+    }
+
+    #[test]
+    fn strips_img_onerror() {
         let input = r#"<img src="x" onerror="alert(1)">"#;
         let result = sanitize_html(input);
-        assert!(!result.contains("img"));
+        assert!(!result.contains("onerror"));
         assert!(!result.contains("alert"));
+        // img tag itself is kept, but dangerous attrs stripped
+        assert!(result.contains("img"));
     }
 
     #[test]
