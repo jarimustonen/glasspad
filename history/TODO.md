@@ -75,6 +75,9 @@ Reviews: `review-architecture-v1.md`, `review-spec-contract-impl.md`, `review-in
 
 ## Tulevaisuus (ei aikataulua)
 
+- [ ] Refaktori: SVG DOM scraping → Vega signals/params (filter selection opacity, slider alignment, bar dimming)
+- [ ] Refaktori: mountChart()-funktion pilkkominen (buildSpec, filterControls, brushSync, collapse)
+- [ ] Mark schema: tuki object-muodolle (Rust: `serde_json::Value`, nyt `String`)
 - [ ] OpenClaw-päätelaite → `08 §Tulevaisuus`
 - [ ] Columnar Dataset (Vec<Row> → headers + Vec<Vec<CellValue>>)
 - [ ] Fetch-endpoint isoille dataseteille
