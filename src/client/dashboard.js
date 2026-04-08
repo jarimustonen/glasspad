@@ -406,16 +406,28 @@
   // Extract a field value from a Vega SVG mark's aria-label
   // e.g. "country: US; _count: 26" → extractFieldFromLabel(label, 'country') → 'US'
   function extractFieldFromLabel(label, field) {
-    var pattern = field + ': ';
-    var idx = label.indexOf(pattern);
-    // Ensure match is at a field boundary (start of string or after "; ")
-    while (idx !== -1) {
-      if (idx === 0 || label.substring(idx - 2, idx) === '; ') {
-        var start = idx + pattern.length;
-        var end = label.indexOf(';', start);
-        return end === -1 ? label.slice(start).trim() : label.slice(start, end).trim();
+    // Try exact match first: "field: value"
+    // Then timeUnit match: "field (timeUnit): value"
+    var patterns = [field + ': ', field + ' ('];
+    for (var pi = 0; pi < patterns.length; pi++) {
+      var pattern = patterns[pi];
+      var idx = label.indexOf(pattern);
+      while (idx !== -1) {
+        if (idx === 0 || label.substring(idx - 2, idx) === '; ') {
+          // For timeUnit pattern, skip past the closing "): "
+          var start;
+          if (pi === 1) {
+            var paren = label.indexOf('): ', idx);
+            if (paren === -1) { idx = label.indexOf(pattern, idx + 1); continue; }
+            start = paren + 3;
+          } else {
+            start = idx + pattern.length;
+          }
+          var end = label.indexOf(';', start);
+          return end === -1 ? label.slice(start).trim() : label.slice(start, end).trim();
+        }
+        idx = label.indexOf(pattern, idx + 1);
       }
-      idx = label.indexOf(pattern, idx + 1);
     }
     return null;
   }
@@ -814,6 +826,8 @@
     var temporalEditControls = null;
     var rangeSlider = null;
     var temporalFilterMode = 'view';
+    var onBarMouseDown = null;
+    var onBarMouseMove = null;
 
     if (hasTimeUnit && temporalField && dr.source && !filterField) {
       // Collect sorted unique time unit values from raw data
@@ -1071,6 +1085,7 @@
           alignSliderToChart();
           updateSliderUI();
         });
+        wrapper.style.cursor = 'pointer';
       }
 
       function exitTemporalEdit() {
@@ -1079,6 +1094,7 @@
         temporalEditControls.style.display = 'none';
         rangeSlider.style.display = 'none';
         clearBarDimming();
+        wrapper.style.cursor = '';
         // Restore collapse state
         if (collapseCtrl) {
           collapseCtrl.setExpanded(wasExpandedBeforeEdit);
@@ -1090,6 +1106,66 @@
           vegaUpdateData(view, 'source', filtered);
         }
       }
+
+      // --- Bar click/drag interaction in filter edit mode ---
+      // Returns bin index (into unitList) for a bar SVG element, or -1
+      function binIndexFromBar(barEl) {
+        var label = barEl.getAttribute('aria-label') || '';
+        var dateStr = extractFieldFromLabel(label, temporalField);
+        if (dateStr) {
+          var barUnit = extractTimeUnit(new Date(dateStr), tu);
+          return unitList.indexOf(barUnit);
+        }
+        var hMatch = label.match(/(\d{1,2}):00/);
+        if (hMatch) return unitList.indexOf(parseInt(hMatch[1], 10));
+        return -1;
+      }
+
+      var barDragAnchor = -1; // bin index where drag started
+
+      // Find the bar path element from an event target (if inside a visible mark group)
+      function barFromEvent(e) {
+        var el = e.target;
+        // el could be the path itself or a child; walk up to find a path with aria-label
+        while (el && el !== wrapper) {
+          if (el.nodeName === 'path' && el.getAttribute('aria-label') && el.closest('.mark-rect.role-mark')) {
+            return el;
+          }
+          el = el.parentNode;
+        }
+        return null;
+      }
+
+      onBarMouseDown = function(e) {
+        if (temporalFilterMode !== 'edit') return;
+        var bar = barFromEvent(e);
+        if (!bar) return;
+        var idx = binIndexFromBar(bar);
+        if (idx < 0) return;
+        e.preventDefault();
+        barDragAnchor = idx;
+        pendingMin = idx;
+        pendingMax = idx + 1;
+        updateSliderUI();
+      };
+
+      onBarMouseMove = function(e) {
+        if (barDragAnchor < 0) return;
+        var bar = barFromEvent(e);
+        if (!bar) return;
+        var idx = binIndexFromBar(bar);
+        if (idx < 0) return;
+        pendingMin = Math.min(barDragAnchor, idx);
+        pendingMax = Math.max(barDragAnchor, idx) + 1;
+        updateSliderUI();
+      };
+
+      function onBarMouseUp() {
+        barDragAnchor = -1;
+      }
+
+      // Bar click/drag listeners are attached after vegaEmbed completes (see .then() below)
+      document.addEventListener('mouseup', onBarMouseUp);
 
       temporalFilterBtn.addEventListener('click', enterTemporalEdit);
 
@@ -1340,6 +1416,12 @@
               }
             }, 80);
           });
+        }
+
+        // Attach bar click/drag listeners now that the DOM is ready
+        if (onBarMouseDown) {
+          wrapper.addEventListener('mousedown', onBarMouseDown);
+          wrapper.addEventListener('mousemove', onBarMouseMove);
         }
 
         // Catch up if filters changed during async embed
