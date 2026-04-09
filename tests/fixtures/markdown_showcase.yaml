@@ -1,0 +1,272 @@
+spec_version: 1
+title: "Markdown Showcase"
+description: "Rich markdown rendering demonstration"
+layout: stack
+
+sections:
+  - id: intro
+    title: "Introduction"
+    type: markdown
+    markdown:
+      content: |
+        # Glasspad Markdown Rendering
+
+        Welcome to the **Markdown Showcase**. This pad demonstrates all supported formatting features in Glasspad's new `markdown` section type. Everything you see is rendered client-side using [marked.js](https://marked.js.org/) with syntax highlighting powered by [highlight.js](https://highlightjs.org/).
+
+        ---
+
+  - id: typography
+    title: "Typography & Text Formatting"
+    type: markdown
+    markdown:
+      content: |
+        ## Headings
+
+        # Heading 1
+        ## Heading 2
+        ### Heading 3
+        #### Heading 4
+        ##### Heading 5
+        ###### Heading 6
+
+        ## Inline Formatting
+
+        This paragraph contains **bold text**, *italic text*, ***bold and italic***, ~~strikethrough~~, and `inline code`. You can also use [hyperlinks](https://example.com) and reference footnotes.
+
+        > "The best way to predict the future is to invent it."
+        > --- Alan Kay
+
+        Here's a nested blockquote:
+
+        > First level
+        > > Second level — nested blockquotes work too.
+        > > > Third level deep.
+
+  - id: lists
+    title: "Lists"
+    type: markdown
+    markdown:
+      content: |
+        ## Unordered Lists
+
+        - First item
+        - Second item with a longer description that might wrap to the next line
+        - Third item
+          - Nested item A
+          - Nested item B
+            - Deep nested item
+
+        ## Ordered Lists
+
+        1. Clone the repository
+        2. Install dependencies
+        3. Configure the environment
+           1. Set up database credentials
+           2. Configure API keys
+           3. Set the port number
+        4. Run the application
+
+        ## Task Lists
+
+        - [x] Design the schema
+        - [x] Implement backend validation
+        - [x] Build frontend renderer
+        - [ ] Add server-side sanitization
+        - [ ] Write end-to-end tests
+
+  - id: code
+    title: "Code Blocks"
+    type: markdown
+    markdown:
+      content: |
+        ## Syntax-Highlighted Code
+
+        ### Rust
+
+        ```rust
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct MarkdownConfig {
+            pub content: Option<String>,
+            pub content_field: Option<String>,
+        }
+
+        fn render(config: &MarkdownConfig) -> String {
+            match &config.content {
+                Some(text) => text.clone(),
+                None => String::from("No content provided"),
+            }
+        }
+        ```
+
+        ### Python
+
+        ```python
+        import pandas as pd
+        from dataclasses import dataclass
+
+        @dataclass
+        class DashboardSpec:
+            title: str
+            sections: list[dict]
+            layout: str = "grid-2col"
+
+            def validate(self) -> list[str]:
+                errors = []
+                if not self.sections:
+                    errors.append("sections list is empty")
+                for i, section in enumerate(self.sections):
+                    if "type" not in section:
+                        errors.append(f"section {i}: missing type")
+                return errors
+        ```
+
+        ### JavaScript
+
+        ```javascript
+        function mountMarkdown(container, section) {
+          const config = section.markdown;
+          const el = document.createElement('div');
+          el.className = 'markdown-body';
+
+          const content = config.content ?? '';
+          el.innerHTML = marked.parse(content);
+
+          // Apply syntax highlighting
+          el.querySelectorAll('pre code').forEach(block => {
+            hljs.highlightElement(block);
+          });
+
+          container.appendChild(el);
+        }
+        ```
+
+        ### SQL
+
+        ```sql
+        SELECT
+          country,
+          COUNT(*) AS total_events,
+          COUNT(DISTINCT device) AS unique_devices,
+          ROUND(AVG(duration_ms), 2) AS avg_duration
+        FROM events
+        WHERE created_at >= '2026-01-01'
+        GROUP BY country
+        ORDER BY total_events DESC
+        LIMIT 20;
+        ```
+
+        ### YAML
+
+        ```yaml
+        spec_version: 1
+        title: "My Dashboard"
+        layout: stack
+        sections:
+          - title: "Overview"
+            type: markdown
+            markdown:
+              content: "# Hello from Glasspad"
+        ```
+
+        ### Shell
+
+        ```bash
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "Starting Glasspad..."
+        cargo build --release
+        ./target/release/glasspad serve --port 3000 &
+
+        curl -s -X POST http://localhost:3000/api/pads \
+          -H "Content-Type: application/x-yaml" \
+          -d @dashboard.yaml | jq '.url'
+        ```
+
+  - id: tables
+    title: "Tables"
+    type: markdown
+    markdown:
+      content: |
+        ## Data Tables
+
+        | Feature          | Status | Priority | Notes                          |
+        |------------------|--------|----------|--------------------------------|
+        | Chart sections   | Done   | High     | Vega-Lite powered              |
+        | Table sections   | Done   | High     | Sortable columns               |
+        | Stats sections   | Done   | High     | Aggregate functions            |
+        | List sections    | Done   | Medium   | Detail view with actions       |
+        | Markdown sections| Done   | Medium   | You're looking at it!          |
+        | Image sections   | Planned| Low      | Future roadmap                 |
+
+        ### Right-Aligned Columns
+
+        | Metric          | Q1 2026 | Q2 2026 | Change    |
+        |:----------------|--------:|--------:|----------:|
+        | Monthly users   | 12,450  | 18,320  | +47.1%    |
+        | API calls/day   | 84,200  | 126,500 | +50.2%    |
+        | Avg latency     | 142ms   | 98ms    | -31.0%    |
+        | Error rate      | 0.42%   | 0.18%   | -57.1%    |
+        | Uptime          | 99.92%  | 99.98%  | +0.06pp   |
+
+  - id: mixed
+    title: "Mixed Content"
+    type: markdown
+    markdown:
+      content: |
+        ## Images
+
+        ![Placeholder](https://picsum.photos/800/300)
+
+        ## Horizontal Rules
+
+        Content above the rule.
+
+        ---
+
+        Content below the rule.
+
+        ***
+
+        Another separator style.
+
+        ## Definition-Style Content
+
+        **Glasspad**
+        : An AI-friendly scratchpad for rich data views.
+
+        **Section**
+        : A visual component in a dashboard — chart, table, stats, list, or markdown.
+
+        ## Mixed Formatting in Lists
+
+        1. **Install Rust** — visit [rustup.rs](https://rustup.rs) and run:
+           ```bash
+           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+           ```
+        2. **Clone and build**:
+           ```bash
+           git clone https://github.com/example/glasspad
+           cd glasspad && cargo build
+           ```
+        3. **Create your first pad** with inline data:
+           ```yaml
+           spec_version: 1
+           title: "Hello World"
+           sections:
+             - title: "Welcome"
+               type: markdown
+               markdown:
+                 content: "# It works!"
+           ```
+
+        ## Escaped Characters
+
+        Use backslashes to show literal characters: \*not italic\*, \`not code\`, \# not a heading.
+
+        ## Long Paragraph
+
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.

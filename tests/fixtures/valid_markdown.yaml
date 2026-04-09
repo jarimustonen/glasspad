@@ -1,0 +1,47 @@
+spec_version: 1
+title: "Markdown Test"
+description: "Test markdown section rendering"
+layout: stack
+
+sections:
+  - id: readme
+    title: "Documentation"
+    type: markdown
+    markdown:
+      content: |
+        # Project Overview
+
+        This is a **markdown** section with _rich formatting_.
+
+        ## Features
+
+        - Headings and paragraphs
+        - **Bold** and *italic* text
+        - Lists (ordered and unordered)
+        - [Links](https://example.com)
+        - Blockquotes
+        - Code blocks
+
+        > This is a blockquote with some important information.
+
+        ### Code Example
+
+        ```python
+        def hello():
+            print("Hello, world!")
+        ```
+
+        | Name    | Value |
+        |---------|-------|
+        | Alpha   | 1     |
+        | Beta    | 2     |
+
+  - id: data-driven
+    title: "Data-driven Markdown"
+    type: markdown
+    source: docs
+    markdown:
+      content_field: body
+
+datasets:
+  docs: {}

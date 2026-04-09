@@ -482,7 +482,7 @@
 
   function getSectionLayoutMeta(section, dataResult) {
     var meta = { spanFull: false, categories: 0, shouldCollapse: false };
-    if (section.type === 'table' || section.type === 'list') { meta.spanFull = true; return meta; }
+    if (section.type === 'table' || section.type === 'list' || section.type === 'markdown') { meta.spanFull = true; return meta; }
     if (section.type === 'chart' && section.chart && isHorizontalBar(section.chart)) {
       if (dataResult.ok && dataResult.data) {
         var yField = (section.chart.encoding.y || {}).field;
@@ -2044,6 +2044,61 @@
   }
 
   // ============================================================
+  // MARKDOWN SECTIONS
+  // ============================================================
+  function mountMarkdown(s, section) {
+    var mdConfig = section.markdown;
+    if (!mdConfig) { appendError(s.body, 'Missing markdown config'); return null; }
+
+    var contentEl = document.createElement('div');
+    contentEl.className = 'markdown-body';
+    s.body.appendChild(contentEl);
+
+    function getContent() {
+      if (mdConfig.content) return mdConfig.content;
+      if (mdConfig.content_field) {
+        var dataResult = getDataResult(section);
+        if (!dataResult.ok) return 'Error: ' + dataResult.error;
+        var data = getFilteredData(dataResult.source) || dataResult.data;
+        if (data && data.length > 0) {
+          // Concatenate content_field from all rows
+          var parts = [];
+          for (var i = 0; i < data.length; i++) {
+            var val = data[i][mdConfig.content_field];
+            if (val != null) parts.push(String(val));
+          }
+          return parts.join('\n\n');
+        }
+        return '';
+      }
+      return '';
+    }
+
+    function renderMarkdown() {
+      var raw = getContent();
+      if (typeof marked !== 'undefined' && marked.parse) {
+        contentEl.innerHTML = marked.parse(raw);
+      } else {
+        // Fallback: render as preformatted text
+        contentEl.textContent = raw;
+      }
+      // Apply syntax highlighting to code blocks
+      if (typeof hljs !== 'undefined') {
+        var codeBlocks = contentEl.querySelectorAll('pre code');
+        for (var i = 0; i < codeBlocks.length; i++) {
+          hljs.highlightElement(codeBlocks[i]);
+        }
+      }
+    }
+
+    renderMarkdown();
+
+    return function updateMarkdown() {
+      renderMarkdown();
+    };
+  }
+
+  // ============================================================
   // RENDER ALL SECTIONS
   // ============================================================
   createFilterBar();
@@ -2060,6 +2115,7 @@
         case 'table': updateFn = mountTable(s, section); break;
         case 'stats': updateFn = mountStats(s, section); break;
         case 'list': updateFn = mountList(s, section); break;
+        case 'markdown': updateFn = mountMarkdown(s, section); break;
         default: appendError(s.body, 'Unknown section type: ' + String(section.type));
       }
     } catch (e) {

@@ -79,6 +79,7 @@ pub fn validate(
             SectionType::Table => validate_table(section, label, &mut errors),
             SectionType::Stats => validate_stats(section, label, &mut errors),
             SectionType::List => validate_list(section, label, &mut errors),
+            SectionType::Markdown => validate_markdown(section, label, &mut errors),
         }
 
         // interactive_filter requires id
@@ -237,6 +238,28 @@ fn validate_list(
     }
 }
 
+fn validate_markdown(
+    section: &super::schema::Section,
+    label: &str,
+    errors: &mut Vec<SpecError>,
+) {
+    let md = match &section.markdown {
+        Some(m) => m,
+        None => {
+            errors.push(err(Some(label), "markdown section requires markdown config"));
+            return;
+        }
+    };
+
+    // Must have at least one of content or content_field
+    if md.content.is_none() && md.content_field.is_none() {
+        errors.push(err(
+            Some(label),
+            "markdown config requires either content or content_field",
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +292,7 @@ mod tests {
                     }],
                 }),
                 list: None,
+                markdown: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -470,6 +494,56 @@ mod tests {
     }
 
     #[test]
+    fn markdown_missing_config() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("markdown section requires markdown config")));
+    }
+
+    #[test]
+    fn markdown_missing_content_and_content_field() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: None,
+            content_field: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("requires either content or content_field")));
+    }
+
+    #[test]
+    fn markdown_with_content_valid() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn markdown_with_content_field_valid() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.datasets.insert("notes".to_string(), DatasetDecl {});
+        spec.sections[0].source = Some("notes".to_string());
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: None,
+            content_field: Some("body".to_string()),
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
     fn list_with_id_field_valid() {
         let mut spec = minimal_spec();
         spec.sections[0].section_type = SectionType::List;
@@ -510,6 +584,7 @@ mod tests {
                 table: None,
                 stats: None,
                 list: None,
+                markdown: None,
                 interactive_filter: Some(InteractiveFilter {
                     field: "country".to_string(),
                 }),
@@ -541,6 +616,7 @@ mod tests {
                     ],
                 }),
                 list: None,
+                markdown: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,

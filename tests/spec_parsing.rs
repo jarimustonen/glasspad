@@ -72,6 +72,51 @@ fn interactive_filter_parsed_correctly() {
     assert!(spec.sections[3].interactive_filter.is_none());
 }
 
+// --- markdown section tests ---
+
+#[test]
+fn parse_valid_markdown() {
+    let yaml = load_fixture("valid_markdown.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+
+    assert_eq!(spec.sections.len(), 2);
+    assert_eq!(spec.sections[0].section_type, glasspad::spec::schema::SectionType::Markdown);
+    assert_eq!(spec.sections[1].section_type, glasspad::spec::schema::SectionType::Markdown);
+
+    let md0 = spec.sections[0].markdown.as_ref().unwrap();
+    assert!(md0.content.is_some());
+    assert!(md0.content.as_ref().unwrap().contains("# Project Overview"));
+    assert!(md0.content_field.is_none());
+
+    let md1 = spec.sections[1].markdown.as_ref().unwrap();
+    assert!(md1.content.is_none());
+    assert_eq!(md1.content_field.as_deref(), Some("body"));
+}
+
+#[test]
+fn validate_valid_markdown() {
+    let yaml = load_fixture("valid_markdown.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let provided = HashSet::from(["docs".to_string()]);
+    let errors = validate::validate(&spec, &provided);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn reject_typo_in_markdown_config() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Doc"
+    type: markdown
+    markdown:
+      contnet: "typo field"
+"#;
+    let result = serde_yaml::from_str::<DashboardSpec>(yaml);
+    assert!(result.is_err(), "Should reject unknown field 'contnet'");
+}
+
 // --- deny_unknown_fields tests ---
 
 #[test]

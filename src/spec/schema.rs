@@ -70,6 +70,8 @@ pub struct Section {
     #[serde(default)]
     pub list: Option<ListConfig>,
     #[serde(default)]
+    pub markdown: Option<MarkdownConfig>,
+    #[serde(default)]
     pub interactive_filter: Option<InteractiveFilter>,
     #[serde(default)]
     pub selectable: Option<bool>,
@@ -84,6 +86,7 @@ pub enum SectionType {
     Table,
     Stats,
     List,
+    Markdown,
 }
 
 /// Chart configuration.
@@ -156,6 +159,18 @@ pub struct ListConfig {
     pub detail: Option<DetailConfig>,
     #[serde(default)]
     pub on_action: Option<String>,
+}
+
+/// Markdown configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkdownConfig {
+    /// Inline markdown content string.
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Field name to pull markdown content from dataset rows.
+    #[serde(default)]
+    pub content_field: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -437,6 +452,44 @@ sections:
 "#;
         let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(spec.timezone, None);
+    }
+
+    #[test]
+    fn markdown_inline_content_deserialize() {
+        let yaml = r##"
+spec_version: 1
+title: "Docs"
+sections:
+  - title: "Readme"
+    type: markdown
+    markdown:
+      content: "# Hello World"
+"##;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.sections[0].section_type, SectionType::Markdown);
+        let md = spec.sections[0].markdown.as_ref().unwrap();
+        assert_eq!(md.content.as_deref(), Some("# Hello World"));
+        assert!(md.content_field.is_none());
+    }
+
+    #[test]
+    fn markdown_content_field_deserialize() {
+        let yaml = r#"
+spec_version: 1
+title: "Docs"
+datasets:
+  notes: {}
+sections:
+  - title: "Notes"
+    type: markdown
+    source: notes
+    markdown:
+      content_field: body
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        let md = spec.sections[0].markdown.as_ref().unwrap();
+        assert!(md.content.is_none());
+        assert_eq!(md.content_field.as_deref(), Some("body"));
     }
 
     #[test]

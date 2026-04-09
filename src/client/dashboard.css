@@ -337,6 +337,71 @@ body.has-toc > div[id="dashboard"] {
 .list-detail-body-html table { width: auto; font-size: 0.85rem; margin: 0.5rem 0; }
 .list-detail-body-html td { padding: 0.3rem 0.5rem; vertical-align: top; }
 
+/* Markdown sections */
+.markdown-body {
+  font-size: 0.95rem; line-height: 1.7; color: #1a1a2e;
+  word-break: break-word;
+}
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  margin-top: 1.5em; margin-bottom: 0.5em; font-weight: 600; color: #111827;
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; }
+.markdown-body h2 { font-size: 1.3rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.25em; }
+.markdown-body h3 { font-size: 1.1rem; }
+.markdown-body h4 { font-size: 1rem; }
+.markdown-body h5, .markdown-body h6 { font-size: 0.9rem; color: #374151; }
+.markdown-body h1:first-child, .markdown-body h2:first-child,
+.markdown-body h3:first-child { margin-top: 0; }
+.markdown-body p { margin: 0 0 1em; }
+.markdown-body a { color: #2563eb; text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body strong { font-weight: 600; }
+.markdown-body ul, .markdown-body ol {
+  margin: 0 0 1em; padding-left: 1.5em;
+}
+.markdown-body li { margin-bottom: 0.25em; }
+.markdown-body li > ul, .markdown-body li > ol { margin-bottom: 0; }
+.markdown-body blockquote {
+  margin: 0 0 1em; padding: 0.5em 1em;
+  border-left: 4px solid #d1d5db; color: #6b7280;
+  background: #f9fafb; border-radius: 0 4px 4px 0;
+}
+.markdown-body blockquote p:last-child { margin-bottom: 0; }
+.markdown-body code {
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 0.85em; background: #f3f4f6; padding: 0.15em 0.35em;
+  border-radius: 4px; color: #d63384;
+}
+.markdown-body pre {
+  margin: 0 0 1em; padding: 1em; background: #f6f8fa;
+  border-radius: 8px; overflow-x: auto; border: 1px solid #e5e7eb;
+}
+.markdown-body pre code {
+  background: none; padding: 0; border-radius: 0; color: inherit;
+  font-size: 0.85rem; line-height: 1.5;
+}
+.markdown-body table {
+  width: auto; border-collapse: collapse; margin: 0 0 1em;
+  font-size: 0.9rem;
+}
+.markdown-body th, .markdown-body td {
+  padding: 0.5em 0.75em; border: 1px solid #d1d5db; text-align: left;
+}
+.markdown-body th {
+  background: #f3f4f6; font-weight: 600; color: #374151;
+}
+.markdown-body tr:nth-child(even) { background: #f9fafb; }
+.markdown-body img {
+  max-width: 100%; height: auto; border-radius: 4px; margin: 0.5em 0;
+}
+.markdown-body hr {
+  border: none; border-top: 1px solid #e5e7eb; margin: 1.5em 0;
+}
+.markdown-body .task-list-item { list-style: none; margin-left: -1.5em; }
+.markdown-body .task-list-item input[type="checkbox"] { margin-right: 0.5em; }
+
 @media (max-width: 768px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   body { padding: 1rem; }
