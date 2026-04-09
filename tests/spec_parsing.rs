@@ -201,3 +201,113 @@ sections:
     let errors = validate::validate(&spec, &HashSet::new());
     assert!(errors.iter().any(|e| e.message.contains("only supported on chart")));
 }
+
+// --- markdown schema tests ---
+
+#[test]
+fn markdown_toc_side_enum_left() {
+    let yaml = r##"
+spec_version: 1
+title: "Test"
+sections:
+  - id: md1
+    title: "Doc"
+    type: markdown
+    markdown:
+      content: "# Hello"
+      toc_levels: [1, 2]
+      toc_side: left
+"##;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let md = spec.sections[0].markdown.as_ref().unwrap();
+    assert_eq!(md.toc_side, Some(glasspad::spec::schema::TocSide::Left));
+}
+
+#[test]
+fn markdown_toc_side_enum_right() {
+    let yaml = r##"
+spec_version: 1
+title: "Test"
+sections:
+  - id: md1
+    title: "Doc"
+    type: markdown
+    markdown:
+      content: "# Hello"
+      toc_levels: [1, 2]
+      toc_side: right
+"##;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let md = spec.sections[0].markdown.as_ref().unwrap();
+    assert_eq!(md.toc_side, Some(glasspad::spec::schema::TocSide::Right));
+}
+
+#[test]
+fn reject_invalid_toc_side() {
+    let yaml = r##"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Doc"
+    type: markdown
+    markdown:
+      content: "# Hello"
+      toc_side: center
+"##;
+    let result = serde_yaml::from_str::<DashboardSpec>(yaml);
+    assert!(result.is_err(), "Should reject invalid toc_side 'center'");
+}
+
+#[test]
+fn markdown_link_target_blank() {
+    let yaml = r##"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Doc"
+    type: markdown
+    markdown:
+      content: "# Hello"
+      link_target: _blank
+"##;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let md = spec.sections[0].markdown.as_ref().unwrap();
+    assert_eq!(md.link_target, Some(glasspad::spec::schema::LinkTarget::Blank));
+}
+
+#[test]
+fn markdown_link_target_self() {
+    let yaml = r##"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Doc"
+    type: markdown
+    markdown:
+      content: "# Hello"
+      link_target: _self
+"##;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let md = spec.sections[0].markdown.as_ref().unwrap();
+    assert_eq!(md.link_target, Some(glasspad::spec::schema::LinkTarget::Self_));
+}
+
+#[test]
+fn markdown_max_rows_deserialize() {
+    let yaml = r##"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Doc"
+    type: markdown
+    source: docs
+    markdown:
+      content_field: body
+      max_rows: 50
+datasets:
+  docs: {}
+"##;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let md = spec.sections[0].markdown.as_ref().unwrap();
+    assert_eq!(md.max_rows, Some(50));
+}

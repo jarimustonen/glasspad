@@ -161,23 +161,47 @@ pub struct ListConfig {
     pub on_action: Option<String>,
 }
 
+/// Which side to place a TOC sidebar.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TocSide {
+    #[default]
+    Left,
+    Right,
+}
+
+/// Link target for markdown-rendered anchor tags.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LinkTarget {
+    #[serde(rename = "_blank")]
+    Blank,
+    #[serde(rename = "_self")]
+    Self_,
+}
+
 /// Markdown configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MarkdownConfig {
-    /// Inline markdown content string.
+    /// Inline markdown content string (mutually exclusive with content_field).
     #[serde(default)]
     pub content: Option<String>,
-    /// Field name to pull markdown content from dataset rows.
+    /// Field name to pull markdown content from dataset rows (mutually exclusive with content).
     #[serde(default)]
     pub content_field: Option<String>,
     /// Heading levels to show in the table of contents (e.g. [1, 2, 3]).
     /// Omit or set to empty array to disable the TOC.
     #[serde(default)]
     pub toc_levels: Option<Vec<u8>>,
-    /// Which side to place the TOC sidebar: "left" (default) or "right".
+    /// Which side to place the TOC sidebar (default: left).
     #[serde(default)]
-    pub toc_side: Option<String>,
+    pub toc_side: Option<TocSide>,
+    /// Link target for rendered links (default: browser default / _self).
+    #[serde(default)]
+    pub link_target: Option<LinkTarget>,
+    /// Maximum number of dataset rows to concatenate (default: 100).
+    #[serde(default)]
+    pub max_rows: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
