@@ -462,3 +462,16 @@ body.has-md-toc-right > div[id="dashboard"] {
     margin-left: 0;
   }
 }
+
+@media print {
+  .toc-sidebar, .markdown-toc-sidebar { display: none; }
+  body.has-toc > h1, body.has-toc > .description, body.has-toc > .filter-bar,
+  body.has-toc > .dashboard-grid, body.has-toc > .dashboard-stack,
+  body.has-toc > div[id="dashboard"] { margin-left: 0; }
+  body.has-md-toc-left > h1, body.has-md-toc-left > .description,
+  body.has-md-toc-left > .filter-bar, body.has-md-toc-left > .dashboard-grid,
+  body.has-md-toc-left > .dashboard-stack, body.has-md-toc-left > div[id="dashboard"] { margin-left: 0; }
+  body.has-md-toc-right > h1, body.has-md-toc-right > .description,
+  body.has-md-toc-right > .filter-bar, body.has-md-toc-right > .dashboard-grid,
+  body.has-md-toc-right > .dashboard-stack, body.has-md-toc-right > div[id="dashboard"] { margin-right: 0; }
+}

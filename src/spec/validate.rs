@@ -53,6 +53,22 @@ pub fn validate(
     // Collect declared dataset names
     let declared: HashSet<String> = spec.datasets.keys().cloned().collect();
 
+    // Duplicate section.id check
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    for section in &spec.sections {
+        if let Some(ref id) = section.id {
+            if !seen_ids.insert(id.clone()) {
+                errors.push(err(
+                    Some(id),
+                    format!("duplicate section id \"{}\"", id),
+                ));
+            }
+        }
+    }
+
+    // Track markdown TOC sections for cross-section validation
+    let mut md_toc_count = 0u32;
+
     for (i, section) in spec.sections.iter().enumerate() {
         let default_label = format!("[{}] {}", i, section.title);
         let label = section
@@ -82,6 +98,15 @@ pub fn validate(
             SectionType::Markdown => validate_markdown(section, label, &mut errors),
         }
 
+        // Count markdown sections with active TOC
+        if section.section_type == SectionType::Markdown {
+            if let Some(ref md) = section.markdown {
+                if md.toc_levels.as_ref().is_some_and(|v| !v.is_empty()) {
+                    md_toc_count += 1;
+                }
+            }
+        }
+
         // interactive_filter requires id
         if section.interactive_filter.is_some() && section.id.is_none() {
             errors.push(err(
@@ -97,6 +122,22 @@ pub fn validate(
                 "interactive_filter is only supported on chart sections",
             ));
         }
+    }
+
+    // Only one markdown section may define toc_levels (renderer creates one global sidebar)
+    if md_toc_count > 1 {
+        errors.push(err(
+            None,
+            "only one markdown section may define toc_levels (single global TOC sidebar)",
+        ));
+    }
+
+    // Dashboard TOC and markdown TOC cannot coexist (overlapping fixed sidebars)
+    if spec.toc && md_toc_count > 0 {
+        errors.push(err(
+            None,
+            "spec.toc and markdown toc_levels cannot both be enabled (overlapping sidebars)",
+        ));
     }
 
     errors
@@ -251,12 +292,55 @@ fn validate_markdown(
         }
     };
 
-    // Must have at least one of content or content_field
+    // content and content_field are mutually exclusive
+    if md.content.is_some() && md.content_field.is_some() {
+        errors.push(err(
+            Some(label),
+            "markdown config cannot specify both content and content_field",
+        ));
+    }
     if md.content.is_none() && md.content_field.is_none() {
         errors.push(err(
             Some(label),
             "markdown config requires either content or content_field",
         ));
+    }
+
+    // content_field requires a data source
+    if md.content_field.is_some() && section.source.is_none() && section.inline_data.is_none() {
+        errors.push(err(
+            Some(label),
+            "markdown content_field requires source or inline_data",
+        ));
+    }
+
+    // toc_levels values must be valid heading levels (1..=6)
+    if let Some(ref levels) = md.toc_levels {
+        for level in levels {
+            if !(1..=6).contains(level) {
+                errors.push(err(
+                    Some(label),
+                    format!("markdown.toc_levels must contain values 1-6, got {}", level),
+                ));
+            }
+        }
+        // toc_levels requires section.id for stable heading anchors
+        if !levels.is_empty() && section.id.is_none() {
+            errors.push(err(
+                Some(label),
+                "markdown toc_levels requires section id for stable heading anchors",
+            ));
+        }
+    }
+
+    // max_rows must be > 0 if provided
+    if let Some(max_rows) = md.max_rows {
+        if max_rows == 0 {
+            errors.push(err(
+                Some(label),
+                "markdown max_rows must be greater than 0",
+            ));
+        }
     }
 }
 
@@ -512,6 +596,8 @@ mod tests {
             content_field: None,
             toc_levels: None,
             toc_side: None,
+            link_target: None,
+            max_rows: None,
         });
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.iter().any(|e| e.message.contains("requires either content or content_field")));
@@ -527,6 +613,8 @@ mod tests {
             content_field: None,
             toc_levels: None,
             toc_side: None,
+            link_target: None,
+            max_rows: None,
         });
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
@@ -544,6 +632,8 @@ mod tests {
             content_field: Some("body".to_string()),
             toc_levels: None,
             toc_side: None,
+            link_target: None,
+            max_rows: None,
         });
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
@@ -631,5 +721,255 @@ mod tests {
         let provided = HashSet::from(["events".to_string()]);
         let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    // --- markdown validation: new rules ---
+
+    #[test]
+    fn markdown_reject_both_content_and_content_field() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: Some("body".to_string()),
+            toc_levels: None,
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("cannot specify both content and content_field")));
+    }
+
+    #[test]
+    fn markdown_content_field_requires_source() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: None,
+            content_field: Some("body".to_string()),
+            toc_levels: None,
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        // No source, no inline_data
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("content_field requires source or inline_data")));
+    }
+
+    #[test]
+    fn markdown_toc_levels_reject_invalid() {
+        let mut spec = minimal_spec();
+        spec.sections[0].id = Some("md1".to_string());
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+            toc_levels: Some(vec![1, 2, 7]),
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("toc_levels must contain values 1-6, got 7")));
+    }
+
+    #[test]
+    fn markdown_toc_levels_reject_zero() {
+        let mut spec = minimal_spec();
+        spec.sections[0].id = Some("md1".to_string());
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+            toc_levels: Some(vec![0]),
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("toc_levels must contain values 1-6, got 0")));
+    }
+
+    #[test]
+    fn markdown_toc_levels_empty_is_valid() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+            toc_levels: Some(vec![]),
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn markdown_toc_levels_requires_section_id() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].id = None; // no id
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+            toc_levels: Some(vec![1, 2]),
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("toc_levels requires section id")));
+    }
+
+    #[test]
+    fn markdown_max_rows_reject_zero() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+            toc_levels: None,
+            toc_side: None,
+            link_target: None,
+            max_rows: Some(0),
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("max_rows must be greater than 0")));
+    }
+
+    #[test]
+    fn markdown_toc_with_spec_toc_rejected() {
+        let mut spec = minimal_spec();
+        spec.toc = true;
+        spec.sections[0].id = Some("md1".to_string());
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("# Hello".to_string()),
+            content_field: None,
+            toc_levels: Some(vec![1, 2]),
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("spec.toc and markdown toc_levels cannot both be enabled")));
+    }
+
+    #[test]
+    fn markdown_multiple_toc_sections_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections = vec![
+            Section {
+                id: Some("md1".to_string()),
+                title: "Doc1".to_string(),
+                section_type: SectionType::Markdown,
+                source: None,
+                inline_data: None,
+                chart: None,
+                table: None,
+                stats: None,
+                list: None,
+                markdown: Some(MarkdownConfig {
+                    content: Some("# A".to_string()),
+                    content_field: None,
+                    toc_levels: Some(vec![1, 2]),
+                    toc_side: None,
+                    link_target: None,
+                    max_rows: None,
+                }),
+                interactive_filter: None,
+                selectable: None,
+                batch_actions: None,
+            },
+            Section {
+                id: Some("md2".to_string()),
+                title: "Doc2".to_string(),
+                section_type: SectionType::Markdown,
+                source: None,
+                inline_data: None,
+                chart: None,
+                table: None,
+                stats: None,
+                list: None,
+                markdown: Some(MarkdownConfig {
+                    content: Some("# B".to_string()),
+                    content_field: None,
+                    toc_levels: Some(vec![1]),
+                    toc_side: None,
+                    link_target: None,
+                    max_rows: None,
+                }),
+                interactive_filter: None,
+                selectable: None,
+                batch_actions: None,
+            },
+        ];
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("only one markdown section may define toc_levels")));
+    }
+
+    #[test]
+    fn duplicate_section_id_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections = vec![
+            Section {
+                id: Some("dup".to_string()),
+                title: "A".to_string(),
+                section_type: SectionType::Markdown,
+                source: None,
+                inline_data: None,
+                chart: None,
+                table: None,
+                stats: None,
+                list: None,
+                markdown: Some(MarkdownConfig {
+                    content: Some("# A".to_string()),
+                    content_field: None,
+                    toc_levels: None,
+                    toc_side: None,
+                    link_target: None,
+                    max_rows: None,
+                }),
+                interactive_filter: None,
+                selectable: None,
+                batch_actions: None,
+            },
+            Section {
+                id: Some("dup".to_string()),
+                title: "B".to_string(),
+                section_type: SectionType::Markdown,
+                source: None,
+                inline_data: None,
+                chart: None,
+                table: None,
+                stats: None,
+                list: None,
+                markdown: Some(MarkdownConfig {
+                    content: Some("# B".to_string()),
+                    content_field: None,
+                    toc_levels: None,
+                    toc_side: None,
+                    link_target: None,
+                    max_rows: None,
+                }),
+                interactive_filter: None,
+                selectable: None,
+                batch_actions: None,
+            },
+        ];
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("duplicate section id")));
     }
 }

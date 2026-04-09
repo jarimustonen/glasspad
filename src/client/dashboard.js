@@ -2046,8 +2046,25 @@
   // ============================================================
   // MARKDOWN SECTIONS
   // ============================================================
-  // Collect markdown content elements for global TOC building
-  var mdTocRegistry = [];
+  var MD_DEFAULT_MAX_ROWS = 100;
+
+  // Configure marked once at startup
+  if (typeof marked !== 'undefined' && marked.setOptions) {
+    marked.setOptions({ gfm: true, breaks: false });
+  }
+
+  function slugify(text) {
+    return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  // All markdown section contentEls (for heading scanning by TOC)
+  var mdContentEls = [];
+  // TOC config from the one section that declares toc_levels
+  var mdTocConfig = null;
+
+  // Module-scope handles for TOC lifecycle cleanup
+  var mdTocObserver = null;
+  var mdTocScrollHandler = null;
 
   function mountMarkdown(s, section) {
     var mdConfig = section.markdown;
@@ -2057,16 +2074,23 @@
     contentEl.className = 'markdown-body';
     s.body.appendChild(contentEl);
 
-    // Register for global TOC if toc_levels is set
+    var sectionId = section.id || ('md-' + mdContentEls.length);
+
+    // Register contentEl so TOC can scan headings from all markdown sections
+    mdContentEls.push({ contentEl: contentEl, sectionId: sectionId });
+
+    // If this section declares toc_levels, it controls the TOC config
     var tocLevels = mdConfig.toc_levels;
-    if (Array.isArray(tocLevels) && tocLevels.length > 0) {
-      mdTocRegistry.push({
-        contentEl: contentEl,
+    if (Array.isArray(tocLevels) && tocLevels.length > 0 && !mdTocConfig) {
+      mdTocConfig = {
         levels: tocLevels,
         side: mdConfig.toc_side || 'left',
-        sectionTitle: section.title,
-      });
+      };
     }
+
+    var mdMaxRows = (mdConfig.max_rows && mdConfig.max_rows > 0) ? mdConfig.max_rows : MD_DEFAULT_MAX_ROWS;
+    var isDynamic = !!mdConfig.content_field;
+    var lastRaw = null;
 
     function getContent() {
       if (mdConfig.content) return mdConfig.content;
@@ -2076,11 +2100,17 @@
         var data = getFilteredData(dataResult.source) || dataResult.data;
         if (data && data.length > 0) {
           var parts = [];
-          for (var i = 0; i < data.length; i++) {
+          var truncated = false;
+          for (var i = 0; i < data.length && parts.length < mdMaxRows; i++) {
             var val = data[i][mdConfig.content_field];
             if (val != null) parts.push(String(val));
           }
-          return parts.join('\n\n');
+          if (data.length > mdMaxRows) truncated = true;
+          var result = parts.join('\n\n');
+          if (truncated) {
+            result += '\n\n---\n\n*Content truncated: showing ' + parts.length + ' of ' + data.length + ' rows (max_rows: ' + mdMaxRows + ')*';
+          }
+          return result;
         }
         return '';
       }
@@ -2089,51 +2119,79 @@
 
     function renderMarkdown() {
       var raw = getContent();
+      // XSS prevention: sanitize rendered HTML with DOMPurify
       if (typeof marked !== 'undefined' && marked.parse) {
-        contentEl.innerHTML = marked.parse(raw);
+        var html = marked.parse(raw);
+        if (typeof DOMPurify !== 'undefined') {
+          contentEl.innerHTML = DOMPurify.sanitize(html);
+        } else {
+          contentEl.textContent = raw;
+          appendError(s.body, 'Markdown sanitizer (DOMPurify) unavailable');
+          return;
+        }
       } else {
         contentEl.textContent = raw;
       }
+
+      // Syntax highlighting with error handling
       if (typeof hljs !== 'undefined') {
         var codeBlocks = contentEl.querySelectorAll('pre code');
         for (var i = 0; i < codeBlocks.length; i++) {
-          hljs.highlightElement(codeBlocks[i]);
+          try { hljs.highlightElement(codeBlocks[i]); }
+          catch (e) { appendError(s.body, 'Syntax highlighting failed: ' + e.message); }
+        }
+      }
+
+      // Link target configuration (external links only)
+      if (mdConfig.link_target) {
+        var links = contentEl.querySelectorAll('a[href]');
+        for (var j = 0; j < links.length; j++) {
+          var href = links[j].getAttribute('href') || '';
+          if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) continue;
+          links[j].setAttribute('target', mdConfig.link_target);
+          if (mdConfig.link_target === '_blank') {
+            links[j].setAttribute('rel', 'noopener noreferrer');
+          }
         }
       }
     }
 
     renderMarkdown();
+    lastRaw = getContent();
 
     return function updateMarkdown() {
+      if (!isDynamic) return; // static content never changes
+      var raw = getContent();
+      if (raw === lastRaw) return;
+      lastRaw = raw;
       renderMarkdown();
       buildMarkdownToc();
     };
   }
 
-  // Build a single global TOC from all markdown sections that declared toc_levels
+  // Build a single global TOC scanning headings from ALL markdown sections
   function buildMarkdownToc() {
-    if (mdTocRegistry.length === 0) return;
+    // Clean up previous observer and scroll listener
+    if (mdTocObserver) { mdTocObserver.disconnect(); mdTocObserver = null; }
+    if (mdTocScrollHandler) { window.removeEventListener('scroll', mdTocScrollHandler); mdTocScrollHandler = null; }
 
-    // Remove previous TOC if any
-    var prev = document.querySelector('.markdown-toc-sidebar');
-    if (prev) prev.remove();
+    if (!mdTocConfig || mdContentEls.length === 0) return;
+
+    // Remove all previous TOC sidebars
+    var prevAll = document.querySelectorAll('.markdown-toc-sidebar');
+    prevAll.forEach(function(el) { el.remove(); });
     document.body.classList.remove('has-md-toc-left', 'has-md-toc-right');
 
-    // Merge all levels and pick side from first section that declares it
-    var allLevels = {};
-    var tocSide = 'left';
-    for (var r = 0; r < mdTocRegistry.length; r++) {
-      var reg = mdTocRegistry[r];
-      for (var l = 0; l < reg.levels.length; l++) allLevels[reg.levels[l]] = true;
-      if (r === 0) tocSide = reg.side;
-    }
-    var levels = Object.keys(allLevels).map(Number).sort();
+    // Use levels and side from the TOC-declaring section
+    var levels = mdTocConfig.levels.slice().sort(function(a, b) { return a - b; });
+    var tocSide = mdTocConfig.side;
     var minLevel = levels[0];
     var selector = levels.map(function(l) { return 'h' + l; }).join(',');
 
     // Build the sidebar
     var tocNav = document.createElement('nav');
     tocNav.className = 'markdown-toc-sidebar md-toc-' + tocSide;
+    tocNav.setAttribute('aria-label', 'Table of contents');
     var tocTitle = document.createElement('div');
     tocTitle.className = 'toc-title';
     tocTitle.textContent = 'Contents';
@@ -2142,7 +2200,6 @@
     tocList.className = 'toc-list';
 
     var tocLinks = [];
-    var headingCounter = 0;
     var clickedIndex = -1; // click override to prevent observer from jumping
 
     // First entry: page title → scroll to top
@@ -2163,16 +2220,22 @@
       tocLinks.push({ el: topA, heading: pageH1 });
     }
 
-    // Collect headings from all registered markdown sections in order
-    for (var s = 0; s < mdTocRegistry.length; s++) {
-      var contentEl = mdTocRegistry[s].contentEl;
-      var headings = contentEl.querySelectorAll(selector);
+    // Collect headings from ALL markdown sections in order
+    for (var s = 0; s < mdContentEls.length; s++) {
+      var regEntry = mdContentEls[s];
+      var headings = regEntry.contentEl.querySelectorAll(selector);
+      var slugCounts = {}; // track slug collisions within section
 
       for (var i = 0; i < headings.length; i++) {
         var h = headings[i];
-        var id = h.id || ('md-heading-' + headingCounter);
+
+        // Deterministic heading ID: {sectionId}-{slug}[-{n}]
+        var baseSlug = slugify(h.textContent) || 'heading';
+        var fullSlug = regEntry.sectionId + '-' + baseSlug;
+        var count = slugCounts[fullSlug] || 0;
+        slugCounts[fullSlug] = count + 1;
+        var id = count === 0 ? fullSlug : fullSlug + '-' + count;
         h.id = id;
-        headingCounter++;
 
         var level = parseInt(h.tagName.charAt(1), 10);
         var indent = level - minLevel;
@@ -2205,11 +2268,16 @@
     function setActive(idx) {
       for (var j = 0; j < tocLinks.length; j++) {
         tocLinks[j].el.classList.toggle('toc-active', j === idx);
+        if (j === idx) {
+          tocLinks[j].el.setAttribute('aria-current', 'location');
+        } else {
+          tocLinks[j].el.removeAttribute('aria-current');
+        }
       }
     }
 
     if (typeof IntersectionObserver !== 'undefined' && tocLinks.length > 0) {
-      var obs = new IntersectionObserver(function(entries) {
+      mdTocObserver = new IntersectionObserver(function(entries) {
         if (clickedIndex >= 0) return; // click override active
         entries.forEach(function(entry) {
           if (entry.isIntersecting) {
@@ -2219,15 +2287,16 @@
           }
         });
       }, { rootMargin: '-80px 0px -60% 0px' });
-      for (var j = 0; j < tocLinks.length; j++) obs.observe(tocLinks[j].heading);
+      for (var j = 0; j < tocLinks.length; j++) mdTocObserver.observe(tocLinks[j].heading);
 
       // Clear click override after scroll settles
       var clickClearTimer = null;
-      window.addEventListener('scroll', function() {
+      mdTocScrollHandler = function() {
         if (clickedIndex < 0) return;
         clearTimeout(clickClearTimer);
         clickClearTimer = setTimeout(function() { clickedIndex = -1; }, 300);
-      }, { passive: true });
+      };
+      window.addEventListener('scroll', mdTocScrollHandler, { passive: true });
     }
 
     setActive(0);
