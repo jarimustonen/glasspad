@@ -8,6 +8,7 @@ sections:
     title: "Introduction"
     type: markdown
     markdown:
+      toc_levels: [1, 2]
       content: |
         # Glasspad Markdown Rendering
 
@@ -19,6 +20,7 @@ sections:
     title: "Typography & Text Formatting"
     type: markdown
     markdown:
+      toc_levels: [1, 2]
       content: |
         ## Headings
 
@@ -46,6 +48,7 @@ sections:
     title: "Lists"
     type: markdown
     markdown:
+      toc_levels: [1, 2]
       content: |
         ## Unordered Lists
 
@@ -78,6 +81,7 @@ sections:
     title: "Code Blocks"
     type: markdown
     markdown:
+      toc_levels: [2, 3]
       content: |
         ## Syntax-Highlighted Code
 
@@ -190,6 +194,7 @@ sections:
     title: "Tables"
     type: markdown
     markdown:
+      toc_levels: [1, 2]
       content: |
         ## Data Tables
 
@@ -216,6 +221,7 @@ sections:
     title: "Mixed Content"
     type: markdown
     markdown:
+      toc_levels: [1, 2]
       content: |
         ## Images
 

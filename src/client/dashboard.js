@@ -2046,6 +2046,9 @@
   // ============================================================
   // MARKDOWN SECTIONS
   // ============================================================
+  // Collect markdown content elements for global TOC building
+  var mdTocRegistry = [];
+
   function mountMarkdown(s, section) {
     var mdConfig = section.markdown;
     if (!mdConfig) { appendError(s.body, 'Missing markdown config'); return null; }
@@ -2054,6 +2057,17 @@
     contentEl.className = 'markdown-body';
     s.body.appendChild(contentEl);
 
+    // Register for global TOC if toc_levels is set
+    var tocLevels = mdConfig.toc_levels;
+    if (Array.isArray(tocLevels) && tocLevels.length > 0) {
+      mdTocRegistry.push({
+        contentEl: contentEl,
+        levels: tocLevels,
+        side: mdConfig.toc_side || 'left',
+        sectionTitle: section.title,
+      });
+    }
+
     function getContent() {
       if (mdConfig.content) return mdConfig.content;
       if (mdConfig.content_field) {
@@ -2061,7 +2075,6 @@
         if (!dataResult.ok) return 'Error: ' + dataResult.error;
         var data = getFilteredData(dataResult.source) || dataResult.data;
         if (data && data.length > 0) {
-          // Concatenate content_field from all rows
           var parts = [];
           for (var i = 0; i < data.length; i++) {
             var val = data[i][mdConfig.content_field];
@@ -2079,10 +2092,8 @@
       if (typeof marked !== 'undefined' && marked.parse) {
         contentEl.innerHTML = marked.parse(raw);
       } else {
-        // Fallback: render as preformatted text
         contentEl.textContent = raw;
       }
-      // Apply syntax highlighting to code blocks
       if (typeof hljs !== 'undefined') {
         var codeBlocks = contentEl.querySelectorAll('pre code');
         for (var i = 0; i < codeBlocks.length; i++) {
@@ -2095,7 +2106,131 @@
 
     return function updateMarkdown() {
       renderMarkdown();
+      buildMarkdownToc();
     };
+  }
+
+  // Build a single global TOC from all markdown sections that declared toc_levels
+  function buildMarkdownToc() {
+    if (mdTocRegistry.length === 0) return;
+
+    // Remove previous TOC if any
+    var prev = document.querySelector('.markdown-toc-sidebar');
+    if (prev) prev.remove();
+    document.body.classList.remove('has-md-toc-left', 'has-md-toc-right');
+
+    // Merge all levels and pick side from first section that declares it
+    var allLevels = {};
+    var tocSide = 'left';
+    for (var r = 0; r < mdTocRegistry.length; r++) {
+      var reg = mdTocRegistry[r];
+      for (var l = 0; l < reg.levels.length; l++) allLevels[reg.levels[l]] = true;
+      if (r === 0) tocSide = reg.side;
+    }
+    var levels = Object.keys(allLevels).map(Number).sort();
+    var minLevel = levels[0];
+    var selector = levels.map(function(l) { return 'h' + l; }).join(',');
+
+    // Build the sidebar
+    var tocNav = document.createElement('nav');
+    tocNav.className = 'markdown-toc-sidebar md-toc-' + tocSide;
+    var tocTitle = document.createElement('div');
+    tocTitle.className = 'toc-title';
+    tocTitle.textContent = 'Contents';
+    tocNav.appendChild(tocTitle);
+    var tocList = document.createElement('ul');
+    tocList.className = 'toc-list';
+
+    var tocLinks = [];
+    var headingCounter = 0;
+    var clickedIndex = -1; // click override to prevent observer from jumping
+
+    // First entry: page title → scroll to top
+    var pageH1 = document.querySelector('body > h1');
+    if (pageH1) {
+      var topLi = document.createElement('li');
+      var topA = document.createElement('a');
+      topA.href = '#';
+      topA.textContent = pageH1.textContent;
+      topA.addEventListener('click', function(e) {
+        e.preventDefault();
+        clickedIndex = 0;
+        setActive(0);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+      topLi.appendChild(topA);
+      tocList.appendChild(topLi);
+      tocLinks.push({ el: topA, heading: pageH1 });
+    }
+
+    // Collect headings from all registered markdown sections in order
+    for (var s = 0; s < mdTocRegistry.length; s++) {
+      var contentEl = mdTocRegistry[s].contentEl;
+      var headings = contentEl.querySelectorAll(selector);
+
+      for (var i = 0; i < headings.length; i++) {
+        var h = headings[i];
+        var id = h.id || ('md-heading-' + headingCounter);
+        h.id = id;
+        headingCounter++;
+
+        var level = parseInt(h.tagName.charAt(1), 10);
+        var indent = level - minLevel;
+
+        var li = document.createElement('li');
+        li.style.paddingLeft = (indent * 0.75) + 'rem';
+        var a = document.createElement('a');
+        a.href = '#' + id;
+        a.textContent = h.textContent;
+        a.addEventListener('click', (function(targetId, idx) {
+          return function(e) {
+            e.preventDefault();
+            clickedIndex = idx;
+            setActive(idx);
+            var target = document.getElementById(targetId);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          };
+        })(id, tocLinks.length));
+        li.appendChild(a);
+        tocList.appendChild(li);
+        tocLinks.push({ el: a, heading: h });
+      }
+    }
+
+    tocNav.appendChild(tocList);
+    document.body.appendChild(tocNav);
+    document.body.classList.add('has-md-toc-' + tocSide);
+
+    // Scroll-based active highlight with click override
+    function setActive(idx) {
+      for (var j = 0; j < tocLinks.length; j++) {
+        tocLinks[j].el.classList.toggle('toc-active', j === idx);
+      }
+    }
+
+    if (typeof IntersectionObserver !== 'undefined' && tocLinks.length > 0) {
+      var obs = new IntersectionObserver(function(entries) {
+        if (clickedIndex >= 0) return; // click override active
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            for (var k = 0; k < tocLinks.length; k++) {
+              if (tocLinks[k].heading === entry.target) { setActive(k); break; }
+            }
+          }
+        });
+      }, { rootMargin: '-80px 0px -60% 0px' });
+      for (var j = 0; j < tocLinks.length; j++) obs.observe(tocLinks[j].heading);
+
+      // Clear click override after scroll settles
+      var clickClearTimer = null;
+      window.addEventListener('scroll', function() {
+        if (clickedIndex < 0) return;
+        clearTimeout(clickClearTimer);
+        clickClearTimer = setTimeout(function() { clickedIndex = -1; }, 300);
+      }, { passive: true });
+    }
+
+    setActive(0);
   }
 
   // ============================================================
@@ -2127,6 +2262,9 @@
     if (layoutMeta.spanFull) s.card.classList.add('span-full');
     container.appendChild(s.card);
   });
+
+  // Build markdown TOC after all sections are rendered
+  buildMarkdownToc();
 
   // ============================================================
   // TABLE OF CONTENTS (sidebar)

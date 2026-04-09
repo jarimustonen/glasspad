@@ -171,6 +171,13 @@ pub struct MarkdownConfig {
     /// Field name to pull markdown content from dataset rows.
     #[serde(default)]
     pub content_field: Option<String>,
+    /// Heading levels to show in the table of contents (e.g. [1, 2, 3]).
+    /// Omit or set to empty array to disable the TOC.
+    #[serde(default)]
+    pub toc_levels: Option<Vec<u8>>,
+    /// Which side to place the TOC sidebar: "left" (default) or "right".
+    #[serde(default)]
+    pub toc_side: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

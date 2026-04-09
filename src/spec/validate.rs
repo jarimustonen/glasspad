@@ -510,6 +510,8 @@ mod tests {
         spec.sections[0].markdown = Some(MarkdownConfig {
             content: None,
             content_field: None,
+            toc_levels: None,
+            toc_side: None,
         });
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.iter().any(|e| e.message.contains("requires either content or content_field")));
@@ -523,6 +525,8 @@ mod tests {
         spec.sections[0].markdown = Some(MarkdownConfig {
             content: Some("# Hello".to_string()),
             content_field: None,
+            toc_levels: None,
+            toc_side: None,
         });
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
@@ -538,6 +542,8 @@ mod tests {
         spec.sections[0].markdown = Some(MarkdownConfig {
             content: None,
             content_field: Some("body".to_string()),
+            toc_levels: None,
+            toc_side: None,
         });
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
