@@ -11,6 +11,7 @@ priority: normal
 # 09. Technical chart types
 
 _Source: pad content types_
+_Epic: **#12** Diagrams and charts_
 
 ## Description
 
