@@ -1,0 +1,19 @@
+---
+created: 2026-04-09
+type: improvement
+reporter: ai-review
+status: open
+priority: low
+---
+
+# 15. ChartConfig lacks deny_unknown_fields
+
+_Source: `src/spec/schema.rs` — `ChartConfig` struct_
+
+## Description
+
+`ChartConfig` does not have `#[serde(deny_unknown_fields)]`, unlike most other config structs in the schema. This means typos like `makr: bar` instead of `mark: bar` are silently ignored if `mark` is also present.
+
+## Found by
+
+Codex (gpt-5.4) during plan review, round 2.
