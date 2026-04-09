@@ -11,7 +11,7 @@ priority: normal
 # 05. Detail view update on filter change
 
 _Source: list section detail view_
-_Epic: **#01** Bidirectional actions_
+_Epic: **#07** Email support_
 
 ## Description
 

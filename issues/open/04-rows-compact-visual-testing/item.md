@@ -11,7 +11,7 @@ priority: normal
 # 04. Rows and compact layout visual testing
 
 _Source: list section rendering_
-_Epic: **#01** Bidirectional actions_
+_Epic: **#07** Email support_
 
 ## Description
 

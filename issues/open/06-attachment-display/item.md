@@ -11,7 +11,7 @@ priority: normal
 # 06. Attachment display component
 
 _Source: list section detail view_
-_Epic: **#01** Bidirectional actions_
+_Epic: **#07** Email support_
 
 ## Description
 
