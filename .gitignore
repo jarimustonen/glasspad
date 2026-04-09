@@ -5,6 +5,9 @@ dist/
 *.log
 .DS_Store
 
+# AI agent working directories
+history/
+.worktree/
 
 # Added by cargo
 

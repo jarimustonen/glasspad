@@ -4,15 +4,22 @@ AI-friendly scratchpad for rich data views. Lightweight web service that lets
 AI agents create and share visual content (dashboards, charts, interactive UIs)
 via a simple API.
 
-## Planning & History
+## Issues & Planning
 
-AI-generated planning documents go in `history/` at the repo root.
+Work is tracked as issues in `issues/` at the repo root. Use `/issue` to
+create new epics, tasks, and bugs.
 
-- `history/TODO.md` -- master-työsuunnitelma
-- `history/plan-<topic>.md` -- planning documents
-- `history/analysis-<topic>.md` -- research and analysis
-- `history/design-<topic>.md` -- design documents
-- `history/review-<topic>.md` -- review and audit documents
+- `issues/open/NN-slug/item.md` — active issues
+- `issues/closed/NN-slug/item.md` — completed issues
+- `issues/AGENTS.md` — templates and structure docs
+
+Planning docs (`plan.md`, `analysis.md`, `design.md`) belong under their
+parent issue directory, not as standalone files.
+
+### Gitignored directories
+
+- `history/` — legacy planning docs and agent scratchpad (not tracked)
+- `.worktree/` — agent worktree checkouts (not tracked)
 
 ## Debugging rendered output
 
