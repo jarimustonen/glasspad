@@ -2857,7 +2857,7 @@
     var labelTd = document.createElement('td');
     labelTd.className = 'pivot-row-header pivot-subtotal-label';
     labelTd.colSpan = numRowFields;
-    labelTd.textContent = groupLabel + ' Subtotal';
+    labelTd.textContent = formatCell(groupLabel) + ' Subtotal';
     tr.appendChild(labelTd);
 
     for (var c = 0; c < colKeys.length; c++) {
