@@ -342,7 +342,8 @@ fn parse_valid_pivot() {
 fn validate_valid_pivot() {
     let yaml = load_fixture("valid_pivot.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let provided = HashSet::from(["sales".to_string()]);
+    let errors = validate::validate(&spec, &provided);
     assert!(errors.is_empty(), "errors: {:?}", errors);
 }
 

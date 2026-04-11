@@ -60,6 +60,16 @@ pub fn validate(
         }
     }
 
+    // Check declared datasets have provided data
+    for name in spec.datasets.keys() {
+        if !provided_datasets.contains(name) {
+            errors.push(err(
+                None,
+                format!("dataset \"{}\" is declared but no data was provided", name),
+            ));
+        }
+    }
+
     // Duplicate section.id check
     let mut seen_ids: HashSet<String> = HashSet::new();
     for section in &spec.sections {
@@ -1269,6 +1279,7 @@ mod tests {
     #[test]
     fn pivot_valid() {
         let mut spec = minimal_spec();
+        let provided = HashSet::from(["sales".to_string()]);
         spec.datasets.insert("sales".to_string(), DatasetDecl {});
         spec.sections[0].section_type = SectionType::Pivot;
         spec.sections[0].stats = None;
@@ -1287,7 +1298,7 @@ mod tests {
             show_subtotals: false,
             sort: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
