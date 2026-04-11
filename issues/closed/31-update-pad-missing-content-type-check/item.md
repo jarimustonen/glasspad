@@ -3,8 +3,12 @@ created: 2026-04-11
 updated: 2026-04-11
 type: bug
 reporter: ai-review
-status: open
+assignee: jari
+status: closed
 priority: normal
+commits:
+  - hash: b9ff6a6
+    summary: "fix: validate Content-Type with proper MIME parsing on create and update"
 ---
 
 # 31. update_pad() missing Content-Type validation
