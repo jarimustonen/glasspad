@@ -4,8 +4,11 @@ updated: 2026-04-11
 type: bug
 reporter: llm-review
 assignee: jari
-status: open
+status: closed
 priority: normal
+commits:
+  - hash: 7e00cd7
+    summary: "fix: reject empty stats.items list in validation"
 ---
 
 # 34. `stats.items` can be empty
