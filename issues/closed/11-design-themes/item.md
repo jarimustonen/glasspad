@@ -1,10 +1,10 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-04-11
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: closed
 priority: normal
 ---
 

@@ -1,0 +1,179 @@
+spec_version: 1
+title: "Theme Showcase — Glasspad Design System"
+description: "Visual catalog of all Glasspad UI components. Use theme: light or theme: dark to switch."
+layout: grid-2col
+toc: true
+
+sections:
+  - title: "Key Metrics"
+    type: stats
+    inline_data:
+      - { country: "Finland", revenue: 42000, score: 92, date: "2026-01-15", status: "active" }
+      - { country: "Finland", revenue: 38000, score: 88, date: "2026-02-10", status: "active" }
+      - { country: "Sweden", revenue: 31000, score: 79, date: "2026-01-20", status: "active" }
+      - { country: "Sweden", revenue: 29000, score: 85, date: "2026-02-15", status: "paused" }
+      - { country: "Norway", revenue: 27000, score: 91, date: "2026-01-25", status: "active" }
+      - { country: "Norway", revenue: 33000, score: 87, date: "2026-02-20", status: "active" }
+      - { country: "Denmark", revenue: 19000, score: 76, date: "2026-01-30", status: "trial" }
+      - { country: "Denmark", revenue: 22000, score: 82, date: "2026-02-25", status: "active" }
+    stats:
+      items:
+        - { label: "Total Revenue", aggregate: sum, field: revenue }
+        - { label: "Records", aggregate: count }
+        - { label: "Avg Score", aggregate: avg, field: score }
+        - { label: "Countries", aggregate: distinct, field: country }
+
+  - id: revenue-by-country
+    title: "Revenue by Country"
+    type: chart
+    interactive_filter:
+      field: country
+    inline_data:
+      - { country: "Finland", revenue: 42000, score: 92, date: "2026-01-15" }
+      - { country: "Finland", revenue: 38000, score: 88, date: "2026-02-10" }
+      - { country: "Sweden", revenue: 31000, score: 79, date: "2026-01-20" }
+      - { country: "Sweden", revenue: 29000, score: 85, date: "2026-02-15" }
+      - { country: "Norway", revenue: 27000, score: 91, date: "2026-01-25" }
+      - { country: "Norway", revenue: 33000, score: 87, date: "2026-02-20" }
+      - { country: "Denmark", revenue: 19000, score: 76, date: "2026-01-30" }
+      - { country: "Denmark", revenue: 22000, score: 82, date: "2026-02-25" }
+    chart:
+      mark: bar
+      encoding:
+        x: { field: country, type: nominal }
+        y: { aggregate: sum, field: revenue, type: quantitative }
+        color: { field: country, type: nominal }
+
+  - title: "Score Trend"
+    type: chart
+    inline_data:
+      - { country: "Finland", score: 92, date: "2026-01-15" }
+      - { country: "Finland", score: 88, date: "2026-02-10" }
+      - { country: "Finland", score: 90, date: "2026-03-05" }
+      - { country: "Sweden", score: 79, date: "2026-01-20" }
+      - { country: "Sweden", score: 85, date: "2026-02-15" }
+      - { country: "Sweden", score: 83, date: "2026-03-10" }
+      - { country: "Norway", score: 91, date: "2026-01-25" }
+      - { country: "Norway", score: 87, date: "2026-02-20" }
+      - { country: "Norway", score: 89, date: "2026-03-15" }
+    chart:
+      mark: line
+      encoding:
+        x: { field: date, type: temporal }
+        y: { field: score, type: quantitative }
+        color: { field: country, type: nominal }
+
+  - title: "Revenue Distribution"
+    type: chart
+    inline_data:
+      - { country: "Finland", revenue: 80000 }
+      - { country: "Sweden", revenue: 60000 }
+      - { country: "Norway", revenue: 60000 }
+      - { country: "Denmark", revenue: 41000 }
+    chart:
+      mark: arc
+      encoding:
+        theta: { field: revenue, type: quantitative }
+        color: { field: country, type: nominal }
+
+  - title: "Data Table"
+    type: table
+    inline_data:
+      - { date: "2026-01-15", country: "Finland", revenue: 42000, score: 92, status: "active" }
+      - { date: "2026-01-20", country: "Sweden", revenue: 31000, score: 79, status: "active" }
+      - { date: "2026-01-25", country: "Norway", revenue: 27000, score: 91, status: "active" }
+      - { date: "2026-01-30", country: "Denmark", revenue: 19000, score: 76, status: "trial" }
+      - { date: "2026-02-10", country: "Finland", revenue: 38000, score: 88, status: "active" }
+      - { date: "2026-02-15", country: "Sweden", revenue: 29000, score: 85, status: "paused" }
+      - { date: "2026-02-20", country: "Norway", revenue: 33000, score: 87, status: "active" }
+      - { date: "2026-02-25", country: "Denmark", revenue: 22000, score: 82, status: "active" }
+    table:
+      columns:
+        - { field: date, title: "Date", sort: temporal }
+        - { field: country, title: "Country", sort: string }
+        - { field: revenue, title: "Revenue", sort: number }
+        - { field: score, title: "Score", sort: number }
+        - { field: status, title: "Status", sort: string }
+
+  - title: "Task Board"
+    type: list
+    inline_data:
+      - { id: 1, title: "Implement dark mode", assignee: "Jari", priority: "high", status: "done", created: "2026-03-01", description: "Add CSS custom properties for all colors and create light/dark theme variants. Ensure Vega-Lite charts adapt their axis colors." }
+      - { id: 2, title: "Add filter persistence", assignee: "Alex", priority: "medium", status: "in-progress", created: "2026-03-05", description: "Save active filter state to URL query params so dashboards can be shared with filters applied." }
+      - { id: 3, title: "Markdown TOC improvements", assignee: "Sam", priority: "low", status: "open", created: "2026-03-10", description: "Support configurable heading levels in the table of contents sidebar. Add smooth scroll animation." }
+      - { id: 4, title: "Export to PDF", assignee: "Jari", priority: "medium", status: "open", created: "2026-03-12", description: "Add a print-friendly stylesheet and server-side PDF generation endpoint." }
+      - { id: 5, title: "Real-time data refresh", assignee: "Alex", priority: "high", status: "open", created: "2026-03-15", description: "Implement WebSocket or polling-based data refresh so dashboards can show live-updating metrics." }
+    list:
+      id_field: id
+      layout: cards
+      title_field: title
+      subtitle_field: assignee
+      meta_field: priority
+      preview_field: description
+      detail:
+        fields:
+          - { field: assignee, title: "Assignee" }
+          - { field: priority, title: "Priority" }
+          - { field: status, title: "Status" }
+          - { field: created, title: "Created" }
+        body_field: description
+        body_format: text
+
+  - title: "Compact Issues"
+    type: list
+    inline_data:
+      - { id: 1, title: "Implement dark mode", status: "done" }
+      - { id: 2, title: "Add filter persistence", status: "in-progress" }
+      - { id: 3, title: "Markdown TOC improvements", status: "open" }
+      - { id: 4, title: "Export to PDF", status: "open" }
+      - { id: 5, title: "Real-time data refresh", status: "open" }
+    list:
+      id_field: id
+      layout: compact
+      title_field: title
+      meta_field: status
+
+  - title: "Release Notes"
+    type: markdown
+    markdown:
+      content: |
+        ## What's New in v2.4
+
+        This release introduces **theme support** and several improvements:
+
+        ### Dark Mode
+        Glasspad now ships with a polished dark theme inspired by [Linear](https://linear.app)'s precision aesthetic. All components render beautifully in both light and dark variants.
+
+        ### Highlights
+        - CSS custom properties (`--gp-*`) for all theme tokens
+        - Automatic `prefers-color-scheme` detection
+        - Explicit `theme: light | dark | auto` in dashboard specs
+        - Vega-Lite charts adapt axis/grid colors to the active theme
+
+        ### Code Example
+
+        ```yaml
+        spec_version: 1
+        title: "My Dashboard"
+        theme: dark
+        sections:
+          - title: "Revenue"
+            type: stats
+            stats:
+              items:
+                - { label: "Total", aggregate: sum, field: amount }
+        ```
+
+        ### Migration Guide
+
+        | Before | After |
+        |--------|-------|
+        | Hardcoded `#e5e7eb` borders | `var(--gp-border)` |
+        | Hardcoded `#1a1a2e` text | `var(--gp-text)` |
+        | Hardcoded `white` gradients | `var(--gp-surface)` |
+
+        > **Note:** All existing dashboards work unchanged. The default `auto` theme follows your system preference.
+
+        ---
+
+        *Built with precision. Designed for data.*

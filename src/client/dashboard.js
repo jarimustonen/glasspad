@@ -20,6 +20,57 @@
     return;
   }
 
+  // --- Theme helpers ---
+  // Read CSS custom property values for use in Vega-Lite config
+  function gpVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // Build a Vega-Lite config object matching the current theme
+  // Detect if the current theme is dark
+  function isDarkTheme() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  // Brighter palette for dark backgrounds (pastel-saturated)
+  var darkPalette = ['#60a5fa','#f472b6','#34d399','#fbbf24','#a78bfa','#fb923c','#2dd4bf','#f87171','#818cf8','#a3e635'];
+
+  function vegaThemeConfig() {
+    var text = gpVar('--gp-text') || '#1a1b25';
+    var muted = gpVar('--gp-text-muted') || '#6b7280';
+    var grid = gpVar('--gp-chart-grid') || '#e5e7eb';
+    var dark = isDarkTheme();
+    var cfg = {
+      background: 'transparent',
+      view: { stroke: null },
+      axis: {
+        labelColor: muted,
+        titleColor: muted,
+        tickColor: grid,
+        gridColor: grid,
+        domainColor: grid,
+        labelFont: '-apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif',
+        titleFont: '-apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif',
+        labelFontSize: 11,
+        titleFontSize: 12
+      },
+      legend: {
+        labelColor: muted,
+        titleColor: muted,
+        labelFont: '-apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif',
+        titleFont: '-apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif'
+      },
+      title: { color: text }
+    };
+    if (dark) {
+      cfg.range = { category: darkPalette };
+    }
+    return cfg;
+  }
+
   // Timezone-aware hour extraction (spec.timezone: "utc" | "local" | null)
   var useUtc = spec.timezone === 'utc';
   function getHourOfDate(d) {
@@ -470,7 +521,11 @@
       return { ok: true, data: datasets[section.source], source: section.source };
     }
     if (section.inline_data) {
-      var syntheticName = section.id || ('_inline_' + inlineDatasetCounter++);
+      // Stable synthetic name: reuse if already assigned to avoid counter drift
+      if (!section._syntheticSource) {
+        section._syntheticSource = section.id || ('_inline_' + inlineDatasetCounter++);
+      }
+      var syntheticName = section._syntheticSource;
       if (!(syntheticName in datasets)) datasets[syntheticName] = section.inline_data;
       return { ok: true, data: section.inline_data, source: syntheticName };
     }
@@ -610,6 +665,7 @@
   var CHART_COLLAPSED_HEIGHT = 350;
   var CHART_COLLAPSE_THRESHOLD = 10;
   var chartViews = Object.create(null);
+  var chartSpecs = Object.create(null); // { key: { div, vlSpec } } for re-embed on theme change
 
   function mountChart(s, section, index, layoutMeta) {
     var cfg = section.chart;
@@ -660,8 +716,10 @@
         if (!enc.axis) enc.axis = {};
         // Integer-only: hide labels AND ticks for fractional values
         enc.axis.labelExpr = "datum.value === floor(datum.value) ? format(datum.value, 'd') : ''";
-        enc.axis.tickColor = { expr: "datum.value === floor(datum.value) ? '#888' : 'transparent'" };
-        enc.axis.gridColor = { expr: "datum.value === floor(datum.value) ? '#ddd' : 'transparent'" };
+        var axisClr = gpVar('--gp-chart-axis') || '#888';
+        var gridClr = gpVar('--gp-chart-grid') || '#ddd';
+        enc.axis.tickColor = { expr: "datum.value === floor(datum.value) ? '" + axisClr + "' : 'transparent'" };
+        enc.axis.gridColor = { expr: "datum.value === floor(datum.value) ? '" + gridClr + "' : 'transparent'" };
       }
     });
 
@@ -1365,6 +1423,8 @@
     }
 
     // Wire up Vega embed
+    vlSpec.config = vegaThemeConfig();
+    chartSpecs[sectionKey] = { div: div, vlSpec: vlSpec };
     vegaEmbed(div, vlSpec, { actions: false, renderer: 'svg' })
       .then(function(result) {
         chartViews[sectionKey] = result.view;
@@ -1893,7 +1953,7 @@
         wrapper.style.position = 'relative';
         // Add gradient
         var grad = document.createElement('div');
-        grad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:60px;background:linear-gradient(transparent,white);pointer-events:none;';
+        grad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:60px;background:linear-gradient(transparent,var(--gp-surface));pointer-events:none;';
         wrapper.appendChild(grad);
 
         collapseCtrl = addCollapseToggle(s.actions, wrapper,
@@ -2421,5 +2481,18 @@
 
     setTocActive(0);
   }
+
+  // Expose theme-change hook: re-embed all charts with new config
+  window.__glasspadOnThemeChange = function() {
+    var newCfg = vegaThemeConfig();
+    for (var key in chartSpecs) {
+      try {
+        var entry = chartSpecs[key];
+        entry.vlSpec.config = newCfg;
+        vegaEmbed(entry.div, entry.vlSpec, { actions: false, renderer: 'svg' })
+          .then(function(k) { return function(result) { chartViews[k] = result.view; }; }(key));
+      } catch (e) { /* ignore */ }
+    }
+  };
 
 })();

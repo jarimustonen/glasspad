@@ -4,16 +4,23 @@ use crate::data::types::{CellValue, Dataset};
 use crate::models::Pad;
 use crate::security::json_embed::safe_json_script_tag;
 use crate::security::sanitize::sanitize_html;
-use crate::spec::schema::{BodyFormat, Layout, SectionType};
+use crate::spec::schema::{BodyFormat, Layout, SectionType, Theme};
 
 const CSS: &str = include_str!("client/dashboard.css");
 const CLIENT_JS: &str = include_str!("client/dashboard.js");
 const LOGO_SVG: &str = include_str!("client/logo.svg");
+const THEME_TOGGLE_JS: &str = include_str!("client/theme-toggle.js");
 
 /// Render a complete HTML page for a pad.
 /// Server generates only the shell — all section rendering happens client-side.
 pub fn render_dashboard(pad: &Pad) -> String {
     let spec = &pad.spec;
+
+    let theme_attr = match &spec.theme {
+        Some(Theme::Light) => "light",
+        Some(Theme::Dark) => "dark",
+        Some(Theme::Auto) | None => "auto",
+    };
 
     let layout_class = match spec.layout {
         Layout::Grid3col => "dashboard-grid grid-3",
@@ -46,7 +53,7 @@ pub fn render_dashboard(pad: &Pad) -> String {
 
     format!(
         r#"<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{theme}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -62,22 +69,28 @@ pub fn render_dashboard(pad: &Pad) -> String {
   <style>{css}</style>
 </head>
 <body>
-  <h1>{title}</h1>
+  <div class="page-header">
+    <h1>{title}</h1>
+    <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme"></button>
+  </div>
   {description}
   <div id="dashboard" class="{layout}"></div>
   {spec_tag}
   {data_tag}
   <script>{js}</script>
+  <script>{theme_toggle_js}</script>
 </body>
 </html>"#,
         title = html_escape(&spec.title),
         description = description_html,
         layout = layout_class,
+        theme = theme_attr,
         favicon = svg_favicon_data_uri(LOGO_SVG),
         spec_tag = spec_tag,
         data_tag = data_tag,
         css = CSS,
         js = CLIENT_JS,
+        theme_toggle_js = THEME_TOGGLE_JS,
     )
 }
 

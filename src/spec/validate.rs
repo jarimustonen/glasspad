@@ -382,6 +382,7 @@ mod tests {
             layout: Layout::default(),
             toc: false,
             timezone: None,
+            theme: None,
             datasets: BTreeMap::new(),
             sections: vec![Section {
                 id: None,

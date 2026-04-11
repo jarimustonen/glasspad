@@ -18,6 +18,8 @@ pub struct DashboardSpec {
     #[serde(default)]
     pub timezone: Option<Timezone>,
     #[serde(default)]
+    pub theme: Option<Theme>,
+    #[serde(default)]
     pub datasets: BTreeMap<String, DatasetDecl>,
     pub sections: Vec<Section>,
 }
@@ -29,6 +31,16 @@ pub struct DashboardSpec {
 pub enum Timezone {
     Utc,
     Local,
+}
+
+/// Visual theme for the dashboard.
+/// If omitted, defaults to auto (follows prefers-color-scheme).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    Light,
+    Dark,
+    Auto,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -554,5 +566,64 @@ sections:
         let cols = &spec.sections[0].table.as_ref().unwrap().columns;
         assert_eq!(cols[0].sort, Some(SortType::Temporal));
         assert_eq!(cols[1].sort, Some(SortType::Number));
+    }
+
+    #[test]
+    fn theme_dark() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+theme: dark
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.theme, Some(Theme::Dark));
+    }
+
+    #[test]
+    fn theme_light() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+theme: light
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.theme, Some(Theme::Light));
+    }
+
+    #[test]
+    fn theme_auto() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+theme: auto
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.theme, Some(Theme::Auto));
+    }
+
+    #[test]
+    fn theme_default_none() {
+        let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "A"
+    type: table
+    inline_data: [{ x: 1 }]
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.theme, None);
     }
 }
