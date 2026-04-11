@@ -2,7 +2,8 @@
 created: 2026-04-09
 type: improvement
 reporter: ai-review
-status: open
+status: closed
+closed: 2026-04-11
 priority: low
 ---
 

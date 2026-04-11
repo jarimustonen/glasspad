@@ -91,6 +91,7 @@ pub enum SectionType {
 
 /// Chart configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChartConfig {
     pub mark: String,
     #[serde(default)]
