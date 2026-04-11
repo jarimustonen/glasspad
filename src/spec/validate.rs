@@ -50,11 +50,8 @@ pub fn validate(
         errors.push(err(None, "sections list is empty"));
     }
 
-    // Collect declared dataset names
-    let declared: HashSet<String> = spec.datasets.keys().cloned().collect();
-
-    // Check that declared datasets are actually provided
-    for name in &declared {
+    // Check that declared datasets are actually provided (BTreeMap iteration = stable order)
+    for name in spec.datasets.keys() {
         if !provided_datasets.contains(name) {
             errors.push(err(
                 None,
@@ -91,7 +88,7 @@ pub fn validate(
 
         // source references existing dataset
         if let Some(ref source) = section.source {
-            if !declared.contains(source) {
+            if !spec.datasets.contains_key(source) {
                 errors.push(err(
                     Some(label),
                     format!("source \"{}\" not declared in datasets", source),
