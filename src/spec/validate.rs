@@ -431,6 +431,23 @@ fn validate_pivot(
         }
     }
 
+    // Empty field names
+    for field in &pivot.rows {
+        if field.is_empty() {
+            errors.push(err(Some(label), "pivot.rows contains empty field name"));
+        }
+    }
+    for field in &pivot.columns {
+        if field.is_empty() {
+            errors.push(err(Some(label), "pivot.columns contains empty field name"));
+        }
+    }
+    for value in &pivot.values {
+        if value.field.is_empty() {
+            errors.push(err(Some(label), "pivot.values contains empty field name"));
+        }
+    }
+
     // Duplicate fields in rows
     let mut seen_row_fields: HashSet<&str> = HashSet::new();
     for field in &pivot.rows {
