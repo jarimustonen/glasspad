@@ -55,6 +55,10 @@ A fictional mid-size company (e.g. "NorthWave Solutions Oy" — a Nordic tech/Sa
 
 JSON datasets suitable for Glasspad API consumption. Each component as a separate dataset that can be cross-referenced (shared keys like customer_id, product_id, employee_id).
 
+## Data Location
+
+`tests/datasets/northwave-solutions/`
+
 ## Acceptance Criteria
 
 - [ ] Internally consistent data (ledger balances, P&L ties to ledger, etc.)
