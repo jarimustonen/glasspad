@@ -2375,6 +2375,13 @@
     function rebuild() {
       var data = dr.source ? getFilteredData(dr.source) : dr.data || [];
       wrapper.innerHTML = '';
+      if (data.length === 0) {
+        var noData = document.createElement('p');
+        noData.className = 'section-error';
+        noData.textContent = 'No data';
+        wrapper.appendChild(noData);
+        return;
+      }
       var result = buildPivotData(data, cfg);
       var table = renderPivotTable(result, cfg);
       wrapper.appendChild(table);
