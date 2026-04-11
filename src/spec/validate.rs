@@ -123,8 +123,17 @@ pub fn validate(
             .as_deref()
             .unwrap_or(&default_label);
 
-        // source + inline_data together is valid: source is the shared identity for
-        // cross-filtering, inline_data is the content (injected by CLI --data)
+        // Data-driven sections require a data source
+        let requires_data = matches!(
+            section.section_type,
+            SectionType::Chart | SectionType::Table | SectionType::Stats | SectionType::List | SectionType::Pivot
+        );
+        if requires_data && section.source.is_none() && section.inline_data.is_none() {
+            errors.push(err(
+                Some(label),
+                format!("{} section requires source or inline_data", section.section_type.as_spec_str()),
+            ));
+        }
 
         // source references existing dataset
         if let Some(ref source) = section.source {
@@ -660,13 +669,6 @@ fn validate_pivot(
         }
     }
 
-    // pivot requires data source
-    if section.source.is_none() && section.inline_data.is_none() {
-        errors.push(err(
-            Some(label),
-            "pivot section requires source or inline_data",
-        ));
-    }
 }
 
 #[cfg(test)]
@@ -690,7 +692,7 @@ mod tests {
                 title: "S1".to_string(),
                 section_type: SectionType::Stats,
                 source: None,
-                inline_data: None,
+                inline_data: Some(vec![]),
                 chart: None,
                 table: None,
                 stats: Some(StatsConfig {
@@ -1087,6 +1089,7 @@ mod tests {
         let mut spec = minimal_spec();
         spec.sections[0].section_type = SectionType::Markdown;
         spec.sections[0].stats = None;
+        spec.sections[0].inline_data = None;
         spec.sections[0].markdown = Some(MarkdownConfig {
             content: None,
             content_field: Some("body".to_string()),
@@ -1666,7 +1669,7 @@ mod tests {
             title: "Items".to_string(),
             section_type: SectionType::Table,
             source: None,
-            inline_data: None,
+            inline_data: Some(vec![]),
             chart: None,
             table: Some(TableConfig {
                 columns: vec![ColumnDef {

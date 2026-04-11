@@ -240,6 +240,59 @@ sections:
     assert!(errors.iter().any(|e| e.message.contains("only supported on chart")));
 }
 
+// --- data source validation tests ---
+
+#[test]
+fn validate_chart_requires_data_source() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Chart"
+    type: chart
+    chart:
+      mark: bar
+      encoding: {}
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("chart section requires source or inline_data")));
+}
+
+#[test]
+fn validate_table_requires_data_source() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Table"
+    type: table
+    table:
+      columns:
+        - { field: name }
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("table section requires source or inline_data")));
+}
+
+#[test]
+fn validate_stats_requires_data_source() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Stats"
+    type: stats
+    stats:
+      items:
+        - { label: "Total", aggregate: count }
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("stats section requires source or inline_data")));
+}
+
 // --- section id validation tests ---
 
 #[test]
