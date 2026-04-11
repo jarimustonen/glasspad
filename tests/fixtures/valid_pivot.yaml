@@ -1,0 +1,28 @@
+spec_version: 1
+title: "Pivot Test"
+datasets:
+  sales: {}
+sections:
+  - title: "Revenue by Region"
+    type: pivot
+    source: sales
+    pivot:
+      rows:
+        - region
+        - product
+      columns:
+        - quarter
+      values:
+        - field: revenue
+          aggregate: sum
+          label: "Revenue"
+          format: currency
+          currency: USD
+        - aggregate: count
+          label: "Orders"
+      show_totals: true
+      show_subtotals: true
+      sort:
+        by: value
+        direction: desc
+        value_index: 0

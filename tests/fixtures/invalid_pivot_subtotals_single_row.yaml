@@ -1,0 +1,14 @@
+spec_version: 1
+title: "Bad Pivot"
+sections:
+  - title: "Subtotals"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - a
+      values:
+        - field: a
+          aggregate: sum
+      show_subtotals: true

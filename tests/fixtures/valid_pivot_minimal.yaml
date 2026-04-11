@@ -1,0 +1,19 @@
+spec_version: 1
+title: "Simple Pivot"
+sections:
+  - title: "Totals"
+    type: pivot
+    inline_data:
+      - { category: "A", amount: 10 }
+      - { category: "A", amount: 20 }
+      - { category: "B", amount: 30 }
+    pivot:
+      rows:
+        - category
+      values:
+        - field: amount
+          aggregate: sum
+        - field: amount
+          aggregate: avg
+        - aggregate: count
+          label: "Rows"

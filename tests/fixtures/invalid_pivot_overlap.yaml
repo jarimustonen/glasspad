@@ -1,0 +1,15 @@
+spec_version: 1
+title: "Bad Pivot"
+sections:
+  - title: "Overlap"
+    type: pivot
+    inline_data:
+      - { a: 1, b: 2 }
+    pivot:
+      rows:
+        - a
+      columns:
+        - a
+      values:
+        - field: b
+          aggregate: sum

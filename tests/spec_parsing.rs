@@ -312,3 +312,230 @@ datasets:
     let md = spec.sections[0].markdown.as_ref().unwrap();
     assert_eq!(md.max_rows, Some(50));
 }
+
+// --- pivot section tests ---
+
+#[test]
+fn parse_valid_pivot() {
+    let yaml = load_fixture("valid_pivot.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(spec.sections[0].section_type, glasspad::spec::schema::SectionType::Pivot);
+    let pivot = spec.sections[0].pivot.as_ref().unwrap();
+    assert_eq!(pivot.rows, vec!["region", "product"]);
+    assert_eq!(pivot.columns, vec!["quarter"]);
+    assert_eq!(pivot.values.len(), 2);
+    assert_eq!(pivot.values[0].field.as_deref(), Some("revenue"));
+    assert_eq!(pivot.values[0].aggregate, "sum");
+    assert_eq!(pivot.values[0].format.as_deref(), Some("currency"));
+    assert_eq!(pivot.values[0].currency.as_deref(), Some("USD"));
+    assert!(pivot.values[1].field.is_none()); // count without field
+    assert_eq!(pivot.values[1].aggregate, "count");
+    assert!(pivot.show_totals);
+    assert!(pivot.show_subtotals);
+    let sort = pivot.sort.as_ref().unwrap();
+    assert_eq!(sort.by, Some(glasspad::spec::schema::PivotSortBy::Value));
+    assert_eq!(sort.direction, Some(glasspad::spec::schema::PivotSortDirection::Desc));
+    assert_eq!(sort.value_index, Some(0));
+}
+
+#[test]
+fn validate_valid_pivot() {
+    let yaml = load_fixture("valid_pivot.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn parse_valid_pivot_minimal() {
+    let yaml = load_fixture("valid_pivot_minimal.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let pivot = spec.sections[0].pivot.as_ref().unwrap();
+    assert_eq!(pivot.values.len(), 3);
+    assert_eq!(pivot.values[2].aggregate, "count");
+    assert!(pivot.values[2].field.is_none());
+    assert!(!pivot.show_totals);
+    assert!(!pivot.show_subtotals);
+}
+
+#[test]
+fn validate_valid_pivot_minimal() {
+    let yaml = load_fixture("valid_pivot_minimal.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn validate_pivot_field_overlap_rejected() {
+    let yaml = load_fixture("invalid_pivot_overlap.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("appears in both pivot.rows and pivot.columns")));
+}
+
+#[test]
+fn validate_pivot_subtotals_single_row_rejected() {
+    let yaml = load_fixture("invalid_pivot_subtotals_single_row.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("show_subtotals requires at least 2 row fields")));
+}
+
+#[test]
+fn validate_pivot_non_count_requires_field() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Bad"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - a
+      values:
+        - aggregate: sum
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("requires field")));
+}
+
+#[test]
+fn validate_pivot_count_without_field_valid() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "OK"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - a
+      values:
+        - aggregate: count
+          label: "Rows"
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn validate_pivot_whitespace_field_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Bad"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - "   "
+      values:
+        - field: a
+          aggregate: sum
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("empty field name")));
+}
+
+#[test]
+fn validate_pivot_invalid_currency_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Bad"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - a
+      values:
+        - field: a
+          aggregate: sum
+          format: currency
+          currency: ""
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("valid 3-letter currency code")));
+}
+
+#[test]
+fn validate_pivot_value_index_out_of_range() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Bad"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - a
+      values:
+        - field: a
+          aggregate: sum
+      sort:
+        by: value
+        value_index: 5
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("out of range")));
+}
+
+#[test]
+fn validate_pivot_duplicate_rows_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Bad"
+    type: pivot
+    inline_data:
+      - { a: 1 }
+    pivot:
+      rows:
+        - a
+        - a
+      values:
+        - field: a
+          aggregate: sum
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("duplicate field")));
+}
+
+#[test]
+fn pivot_sort_json_serialization() {
+    // Verify that Rust enums serialize to lowercase strings matching JS expectations
+    let yaml = load_fixture("valid_pivot.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let json = serde_json::to_value(&spec).unwrap();
+    let pivot = &json["sections"][0]["pivot"];
+    assert_eq!(pivot["sort"]["by"], "value");
+    assert_eq!(pivot["sort"]["direction"], "desc");
+    assert_eq!(pivot["sort"]["value_index"], 0);
+}
+
+#[test]
+fn pivot_type_json_serialization() {
+    // Verify section type serializes as lowercase "pivot" for JS switch
+    let yaml = load_fixture("valid_pivot.yaml");
+    let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
+    let json = serde_json::to_value(&spec).unwrap();
+    assert_eq!(json["sections"][0]["type"], "pivot");
+}
