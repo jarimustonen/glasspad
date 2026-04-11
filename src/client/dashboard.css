@@ -31,9 +31,10 @@
   --gp-chart-axis: #888;
   --gp-chart-grid: #e5e7eb;
   --gp-chart-bg: transparent;
+  --gp-chart-cat: #4c78a8,#f58518,#e45756,#72b7b2,#54a24b,#eeca3b,#b279a2,#ff9da6,#9d755d,#bab0ac;
 }
 
-/* Dark theme */
+/* Dark theme tokens (explicit dark) */
 [data-theme="dark"] {
   --gp-bg: #0f1117;
   --gp-surface: #1a1b26;
@@ -64,40 +65,39 @@
   --gp-chart-axis: #6b7280;
   --gp-chart-grid: rgba(255, 255, 255, 0.06);
   --gp-chart-bg: #1a1b26;
+  --gp-chart-cat: #60a5fa,#f472b6,#34d399,#fbbf24,#a78bfa,#fb923c,#2dd4bf,#f87171,#818cf8,#a3e635;
 }
 
-/* Auto theme: follow system preference */
+/* Auto theme: same dark tokens when system prefers dark.
+   CSS cannot combine @media with non-media selectors,
+   so this block must mirror [data-theme="dark"] above. */
 @media (prefers-color-scheme: dark) {
   [data-theme="auto"] {
     --gp-bg: #0f1117;
     --gp-surface: #1a1b26;
     --gp-surface-alt: #242530;
     --gp-surface-hover: #2a2b38;
-
     --gp-text: #e5e7eb;
     --gp-text-secondary: #9ca3af;
     --gp-text-muted: #6b7280;
     --gp-text-faint: #4b5563;
-
     --gp-accent: #6366f1;
     --gp-accent-hover: #818cf8;
     --gp-accent-soft: rgba(99, 102, 241, 0.1);
     --gp-accent-border: rgba(99, 102, 241, 0.25);
     --gp-accent-tag: rgba(99, 102, 241, 0.2);
     --gp-accent-text: #a5b4fc;
-
     --gp-border: rgba(255, 255, 255, 0.08);
     --gp-border-subtle: rgba(255, 255, 255, 0.04);
     --gp-border-strong: rgba(255, 255, 255, 0.12);
-
     --gp-error: #ef4444;
     --gp-focus: #6366f1;
     --gp-shadow: 0 1px 3px rgba(0,0,0,0.3);
-
     --gp-code-text: #f472b6;
     --gp-chart-axis: #6b7280;
     --gp-chart-grid: rgba(255, 255, 255, 0.06);
     --gp-chart-bg: #1a1b26;
+    --gp-chart-cat: #60a5fa,#f472b6,#34d399,#fbbf24,#a78bfa,#fb923c,#2dd4bf,#f87171,#818cf8,#a3e635;
   }
 }
 
@@ -250,7 +250,7 @@ tbody tr:hover { background: var(--gp-surface-hover); }
 .filter-edit-apply {
   background: var(--gp-accent); border: none; border-radius: 6px;
   padding: 0.25rem 0.7rem; font-size: 0.8rem; cursor: pointer;
-  color: #fff; font-weight: 600;
+  color: #fff; font-weight: 600; /* always white on accent bg */
 }
 .filter-edit-apply:hover { background: var(--gp-accent-hover); }
 .filter-edit-btn:focus-visible,
@@ -282,7 +282,7 @@ tbody tr:hover { background: var(--gp-surface-hover); }
   position: absolute; top: 50%; width: 18px; height: 18px;
   background: var(--gp-surface); border: 2px solid var(--gp-accent); border-radius: 50%;
   transform: translate(-50%, -50%); cursor: grab;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15); z-index: 2;
+  box-shadow: var(--gp-shadow); z-index: 2;
   touch-action: none;
 }
 .hour-range-handle:hover { background: var(--gp-accent-soft); }
@@ -320,9 +320,9 @@ tbody tr:hover { background: var(--gp-surface-hover); }
 }
 .filter-bar-reset:hover { color: var(--gp-text); }
 @keyframes filter-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
-  70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+  0% { box-shadow: 0 0 0 0 var(--gp-accent-border); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 .filter-bar-pulse { animation: filter-pulse 0.5s ease-out; }
 
@@ -357,7 +357,6 @@ tbody tr:hover { background: var(--gp-surface-hover); }
   background: var(--gp-accent-soft); font-weight: 500;
 }
 body.has-toc > .page-header,
-body.has-toc > h1,
 body.has-toc > .description,
 body.has-toc > .filter-bar,
 body.has-toc > .dashboard-grid,
@@ -549,7 +548,6 @@ body.has-toc > div[id="dashboard"] {
   right: 0; border-left: 1px solid var(--gp-border);
 }
 body.has-md-toc-left > .page-header,
-body.has-md-toc-left > h1,
 body.has-md-toc-left > .description,
 body.has-md-toc-left > .filter-bar,
 body.has-md-toc-left > .dashboard-grid,
@@ -558,7 +556,6 @@ body.has-md-toc-left > div[id="dashboard"] {
   margin-left: 240px;
 }
 body.has-md-toc-right > .page-header,
-body.has-md-toc-right > h1,
 body.has-md-toc-right > .description,
 body.has-md-toc-right > .filter-bar,
 body.has-md-toc-right > .dashboard-grid,
@@ -609,7 +606,7 @@ body.has-md-toc-right > div[id="dashboard"] {
   body { padding: 1rem; }
   .toc-sidebar { display: none; }
   .markdown-toc-sidebar { display: none; }
-  body.has-md-toc-left > h1,
+  body.has-md-toc-left > .page-header,
   body.has-md-toc-left > .description,
   body.has-md-toc-left > .filter-bar,
   body.has-md-toc-left > .dashboard-grid,
@@ -617,7 +614,7 @@ body.has-md-toc-right > div[id="dashboard"] {
   body.has-md-toc-left > div[id="dashboard"] {
     margin-left: 0;
   }
-  body.has-md-toc-right > h1,
+  body.has-md-toc-right > .page-header,
   body.has-md-toc-right > .description,
   body.has-md-toc-right > .filter-bar,
   body.has-md-toc-right > .dashboard-grid,
@@ -625,7 +622,7 @@ body.has-md-toc-right > div[id="dashboard"] {
   body.has-md-toc-right > div[id="dashboard"] {
     margin-right: 0;
   }
-  body.has-toc > h1,
+  body.has-toc > .page-header,
   body.has-toc > .description,
   body.has-toc > .filter-bar,
   body.has-toc > .dashboard-grid,
@@ -637,13 +634,13 @@ body.has-md-toc-right > div[id="dashboard"] {
 
 @media print {
   .toc-sidebar, .markdown-toc-sidebar { display: none; }
-  body.has-toc > h1, body.has-toc > .description, body.has-toc > .filter-bar,
+  body.has-toc > .page-header, body.has-toc > .description, body.has-toc > .filter-bar,
   body.has-toc > .dashboard-grid, body.has-toc > .dashboard-stack,
   body.has-toc > div[id="dashboard"] { margin-left: 0; }
-  body.has-md-toc-left > h1, body.has-md-toc-left > .description,
+  body.has-md-toc-left > .page-header, body.has-md-toc-left > .description,
   body.has-md-toc-left > .filter-bar, body.has-md-toc-left > .dashboard-grid,
   body.has-md-toc-left > .dashboard-stack, body.has-md-toc-left > div[id="dashboard"] { margin-left: 0; }
-  body.has-md-toc-right > h1, body.has-md-toc-right > .description,
+  body.has-md-toc-right > .page-header, body.has-md-toc-right > .description,
   body.has-md-toc-right > .filter-bar, body.has-md-toc-right > .dashboard-grid,
   body.has-md-toc-right > .dashboard-stack, body.has-md-toc-right > div[id="dashboard"] { margin-right: 0; }
 }

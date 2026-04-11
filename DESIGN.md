@@ -17,7 +17,7 @@ The color system is deliberately restrained: a single accent color (blue/indigo)
 - Whisper-weight borders: `1px solid` at low opacity for structure without noise
 - Content-first: dashboard sections are the hero — chrome is invisible
 - Data-dense layouts with generous internal padding on cards
-- Smooth theme transitions via `prefers-color-scheme` or explicit selection
+- Theme switching via `prefers-color-scheme` or explicit toggle with localStorage persistence
 
 ## 2. Color Palette & Roles
 

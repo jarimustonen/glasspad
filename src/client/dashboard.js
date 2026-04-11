@@ -27,22 +27,12 @@
   }
 
   // Build a Vega-Lite config object matching the current theme
-  // Detect if the current theme is dark
-  function isDarkTheme() {
-    var t = document.documentElement.getAttribute('data-theme');
-    if (t === 'dark') return true;
-    if (t === 'light') return false;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-  }
-
-  // Brighter palette for dark backgrounds (pastel-saturated)
-  var darkPalette = ['#60a5fa','#f472b6','#34d399','#fbbf24','#a78bfa','#fb923c','#2dd4bf','#f87171','#818cf8','#a3e635'];
-
   function vegaThemeConfig() {
     var text = gpVar('--gp-text') || '#1a1b25';
     var muted = gpVar('--gp-text-muted') || '#6b7280';
     var grid = gpVar('--gp-chart-grid') || '#e5e7eb';
-    var dark = isDarkTheme();
+    var catStr = gpVar('--gp-chart-cat') || '';
+    var palette = catStr ? catStr.split(',').map(function(c) { return c.trim(); }) : null;
     var cfg = {
       background: 'transparent',
       view: { stroke: null },
@@ -65,8 +55,8 @@
       },
       title: { color: text }
     };
-    if (dark) {
-      cfg.range = { category: darkPalette };
+    if (palette && palette.length > 0) {
+      cfg.range = { category: palette };
     }
     return cfg;
   }
@@ -523,7 +513,7 @@
     if (section.inline_data) {
       // Stable synthetic name: reuse if already assigned to avoid counter drift
       if (!section._syntheticSource) {
-        section._syntheticSource = section.id || ('_inline_' + inlineDatasetCounter++);
+        section._syntheticSource = '__inline__' + (section.id || inlineDatasetCounter++);
       }
       var syntheticName = section._syntheticSource;
       if (!(syntheticName in datasets)) datasets[syntheticName] = section.inline_data;
