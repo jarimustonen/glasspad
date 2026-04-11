@@ -240,6 +240,96 @@ sections:
     assert!(errors.iter().any(|e| e.message.contains("only supported on chart")));
 }
 
+// --- section id validation tests ---
+
+#[test]
+fn validate_section_id_empty_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: ""
+    title: "Chart"
+    type: chart
+    inline_data:
+      - { x: 1 }
+    chart:
+      mark: bar
+      encoding: {}
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("must not be empty or whitespace")));
+}
+
+#[test]
+fn validate_section_id_whitespace_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: "   "
+    title: "Chart"
+    type: chart
+    inline_data:
+      - { x: 1 }
+    chart:
+      mark: bar
+      encoding: {}
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("must not be empty or whitespace")));
+}
+
+#[test]
+fn validate_section_id_invalid_chars_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: "my section!"
+    title: "Chart"
+    type: chart
+    inline_data:
+      - { x: 1 }
+    chart:
+      mark: bar
+      encoding: {}
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("contains invalid characters")));
+}
+
+#[test]
+fn validate_section_id_duplicate_detected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: "foo"
+    title: "First"
+    type: chart
+    inline_data:
+      - { x: 1 }
+    chart:
+      mark: bar
+      encoding: {}
+  - id: "foo"
+    title: "Second"
+    type: chart
+    inline_data:
+      - { x: 1 }
+    chart:
+      mark: bar
+      encoding: {}
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("duplicate section id")));
+}
+
 #[test]
 fn validate_interactive_filter_with_missing_encoding_rejected() {
     let yaml = r#"

@@ -89,14 +89,25 @@ pub fn validate(
         }
     }
 
-    // Duplicate section.id check
+    // Section ID validation and duplicate check
     let mut seen_ids: HashSet<String> = HashSet::new();
     for section in &spec.sections {
         if let Some(ref id) = section.id {
-            if !seen_ids.insert(id.clone()) {
+            let trimmed = id.trim();
+            if trimmed.is_empty() {
                 errors.push(err(
                     Some(id),
-                    format!("duplicate section id \"{}\"", id),
+                    "section id must not be empty or whitespace",
+                ));
+            } else if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                errors.push(err(
+                    Some(id),
+                    format!("section id \"{}\" contains invalid characters (allowed: alphanumeric, dash, underscore)", id),
+                ));
+            } else if !seen_ids.insert(trimmed.to_string()) {
+                errors.push(err(
+                    Some(id),
+                    format!("duplicate section id \"{}\"", trimmed),
                 ));
             }
         }
