@@ -2530,7 +2530,7 @@
       if (v !== null && v !== undefined) {
         st.valueCount++;
         st.distinct[distinctKey(v)] = true;
-        var n = typeof v === 'number' ? v : Number(v);
+        var n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() === '' ? NaN : Number(v));
         if (isFinite(n)) {
           st.numericCount++;
           st.sum += n;

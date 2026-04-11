@@ -258,7 +258,7 @@ pub struct PivotValue {
     pub aggregate: String,
     #[serde(default)]
     pub label: Option<String>,
-    /// Value format: "currency", "number", "percent". Default: plain number.
+    /// Value format: "currency", "percent". Default: plain number.
     #[serde(default)]
     pub format: Option<String>,
     /// ISO 4217 currency code (e.g. "USD", "EUR"). Required when format is "currency".
