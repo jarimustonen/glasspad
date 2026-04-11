@@ -60,16 +60,6 @@ pub fn validate(
         }
     }
 
-    // Check declared datasets have provided data
-    for name in spec.datasets.keys() {
-        if !provided_datasets.contains(name) {
-            errors.push(err(
-                None,
-                format!("dataset \"{}\" is declared but no data was provided", name),
-            ));
-        }
-    }
-
     // Duplicate section.id check
     let mut seen_ids: HashSet<String> = HashSet::new();
     for section in &spec.sections {
