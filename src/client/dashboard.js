@@ -2465,7 +2465,7 @@
   function initAggStates(values) {
     var states = [];
     for (var i = 0; i < values.length; i++) {
-      states.push({ sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) });
+      states.push({ sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) });
     }
     return states;
   }
@@ -2474,24 +2474,26 @@
     for (var i = 0; i < values.length; i++) {
       var v = row[values[i].field];
       var st = states[i];
-      st.count++;
+      st.rowCount++;
       if (v !== null && v !== undefined) {
+        st.valueCount++;
+        st.distinct[distinctKey(v)] = true;
         var n = typeof v === 'number' ? v : parseFloat(v);
         if (isFinite(n)) {
+          st.numericCount++;
           st.sum += n;
           if (n < st.min) st.min = n;
           if (n > st.max) st.max = n;
         }
-        st.distinct[distinctKey(v)] = true;
       }
     }
   }
 
   function resolveAgg(state, aggregate) {
     switch (aggregate) {
-      case 'sum': return state.count > 0 ? state.sum : null;
-      case 'count': return state.count;
-      case 'avg': return state.count > 0 ? state.sum / state.count : null;
+      case 'sum': return state.numericCount > 0 ? state.sum : null;
+      case 'count': return state.valueCount;
+      case 'avg': return state.numericCount > 0 ? state.sum / state.numericCount : null;
       case 'min': return state.min === Infinity ? null : state.min;
       case 'max': return state.max === -Infinity ? null : state.max;
       case 'distinct': return Object.keys(state.distinct).length;
@@ -2501,14 +2503,16 @@
 
   function mergeAggStates(target, source) {
     target.sum += source.sum;
-    target.count += source.count;
+    target.rowCount += source.rowCount;
+    target.valueCount += source.valueCount;
+    target.numericCount += source.numericCount;
     if (source.min < target.min) target.min = source.min;
     if (source.max > target.max) target.max = source.max;
     for (var k in source.distinct) target.distinct[k] = true;
   }
 
   function getRowTotal(rk, colKeys, cells, values, vi) {
-    var total = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+    var total = { sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
     for (var c = 0; c < colKeys.length; c++) {
       var cellKey = rk + '||' + colKeys[c];
       if (cellKey in cells) mergeAggStates(total, cells[cellKey][vi]);
@@ -2682,7 +2686,7 @@
         for (var gv = 0; gv < numValues; gv++) {
           var gtTd = document.createElement('td');
           gtTd.className = 'pivot-cell pivot-grand-total-cell';
-          var colTotal = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+          var colTotal = { sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
           for (var gr = 0; gr < result.sortedRowKeys.length; gr++) {
             var gCellKey = result.sortedRowKeys[gr] + '||' + colKeys[gc];
             if (gCellKey in result.cells) mergeAggStates(colTotal, result.cells[gCellKey][gv]);
@@ -2698,7 +2702,7 @@
         for (var gvt = 0; gvt < numValues; gvt++) {
           var cornerTd = document.createElement('td');
           cornerTd.className = 'pivot-cell pivot-grand-total-cell';
-          var grandTotal = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+          var grandTotal = { sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
           for (var allR = 0; allR < result.sortedRowKeys.length; allR++) {
             for (var allC = 0; allC < colKeys.length; allC++) {
               var allKey = result.sortedRowKeys[allR] + '||' + colKeys[allC];
@@ -2762,12 +2766,12 @@
     var acc = Object.create(null);
     for (var c = 0; c < colKeys.length; c++) {
       for (var v = 0; v < values.length; v++) {
-        acc[colKeys[c] + '||' + v] = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+        acc[colKeys[c] + '||' + v] = { sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
       }
     }
     if (showTotals) {
       for (var vt = 0; vt < values.length; vt++) {
-        acc['__total__||' + vt] = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+        acc['__total__||' + vt] = { sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
       }
     }
     return acc;
