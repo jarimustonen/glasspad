@@ -184,6 +184,43 @@ sections:
 }
 
 #[test]
+fn validate_null_encoding_rejected_without_filter() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: c1
+    title: "Chart"
+    type: chart
+    chart:
+      mark: bar
+      encoding: null
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+        "null encoding should be rejected even without interactive_filter, got: {:?}", errors);
+}
+
+#[test]
+fn validate_missing_encoding_rejected_without_filter() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: c1
+    title: "Chart"
+    type: chart
+    chart:
+      mark: bar
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+        "missing encoding should be rejected even without interactive_filter, got: {:?}", errors);
+}
+
+#[test]
 fn validate_interactive_filter_on_non_chart_rejected() {
     let yaml = r#"
 spec_version: 1

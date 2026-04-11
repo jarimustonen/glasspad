@@ -4,8 +4,13 @@ updated: 2026-04-11
 type: bug
 reporter: llm-review
 assignee: jari
-status: open
+status: closed
 priority: normal
+commits:
+  - hash: e836e51
+    summary: "fix: reject null/missing chart.encoding instead of silently skipping"
+  - hash: 95a246e
+    summary: "fix: add tests proving null/missing encoding rejection is intentional"
 ---
 
 # 31. `interactive_filter` validation silently passes when `encoding` is null
