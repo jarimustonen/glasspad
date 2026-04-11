@@ -2621,6 +2621,7 @@
         var colTh = document.createElement('th');
         colTh.className = 'pivot-col-header';
         colTh.colSpan = numValues;
+        colTh.scope = numValues > 1 ? 'colgroup' : 'col';
         colTh.textContent = formatPivotLabel(result.colKeys[colKeys[ci]]);
         headerRow1.appendChild(colTh);
       }
@@ -2628,6 +2629,7 @@
         var totalColTh = document.createElement('th');
         totalColTh.className = 'pivot-col-header pivot-total-header';
         totalColTh.colSpan = numValues;
+        totalColTh.scope = numValues > 1 ? 'colgroup' : 'col';
         totalColTh.textContent = 'Total';
         headerRow1.appendChild(totalColTh);
       }
@@ -2697,11 +2699,12 @@
       var tr = document.createElement('tr');
       // Row header cells
       for (var rf = 0; rf < rowFields.length; rf++) {
-        var td = document.createElement('td');
-        td.className = 'pivot-row-header';
-        if (rf > 0) td.className += ' pivot-row-indent';
-        td.textContent = formatCell(rowVals[rf]);
-        tr.appendChild(td);
+        var th = document.createElement('th');
+        th.className = 'pivot-row-header';
+        th.scope = 'row';
+        if (rf > 0) th.className += ' pivot-row-indent';
+        th.textContent = formatCell(rowVals[rf]);
+        tr.appendChild(th);
       }
 
       // Data cells
@@ -2744,8 +2747,9 @@
     if (showTotals) {
       var grandTr = document.createElement('tr');
       grandTr.className = 'pivot-grand-total-row';
-      var grandLabelTd = document.createElement('td');
+      var grandLabelTd = document.createElement('th');
       grandLabelTd.className = 'pivot-row-header pivot-grand-total-label';
+      grandLabelTd.scope = 'row';
       grandLabelTd.colSpan = rowFields.length;
       grandLabelTd.textContent = 'Grand Total';
       grandTr.appendChild(grandLabelTd);
@@ -2861,8 +2865,9 @@
   function buildSubtotalRow(groupLabel, acc, colKeys, values, numValues, numRowFields, showTotals, hasColDimension) {
     var tr = document.createElement('tr');
     tr.className = 'pivot-subtotal-row';
-    var labelTd = document.createElement('td');
+    var labelTd = document.createElement('th');
     labelTd.className = 'pivot-row-header pivot-subtotal-label';
+    labelTd.scope = 'row';
     labelTd.colSpan = numRowFields;
     labelTd.textContent = formatCell(groupLabel) + ' Subtotal';
     tr.appendChild(labelTd);
