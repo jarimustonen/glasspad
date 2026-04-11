@@ -2478,14 +2478,9 @@
     if (a === b) return 0;
     if (a == null) return -1;
     if (b == null) return 1;
-    // Numeric comparison if both are numbers
     if (typeof a === 'number' && typeof b === 'number') return a - b;
-    // Try numeric parse for string values
-    var na = Number(a), nb = Number(b);
-    if (isFinite(na) && isFinite(nb)) return na - nb;
-    // String comparison fallback
-    var sa = String(a), sb = String(b);
-    return sa < sb ? -1 : sa > sb ? 1 : 0;
+    // String comparison with natural numeric ordering (2 before 10)
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
   }
 
   function makeGroupKey(row, fields) {
