@@ -431,6 +431,21 @@ fn validate_pivot(
         }
     }
 
+    // sort.value_index must be within bounds
+    if let Some(ref sort) = pivot.sort {
+        if let Some(value_index) = sort.value_index {
+            if value_index >= pivot.values.len() {
+                errors.push(err(
+                    Some(label),
+                    format!(
+                        "pivot.sort.value_index {} out of range for {} values",
+                        value_index, pivot.values.len()
+                    ),
+                ));
+            }
+        }
+    }
+
     // pivot requires data source
     if section.source.is_none() && section.inline_data.is_none() {
         errors.push(err(

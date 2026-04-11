@@ -2417,7 +2417,7 @@
     var needsGroupedSort = cfg.show_subtotals && rows.length > 1;
 
     if (sortCfg && sortCfg.by === 'value') {
-      var vi = sortCfg.value_index || 0;
+      var vi = Math.min(sortCfg.value_index || 0, values.length - 1);
       var desc = sortCfg.direction === 'desc';
       var valueSorter = function(a, b) {
         var va = getRowTotal(a, sortedColKeys, cells, values, vi);
