@@ -27,6 +27,7 @@ fn err(section: Option<&str>, msg: impl Into<String>) -> SpecError {
 const SUPPORTED_SPEC_VERSIONS: &[u32] = &[1];
 const SUPPORTED_MARKS: &[&str] = &["bar", "line", "arc"];
 const SUPPORTED_AGGREGATES: &[&str] = &["count", "distinct", "sum", "avg", "min", "max"];
+const SUPPORTED_PIVOT_AGGREGATES: &[&str] = &["sum", "count", "avg", "min", "max", "distinct"];
 
 /// Validate a parsed DashboardSpec.
 ///
@@ -103,6 +104,7 @@ pub fn validate(
             SectionType::Stats => validate_stats(section, label, &mut errors),
             SectionType::List => validate_list(section, label, &mut errors),
             SectionType::Markdown => validate_markdown(section, label, &mut errors),
+            SectionType::Pivot => validate_pivot(section, label, &mut errors),
         }
 
         // Reject config blocks that don't match the section type
@@ -368,6 +370,76 @@ fn validate_markdown(
     }
 }
 
+fn validate_pivot(
+    section: &super::schema::Section,
+    label: &str,
+    errors: &mut Vec<SpecError>,
+) {
+    let pivot = match &section.pivot {
+        Some(p) => p,
+        None => {
+            errors.push(err(Some(label), "pivot section requires pivot config"));
+            return;
+        }
+    };
+
+    // rows must be non-empty
+    if pivot.rows.is_empty() {
+        errors.push(err(Some(label), "pivot.rows must not be empty"));
+    }
+
+    // values must be non-empty
+    if pivot.values.is_empty() {
+        errors.push(err(Some(label), "pivot.values must not be empty"));
+    }
+
+    let supported_formats = ["currency", "number", "percent"];
+    for value in &pivot.values {
+        if !SUPPORTED_PIVOT_AGGREGATES.contains(&value.aggregate.as_str()) {
+            errors.push(err(
+                Some(label),
+                format!(
+                    "unknown pivot aggregate \"{}\", supported: {:?}",
+                    value.aggregate, SUPPORTED_PIVOT_AGGREGATES
+                ),
+            ));
+        }
+
+        if let Some(ref fmt) = value.format {
+            if !supported_formats.contains(&fmt.as_str()) {
+                errors.push(err(
+                    Some(label),
+                    format!(
+                        "unknown pivot value format \"{}\", supported: {:?}",
+                        fmt, supported_formats
+                    ),
+                ));
+            }
+            if fmt == "currency" && value.currency.is_none() {
+                errors.push(err(
+                    Some(label),
+                    "pivot value format \"currency\" requires currency field (e.g. \"USD\", \"EUR\")",
+                ));
+            }
+        }
+
+        if value.currency.is_some() && value.format.as_deref() != Some("currency") {
+            errors.push(err(
+                Some(label),
+                "pivot value currency is only valid with format: currency",
+            ));
+        }
+    }
+
+    // pivot requires data source
+    if section.source.is_none() && section.inline_data.is_none() {
+        errors.push(err(
+            Some(label),
+            "pivot section requires source or inline_data",
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +474,7 @@ mod tests {
                 }),
                 list: None,
                 markdown: None,
+                pivot: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -708,6 +781,7 @@ mod tests {
                 stats: None,
                 list: None,
                 markdown: None,
+                pivot: None,
                 interactive_filter: Some(InteractiveFilter {
                     field: "country".to_string(),
                 }),
@@ -740,6 +814,7 @@ mod tests {
                 }),
                 list: None,
                 markdown: None,
+                pivot: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -916,6 +991,7 @@ mod tests {
                     link_target: None,
                     max_rows: None,
                 }),
+                pivot: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -938,6 +1014,7 @@ mod tests {
                     link_target: None,
                     max_rows: None,
                 }),
+                pivot: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -1069,6 +1146,7 @@ mod tests {
                     link_target: None,
                     max_rows: None,
                 }),
+                pivot: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -1091,6 +1169,7 @@ mod tests {
                     link_target: None,
                     max_rows: None,
                 }),
+                pivot: None,
                 interactive_filter: None,
                 selectable: None,
                 batch_actions: None,
@@ -1098,5 +1177,134 @@ mod tests {
         ];
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.iter().any(|e| e.message.contains("duplicate section id")));
+    }
+
+    // --- pivot validation ---
+
+    #[test]
+    fn pivot_valid() {
+        let mut spec = minimal_spec();
+        spec.datasets.insert("sales".to_string(), DatasetDecl {});
+        spec.sections[0].section_type = SectionType::Pivot;
+        spec.sections[0].stats = None;
+        spec.sections[0].source = Some("sales".to_string());
+        spec.sections[0].pivot = Some(PivotConfig {
+            rows: vec!["region".to_string()],
+            columns: vec!["quarter".to_string()],
+            values: vec![PivotValue {
+                field: "revenue".to_string(),
+                aggregate: "sum".to_string(),
+                label: Some("Revenue".to_string()),
+                format: None,
+                currency: None,
+            }],
+            show_totals: true,
+            show_subtotals: false,
+            sort: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn pivot_missing_config() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Pivot;
+        spec.sections[0].stats = None;
+        spec.sections[0].pivot = None;
+        spec.sections[0].inline_data = Some(vec![]);
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("pivot section requires pivot config")));
+    }
+
+    #[test]
+    fn pivot_empty_rows() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Pivot;
+        spec.sections[0].stats = None;
+        spec.sections[0].inline_data = Some(vec![]);
+        spec.sections[0].pivot = Some(PivotConfig {
+            rows: vec![],
+            columns: vec![],
+            values: vec![PivotValue {
+                field: "x".to_string(),
+                aggregate: "sum".to_string(),
+                label: None,
+                format: None,
+                currency: None,
+            }],
+            show_totals: false,
+            show_subtotals: false,
+            sort: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("pivot.rows must not be empty")));
+    }
+
+    #[test]
+    fn pivot_empty_values() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Pivot;
+        spec.sections[0].stats = None;
+        spec.sections[0].inline_data = Some(vec![]);
+        spec.sections[0].pivot = Some(PivotConfig {
+            rows: vec!["a".to_string()],
+            columns: vec![],
+            values: vec![],
+            show_totals: false,
+            show_subtotals: false,
+            sort: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("pivot.values must not be empty")));
+    }
+
+    #[test]
+    fn pivot_unknown_aggregate() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Pivot;
+        spec.sections[0].stats = None;
+        spec.sections[0].inline_data = Some(vec![]);
+        spec.sections[0].pivot = Some(PivotConfig {
+            rows: vec!["a".to_string()],
+            columns: vec![],
+            values: vec![PivotValue {
+                field: "x".to_string(),
+                aggregate: "median".to_string(),
+                label: None,
+                format: None,
+                currency: None,
+            }],
+            show_totals: false,
+            show_subtotals: false,
+            sort: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("unknown pivot aggregate \"median\"")));
+    }
+
+    #[test]
+    fn pivot_requires_data_source() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Pivot;
+        spec.sections[0].stats = None;
+        spec.sections[0].source = None;
+        spec.sections[0].inline_data = None;
+        spec.sections[0].pivot = Some(PivotConfig {
+            rows: vec!["a".to_string()],
+            columns: vec![],
+            values: vec![PivotValue {
+                field: "x".to_string(),
+                aggregate: "sum".to_string(),
+                label: None,
+                format: None,
+                currency: None,
+            }],
+            show_totals: false,
+            show_subtotals: false,
+            sort: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("pivot section requires source or inline_data")));
     }
 }

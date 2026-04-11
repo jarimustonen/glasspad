@@ -16,6 +16,9 @@ Run `glasspad docs` for full reference. Run `glasspad docs examples` for ready-t
 - **chart** — bar, line, arc (pie). Uses Vega-Lite encoding: field + type (quantitative/nominal/ordinal/temporal).
 - **table** — columns with field/title + data rows.
 - **stats** — label/value KPI cards.
+- **list** — scrollable list with detail view (cards/rows/compact layouts).
+- **markdown** — rendered markdown content (inline or from dataset).
+- **pivot** — 2D aggregation matrix. Rows × columns → aggregated values (sum/count/avg/min/max/distinct). Supports multi-level row hierarchies, subtotals, grand totals, sorting, and currency/percent formatting.
 
 ## Layouts
 

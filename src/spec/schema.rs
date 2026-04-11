@@ -84,6 +84,8 @@ pub struct Section {
     #[serde(default)]
     pub markdown: Option<MarkdownConfig>,
     #[serde(default)]
+    pub pivot: Option<PivotConfig>,
+    #[serde(default)]
     pub interactive_filter: Option<InteractiveFilter>,
     #[serde(default)]
     pub selectable: Option<bool>,
@@ -99,6 +101,7 @@ pub enum SectionType {
     Stats,
     List,
     Markdown,
+    Pivot,
 }
 
 impl SectionType {
@@ -109,6 +112,7 @@ impl SectionType {
             SectionType::Stats => "stats",
             SectionType::List => "list",
             SectionType::Markdown => "markdown",
+            SectionType::Pivot => "pivot",
         }
     }
 }
@@ -227,6 +231,62 @@ pub struct MarkdownConfig {
     /// Maximum number of dataset rows to concatenate (default: 100).
     #[serde(default)]
     pub max_rows: Option<u32>,
+}
+
+/// Pivot table configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PivotConfig {
+    pub rows: Vec<String>,
+    #[serde(default)]
+    pub columns: Vec<String>,
+    pub values: Vec<PivotValue>,
+    #[serde(default)]
+    pub show_totals: bool,
+    #[serde(default)]
+    pub show_subtotals: bool,
+    #[serde(default)]
+    pub sort: Option<PivotSort>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PivotValue {
+    pub field: String,
+    pub aggregate: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Value format: "currency", "number", "percent". Default: plain number.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// ISO 4217 currency code (e.g. "USD", "EUR"). Required when format is "currency".
+    #[serde(default)]
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PivotSort {
+    #[serde(default)]
+    pub by: Option<PivotSortBy>,
+    #[serde(default)]
+    pub direction: Option<PivotSortDirection>,
+    #[serde(default)]
+    pub value_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PivotSortBy {
+    Label,
+    Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PivotSortDirection {
+    Asc,
+    Desc,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -546,6 +606,103 @@ sections:
         let md = spec.sections[0].markdown.as_ref().unwrap();
         assert!(md.content.is_none());
         assert_eq!(md.content_field.as_deref(), Some("body"));
+    }
+
+    #[test]
+    fn pivot_section_deserialize() {
+        let yaml = r#"
+spec_version: 1
+title: "Pivot Test"
+datasets:
+  sales: {}
+sections:
+  - title: "Revenue by Region"
+    type: pivot
+    source: sales
+    pivot:
+      rows:
+        - region
+        - product
+      columns:
+        - quarter
+      values:
+        - field: revenue
+          aggregate: sum
+          label: "Revenue"
+        - field: orders
+          aggregate: count
+          label: "Orders"
+      show_totals: true
+      show_subtotals: true
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.sections[0].section_type, SectionType::Pivot);
+        let pivot = spec.sections[0].pivot.as_ref().unwrap();
+        assert_eq!(pivot.rows, vec!["region", "product"]);
+        assert_eq!(pivot.columns, vec!["quarter"]);
+        assert_eq!(pivot.values.len(), 2);
+        assert_eq!(pivot.values[0].field, "revenue");
+        assert_eq!(pivot.values[0].aggregate, "sum");
+        assert_eq!(pivot.values[0].label.as_deref(), Some("Revenue"));
+        assert_eq!(pivot.values[1].aggregate, "count");
+        assert!(pivot.show_totals);
+        assert!(pivot.show_subtotals);
+    }
+
+    #[test]
+    fn pivot_with_sort_deserialize() {
+        let yaml = r#"
+spec_version: 1
+title: "Pivot Sort"
+datasets:
+  data: {}
+sections:
+  - title: "Sorted"
+    type: pivot
+    source: data
+    pivot:
+      rows:
+        - category
+      values:
+        - field: amount
+          aggregate: sum
+      sort:
+        by: value
+        direction: desc
+        value_index: 0
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        let pivot = spec.sections[0].pivot.as_ref().unwrap();
+        let sort = pivot.sort.as_ref().unwrap();
+        assert_eq!(sort.by, Some(PivotSortBy::Value));
+        assert_eq!(sort.direction, Some(PivotSortDirection::Desc));
+        assert_eq!(sort.value_index, Some(0));
+    }
+
+    #[test]
+    fn pivot_minimal_deserialize() {
+        let yaml = r#"
+spec_version: 1
+title: "Minimal Pivot"
+sections:
+  - title: "Simple"
+    type: pivot
+    inline_data:
+      - { category: "A", amount: 10 }
+    pivot:
+      rows:
+        - category
+      values:
+        - field: amount
+          aggregate: sum
+"#;
+        let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+        let pivot = spec.sections[0].pivot.as_ref().unwrap();
+        assert_eq!(pivot.rows, vec!["category"]);
+        assert!(pivot.columns.is_empty());
+        assert!(!pivot.show_totals);
+        assert!(!pivot.show_subtotals);
+        assert!(pivot.sort.is_none());
     }
 
     #[test]

@@ -531,7 +531,7 @@
 
   function getSectionLayoutMeta(section, dataResult) {
     var meta = { spanFull: false, categories: 0, shouldCollapse: false };
-    if (section.type === 'table' || section.type === 'list' || section.type === 'markdown') { meta.spanFull = true; return meta; }
+    if (section.type === 'table' || section.type === 'list' || section.type === 'markdown' || section.type === 'pivot') { meta.spanFull = true; return meta; }
     if (section.type === 'chart' && section.chart && isHorizontalBar(section.chart)) {
       if (dataResult.ok && dataResult.data) {
         var yField = (section.chart.encoding.y || {}).field;
@@ -2360,6 +2360,466 @@
   }
 
   // ============================================================
+  // PIVOT TABLE
+  // ============================================================
+  function mountPivot(s, section) {
+    var cfg = section.pivot;
+    if (!cfg || !cfg.rows || !cfg.values) { appendError(s.body, 'No pivot config'); return null; }
+    var dr = getDataResult(section);
+    if (!dr.ok) { appendError(s.body, dr.error); return null; }
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'pivot-wrapper';
+    s.body.appendChild(wrapper);
+
+    function rebuild() {
+      var data = dr.source ? getFilteredData(dr.source) : dr.data || [];
+      wrapper.innerHTML = '';
+      var result = buildPivotData(data, cfg);
+      var table = renderPivotTable(result, cfg);
+      wrapper.appendChild(table);
+    }
+
+    rebuild();
+    return function updatePivot() { rebuild(); };
+  }
+
+  function buildPivotData(data, cfg) {
+    var rows = cfg.rows || [];
+    var cols = cfg.columns || [];
+    var values = cfg.values || [];
+
+    // Build group keys and collect aggregation buckets
+    // Each bucket key = rowKey + '|' + colKey
+    var rowKeys = Object.create(null);    // rowKeyStr -> [rowFieldValues...]
+    var colKeys = Object.create(null);    // colKeyStr -> [colFieldValues...]
+    var cells = Object.create(null);      // JSON(rowFields) + '||' + JSON(colFields) -> [AggState per value]
+
+    for (var i = 0; i < data.length; i++) {
+      var row = data[i];
+      var rk = makeGroupKey(row, rows);
+      var ck = cols.length > 0 ? makeGroupKey(row, cols) : '[]';
+
+      if (!(rk in rowKeys)) rowKeys[rk] = extractFields(row, rows);
+      if (cols.length > 0 && !(ck in colKeys)) colKeys[ck] = extractFields(row, cols);
+
+      var cellKey = rk + '||' + ck;
+      if (!(cellKey in cells)) cells[cellKey] = initAggStates(values);
+      feedAggStates(cells[cellKey], row, values);
+    }
+
+    // Sort row and column keys
+    var sortedRowKeys = Object.keys(rowKeys);
+    var sortedColKeys = cols.length > 0 ? Object.keys(colKeys) : ['[]'];
+
+    // Apply sorting
+    var sortCfg = cfg.sort;
+    if (sortCfg && sortCfg.by === 'value') {
+      var vi = sortCfg.value_index || 0;
+      var desc = sortCfg.direction === 'desc';
+      sortedRowKeys.sort(function(a, b) {
+        // Use grand total for this row across all columns
+        var va = getRowTotal(a, sortedColKeys, cells, values, vi);
+        var vb = getRowTotal(b, sortedColKeys, cells, values, vi);
+        var cmp = (va === null ? -Infinity : va) - (vb === null ? -Infinity : vb);
+        return desc ? -cmp : cmp;
+      });
+    } else {
+      // Sort by label (alphabetically by row key fields)
+      var labelDesc = sortCfg && sortCfg.direction === 'desc';
+      sortedRowKeys.sort(function(a, b) {
+        var cmp = a < b ? -1 : a > b ? 1 : 0;
+        return labelDesc ? -cmp : cmp;
+      });
+      sortedColKeys.sort();
+    }
+
+    return {
+      rowKeys: rowKeys,
+      colKeys: colKeys,
+      sortedRowKeys: sortedRowKeys,
+      sortedColKeys: sortedColKeys,
+      cells: cells,
+      rows: rows,
+      cols: cols,
+      values: values
+    };
+  }
+
+  function makeGroupKey(row, fields) {
+    var parts = [];
+    for (var i = 0; i < fields.length; i++) {
+      parts.push(row[fields[i]]);
+    }
+    return JSON.stringify(parts);
+  }
+
+  function extractFields(row, fields) {
+    var result = [];
+    for (var i = 0; i < fields.length; i++) {
+      result.push(row[fields[i]]);
+    }
+    return result;
+  }
+
+  function initAggStates(values) {
+    var states = [];
+    for (var i = 0; i < values.length; i++) {
+      states.push({ sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) });
+    }
+    return states;
+  }
+
+  function feedAggStates(states, row, values) {
+    for (var i = 0; i < values.length; i++) {
+      var v = row[values[i].field];
+      var st = states[i];
+      st.count++;
+      if (v !== null && v !== undefined) {
+        var n = typeof v === 'number' ? v : parseFloat(v);
+        if (isFinite(n)) {
+          st.sum += n;
+          if (n < st.min) st.min = n;
+          if (n > st.max) st.max = n;
+        }
+        st.distinct[distinctKey(v)] = true;
+      }
+    }
+  }
+
+  function resolveAgg(state, aggregate) {
+    switch (aggregate) {
+      case 'sum': return state.count > 0 ? state.sum : null;
+      case 'count': return state.count;
+      case 'avg': return state.count > 0 ? state.sum / state.count : null;
+      case 'min': return state.min === Infinity ? null : state.min;
+      case 'max': return state.max === -Infinity ? null : state.max;
+      case 'distinct': return Object.keys(state.distinct).length;
+      default: return null;
+    }
+  }
+
+  function mergeAggStates(target, source) {
+    target.sum += source.sum;
+    target.count += source.count;
+    if (source.min < target.min) target.min = source.min;
+    if (source.max > target.max) target.max = source.max;
+    for (var k in source.distinct) target.distinct[k] = true;
+  }
+
+  function getRowTotal(rk, colKeys, cells, values, vi) {
+    var total = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+    for (var c = 0; c < colKeys.length; c++) {
+      var cellKey = rk + '||' + colKeys[c];
+      if (cellKey in cells) mergeAggStates(total, cells[cellKey][vi]);
+    }
+    return resolveAgg(total, values[vi].aggregate);
+  }
+
+  function renderPivotTable(result, cfg) {
+    var table = document.createElement('table');
+    table.className = 'pivot-table';
+    var thead = document.createElement('thead');
+    var tbody = document.createElement('tbody');
+    table.appendChild(thead);
+    table.appendChild(tbody);
+
+    var rowFields = result.rows;
+    var colKeys = result.sortedColKeys;
+    var values = result.values;
+    var hasColDimension = result.cols.length > 0;
+    var numValues = values.length;
+    var showTotals = cfg.show_totals;
+    var showSubtotals = cfg.show_subtotals && rowFields.length > 1;
+
+    // --- THEAD ---
+    // If we have column dimensions, render column header rows
+    if (hasColDimension) {
+      // Row 1: column dimension values (spanning numValues each)
+      var headerRow1 = document.createElement('tr');
+      // Empty cells for row field headers
+      for (var ri = 0; ri < rowFields.length; ri++) {
+        var emptyTh = document.createElement('th');
+        emptyTh.className = 'pivot-corner';
+        if (numValues > 1 || !hasColDimension) emptyTh.rowSpan = 2;
+        headerRow1.appendChild(emptyTh);
+      }
+      for (var ci = 0; ci < colKeys.length; ci++) {
+        var colTh = document.createElement('th');
+        colTh.className = 'pivot-col-header';
+        colTh.colSpan = numValues;
+        colTh.textContent = formatPivotLabel(result.colKeys[colKeys[ci]]);
+        headerRow1.appendChild(colTh);
+      }
+      if (showTotals) {
+        var totalColTh = document.createElement('th');
+        totalColTh.className = 'pivot-col-header pivot-total-header';
+        totalColTh.colSpan = numValues;
+        totalColTh.textContent = 'Total';
+        headerRow1.appendChild(totalColTh);
+      }
+      thead.appendChild(headerRow1);
+
+      // Row 2: value labels (if multiple values)
+      if (numValues > 1) {
+        var headerRow2 = document.createElement('tr');
+        for (var ci2 = 0; ci2 < colKeys.length; ci2++) {
+          for (var vi = 0; vi < numValues; vi++) {
+            var valTh = document.createElement('th');
+            valTh.className = 'pivot-value-header';
+            valTh.textContent = values[vi].label || values[vi].field;
+            headerRow2.appendChild(valTh);
+          }
+        }
+        if (showTotals) {
+          for (var vit = 0; vit < numValues; vit++) {
+            var valThT = document.createElement('th');
+            valThT.className = 'pivot-value-header pivot-total-header';
+            valThT.textContent = values[vit].label || values[vit].field;
+            headerRow2.appendChild(valThT);
+          }
+        }
+        thead.appendChild(headerRow2);
+      }
+    } else {
+      // No column dimension: just row headers + value headers
+      var simpleHeader = document.createElement('tr');
+      for (var rh = 0; rh < rowFields.length; rh++) {
+        var rfTh = document.createElement('th');
+        rfTh.className = 'pivot-row-field-header';
+        rfTh.textContent = rowFields[rh];
+        simpleHeader.appendChild(rfTh);
+      }
+      for (var vh = 0; vh < numValues; vh++) {
+        var vhTh = document.createElement('th');
+        vhTh.className = 'pivot-value-header';
+        vhTh.textContent = values[vh].label || values[vh].field;
+        simpleHeader.appendChild(vhTh);
+      }
+      thead.appendChild(simpleHeader);
+    }
+
+    // --- TBODY ---
+    // Group rows by first field for subtotals
+    var prevGroupKey = null;
+    var subtotalAcc = null; // accumulated states for subtotals
+
+    for (var r = 0; r < result.sortedRowKeys.length; r++) {
+      var rk = result.sortedRowKeys[r];
+      var rowVals = result.rowKeys[rk];
+
+      // Subtotals: detect group change on first row field
+      if (showSubtotals && rowFields.length > 1) {
+        var currentGroupKey = String(rowVals[0]);
+        if (prevGroupKey !== null && currentGroupKey !== prevGroupKey) {
+          // Emit subtotal row for previous group
+          tbody.appendChild(buildSubtotalRow(prevGroupKey, subtotalAcc, colKeys, values, numValues, rowFields.length, showTotals, hasColDimension));
+          subtotalAcc = null;
+        }
+        if (!subtotalAcc) subtotalAcc = initSubtotalAcc(colKeys, values, showTotals);
+        accumulateSubtotals(subtotalAcc, rk, colKeys, result.cells, values, showTotals);
+        prevGroupKey = currentGroupKey;
+      }
+
+      var tr = document.createElement('tr');
+      // Row header cells
+      for (var rf = 0; rf < rowFields.length; rf++) {
+        var td = document.createElement('td');
+        td.className = 'pivot-row-header';
+        if (rf > 0) td.className += ' pivot-row-indent';
+        td.textContent = formatCell(rowVals[rf]);
+        tr.appendChild(td);
+      }
+
+      // Data cells
+      for (var c = 0; c < colKeys.length; c++) {
+        var cellKey = rk + '||' + colKeys[c];
+        var aggStates = result.cells[cellKey];
+        for (var v = 0; v < numValues; v++) {
+          var td2 = document.createElement('td');
+          td2.className = 'pivot-cell';
+          if (aggStates) {
+            var val = resolveAgg(aggStates[v], values[v].aggregate);
+            td2.textContent = formatPivotValue(val, values[v]);
+          } else {
+            td2.textContent = '\u2014';
+          }
+          tr.appendChild(td2);
+        }
+      }
+
+      // Row total cells
+      if (showTotals && hasColDimension) {
+        for (var vt = 0; vt < numValues; vt++) {
+          var totalTd = document.createElement('td');
+          totalTd.className = 'pivot-cell pivot-total-cell';
+          var rowTotalVal = getRowTotal(rk, colKeys, result.cells, values, vt);
+          totalTd.textContent = formatPivotValue(rowTotalVal, values[vt]);
+          tr.appendChild(totalTd);
+        }
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    // Emit final subtotal if needed
+    if (showSubtotals && rowFields.length > 1 && subtotalAcc && prevGroupKey !== null) {
+      tbody.appendChild(buildSubtotalRow(prevGroupKey, subtotalAcc, colKeys, values, numValues, rowFields.length, showTotals, hasColDimension));
+    }
+
+    // Grand total row
+    if (showTotals) {
+      var grandTr = document.createElement('tr');
+      grandTr.className = 'pivot-grand-total-row';
+      var grandLabelTd = document.createElement('td');
+      grandLabelTd.className = 'pivot-row-header pivot-grand-total-label';
+      grandLabelTd.colSpan = rowFields.length;
+      grandLabelTd.textContent = 'Grand Total';
+      grandTr.appendChild(grandLabelTd);
+
+      // Grand totals per column
+      for (var gc = 0; gc < colKeys.length; gc++) {
+        for (var gv = 0; gv < numValues; gv++) {
+          var gtTd = document.createElement('td');
+          gtTd.className = 'pivot-cell pivot-grand-total-cell';
+          var colTotal = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+          for (var gr = 0; gr < result.sortedRowKeys.length; gr++) {
+            var gCellKey = result.sortedRowKeys[gr] + '||' + colKeys[gc];
+            if (gCellKey in result.cells) mergeAggStates(colTotal, result.cells[gCellKey][gv]);
+          }
+          var gtVal = resolveAgg(colTotal, values[gv].aggregate);
+          gtTd.textContent = formatPivotValue(gtVal, values[gv]);
+          grandTr.appendChild(gtTd);
+        }
+      }
+
+      // Grand total of grand totals (corner cell)
+      if (hasColDimension) {
+        for (var gvt = 0; gvt < numValues; gvt++) {
+          var cornerTd = document.createElement('td');
+          cornerTd.className = 'pivot-cell pivot-grand-total-cell';
+          var grandTotal = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+          for (var allR = 0; allR < result.sortedRowKeys.length; allR++) {
+            for (var allC = 0; allC < colKeys.length; allC++) {
+              var allKey = result.sortedRowKeys[allR] + '||' + colKeys[allC];
+              if (allKey in result.cells) mergeAggStates(grandTotal, result.cells[allKey][gvt]);
+            }
+          }
+          var gtCorner = resolveAgg(grandTotal, values[gvt].aggregate);
+          cornerTd.textContent = formatPivotValue(gtCorner, values[gvt]);
+          grandTr.appendChild(cornerTd);
+        }
+      }
+
+      tbody.appendChild(grandTr);
+    }
+
+    return table;
+  }
+
+  function formatPivotLabel(fieldValues) {
+    var parts = [];
+    for (var i = 0; i < fieldValues.length; i++) {
+      parts.push(formatCell(fieldValues[i]));
+    }
+    return parts.join(' / ');
+  }
+
+  var pivotFormatters = Object.create(null);
+  function getPivotFormatter(valueDef) {
+    var key = (valueDef.format || '') + '|' + (valueDef.currency || '');
+    if (key in pivotFormatters) return pivotFormatters[key];
+    var fmt;
+    if (valueDef.format === 'currency' && valueDef.currency) {
+      try {
+        var nf = new Intl.NumberFormat(undefined, {
+          style: 'currency', currency: valueDef.currency,
+          currencyDisplay: 'narrowSymbol',
+          minimumFractionDigits: 2, maximumFractionDigits: 2
+        });
+        fmt = function(v) { return nf.format(v); };
+      } catch (e) {
+        fmt = function(v) { return formatDecimal(v); };
+      }
+    } else if (valueDef.format === 'percent') {
+      var pf = new Intl.NumberFormat(undefined, {
+        style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1
+      });
+      fmt = function(v) { return pf.format(v); };
+    } else {
+      fmt = formatDecimal;
+    }
+    pivotFormatters[key] = fmt;
+    return fmt;
+  }
+
+  function formatPivotValue(val, valueDef) {
+    if (val === null) return '\u2014';
+    return getPivotFormatter(valueDef)(val);
+  }
+
+  function initSubtotalAcc(colKeys, values, showTotals) {
+    var acc = Object.create(null);
+    for (var c = 0; c < colKeys.length; c++) {
+      for (var v = 0; v < values.length; v++) {
+        acc[colKeys[c] + '||' + v] = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+      }
+    }
+    if (showTotals) {
+      for (var vt = 0; vt < values.length; vt++) {
+        acc['__total__||' + vt] = { sum: 0, count: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+      }
+    }
+    return acc;
+  }
+
+  function accumulateSubtotals(acc, rk, colKeys, cells, values, showTotals) {
+    for (var c = 0; c < colKeys.length; c++) {
+      var cellKey = rk + '||' + colKeys[c];
+      if (cellKey in cells) {
+        for (var v = 0; v < values.length; v++) {
+          mergeAggStates(acc[colKeys[c] + '||' + v], cells[cellKey][v]);
+          if (showTotals) mergeAggStates(acc['__total__||' + v], cells[cellKey][v]);
+        }
+      }
+    }
+  }
+
+  function buildSubtotalRow(groupLabel, acc, colKeys, values, numValues, numRowFields, showTotals, hasColDimension) {
+    var tr = document.createElement('tr');
+    tr.className = 'pivot-subtotal-row';
+    var labelTd = document.createElement('td');
+    labelTd.className = 'pivot-row-header pivot-subtotal-label';
+    labelTd.colSpan = numRowFields;
+    labelTd.textContent = groupLabel + ' Subtotal';
+    tr.appendChild(labelTd);
+
+    for (var c = 0; c < colKeys.length; c++) {
+      for (var v = 0; v < numValues; v++) {
+        var td = document.createElement('td');
+        td.className = 'pivot-cell pivot-subtotal-cell';
+        var st = acc[colKeys[c] + '||' + v];
+        var val = st ? resolveAgg(st, values[v].aggregate) : null;
+        td.textContent = formatPivotValue(val, values[v]);
+        tr.appendChild(td);
+      }
+    }
+
+    if (showTotals && hasColDimension) {
+      for (var vt = 0; vt < numValues; vt++) {
+        var totalTd = document.createElement('td');
+        totalTd.className = 'pivot-cell pivot-subtotal-cell';
+        var stTotal = acc['__total__||' + vt];
+        var tVal = stTotal ? resolveAgg(stTotal, values[vt].aggregate) : null;
+        totalTd.textContent = formatPivotValue(tVal, values[vt]);
+        tr.appendChild(totalTd);
+      }
+    }
+
+    return tr;
+  }
+
+  // ============================================================
   // RENDER ALL SECTIONS
   // ============================================================
   createFilterBar();
@@ -2377,6 +2837,7 @@
         case 'stats': updateFn = mountStats(s, section); break;
         case 'list': updateFn = mountList(s, section); break;
         case 'markdown': updateFn = mountMarkdown(s, section); break;
+        case 'pivot': updateFn = mountPivot(s, section); break;
         default: appendError(s.body, 'Unknown section type: ' + String(section.type));
       }
     } catch (e) {

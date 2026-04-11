@@ -18,7 +18,7 @@ USAGE
 DOCS
   glasspad docs               This overview
   glasspad docs spec          YAML spec reference (structure, fields, types)
-  glasspad docs sections      Section types: chart, table, stats, list
+  glasspad docs sections      Section types: chart, table, stats, list, pivot
   glasspad docs charts        Chart marks: bar, arc, line + encoding
   glasspad docs examples      Complete example specs
   glasspad docs api           REST API endpoints
@@ -60,7 +60,7 @@ DATA BINDING (two ways, mutually exclusive per section)
 SECTION COMMON FIELDS
   id:      string    (required for interactive sections)
   title:   string    (required) Section heading
-  type:    string    (required) "chart", "table", "stats", or "list"
+  type:    string    (required) "chart", "table", "stats", "list", "pivot"
   source:  string    (optional) Reference to datasets entry
   interactive_filter:          (optional, chart only)
     field: country             Field to filter on when chart is clicked
@@ -101,6 +101,26 @@ LIST CONFIG
       body_format: text       text (default) or sanitized_html
       actions:
         - {{ id: archive, label: "Archive" }}
+
+PIVOT CONFIG
+  pivot:
+    rows:
+      - region
+      - product
+    columns:
+      - quarter
+    values:
+      - {{ field: revenue, aggregate: sum, label: "Revenue", format: currency, currency: USD }}
+      - {{ field: orders, aggregate: count, label: "Orders" }}
+    show_totals: true
+    show_subtotals: true
+    sort:
+      by: value            "label" (default) or "value"
+      direction: desc      "asc" (default) or "desc"
+      value_index: 0       Which value to sort by (default: 0)
+
+  Supported aggregates: sum, count, avg, min, max, distinct
+  Value formats: currency (requires currency code), number, percent
 
 ENCODING FIELDS (Vega-Lite)
   field:      string    Data field name
@@ -184,7 +204,6 @@ stats
 
 list
   Renders a scrollable list with optional detail view.
-  (Client-side rendering not yet implemented — coming soon)
 
   - title: "Inbox"
     type: list
@@ -199,6 +218,44 @@ list
         body_format: text
         actions:
           - {{ id: archive, label: "Archive" }}
+
+pivot
+  Renders a 2D aggregation matrix. Rows and columns define grouping dimensions,
+  values define what to aggregate. Supports multi-level row hierarchies with
+  subtotals, grand totals, sorting, and currency/percent formatting.
+
+  - title: "Revenue by Region and Quarter"
+    type: pivot
+    source: sales
+    pivot:
+      rows:
+        - region
+        - product
+      columns:
+        - quarter
+      values:
+        - {{ field: revenue, aggregate: sum, label: "Revenue", format: currency, currency: USD }}
+        - {{ field: orders, aggregate: count, label: "Orders" }}
+      show_totals: true
+      show_subtotals: true
+      sort:
+        by: value
+        direction: desc
+        value_index: 0
+
+  Simple pivot (no column dimension):
+  - title: "Totals by Category"
+    type: pivot
+    source: data
+    pivot:
+      rows:
+        - category
+      values:
+        - {{ field: amount, aggregate: sum }}
+        - {{ field: amount, aggregate: avg }}
+
+  Aggregates: sum, count, avg, min, max, distinct
+  Value formats: currency (+ currency: USD/EUR/...), number, percent
 "#
     );
 }
@@ -326,6 +383,32 @@ Dashboard with external CSV data:
           - {{ field: country, title: "Country" }}
 
   CLI: glasspad create --file analytics.yaml --data events=events.csv
+
+---
+
+Pivot table with external data:
+
+  spec_version: 1
+  title: "Sales Analysis"
+  datasets:
+    sales: {{}}
+  sections:
+    - title: "Revenue by Region"
+      type: pivot
+      source: sales
+      pivot:
+        rows:
+          - region
+          - product_category
+        columns:
+          - segment
+        values:
+          - {{ field: total_amount, aggregate: sum, label: "Revenue", format: currency, currency: USD }}
+          - {{ field: quantity, aggregate: sum, label: "Units" }}
+        show_totals: true
+        show_subtotals: true
+
+  CLI: glasspad create --file sales.yaml --data sales=transactions.json
 
 ---
 
