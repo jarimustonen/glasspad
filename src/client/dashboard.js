@@ -2529,7 +2529,7 @@
   function resolveAgg(state, aggregate) {
     switch (aggregate) {
       case 'sum': return state.numericCount > 0 ? state.sum : null;
-      case 'count': return state.valueCount;
+      case 'count': return state.rowCount;
       case 'avg': return state.numericCount > 0 ? state.sum / state.numericCount : null;
       case 'min': return state.min === Infinity ? null : state.min;
       case 'max': return state.max === -Infinity ? null : state.max;
