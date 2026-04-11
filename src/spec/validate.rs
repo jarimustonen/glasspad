@@ -934,7 +934,9 @@ mod tests {
         let mut spec = minimal_spec();
         spec.datasets.insert("events".to_string(), DatasetDecl {});
         let errors = validate(&spec, &HashSet::new());
-        assert!(errors.iter().any(|e| e.message.contains("declared but no data was provided")));
+        assert_eq!(errors.len(), 1, "expected exactly one error, got: {:?}", errors);
+        assert!(errors[0].message.contains("dataset \"events\" is declared but no data was provided"));
+        assert!(errors[0].section.is_none());
     }
 
     #[test]

@@ -32,7 +32,8 @@ fn validate_declared_dataset_without_provided_data() {
     let yaml = load_fixture("valid_dashboard.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
     let errors = validate::validate(&spec, &HashSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("declared but no data was provided")));
+    assert_eq!(errors.len(), 1, "expected exactly one error, got: {:?}", errors);
+    assert!(errors[0].message.contains("dataset \"events\" is declared but no data was provided"));
 }
 
 #[test]
