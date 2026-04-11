@@ -2452,15 +2452,17 @@
       } else {
         sortedRowKeys.sort(labelSorter);
       }
-      sortedColKeys.sort(function(a, b) {
-        var pa = JSON.parse(a), pb = JSON.parse(b);
-        var cmp = 0;
-        for (var k = 0; k < pa.length && cmp === 0; k++) {
-          cmp = compareGroupValues(pa[k], pb[k]);
-        }
-        return cmp;
-      });
     }
+
+    // Always sort columns by label (type-aware)
+    sortedColKeys.sort(function(a, b) {
+      var pa = JSON.parse(a), pb = JSON.parse(b);
+      var cmp = 0;
+      for (var k = 0; k < pa.length && cmp === 0; k++) {
+        cmp = compareGroupValues(pa[k], pb[k]);
+      }
+      return cmp;
+    });
 
     return {
       rowKeys: rowKeys,
