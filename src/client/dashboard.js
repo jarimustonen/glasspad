@@ -2576,14 +2576,17 @@
       }
       groups[firstVal].push(rk);
     }
-    // Sort groups by first member's sort value, sort within each group
+    // Sort members within each group first
+    for (var g = 0; g < groupOrder.length; g++) {
+      groups[groupOrder[g]].sort(comparator);
+    }
+    // Then sort groups by their (now-sorted) first member
     groupOrder.sort(function(a, b) {
       return comparator(groups[a][0], groups[b][0]);
     });
     var result = [];
-    for (var g = 0; g < groupOrder.length; g++) {
-      var members = groups[groupOrder[g]];
-      members.sort(comparator);
+    for (var g2 = 0; g2 < groupOrder.length; g2++) {
+      var members = groups[groupOrder[g2]];
       for (var m = 0; m < members.length; m++) result.push(members[m]);
     }
     return result;
