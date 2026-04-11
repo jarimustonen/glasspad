@@ -222,7 +222,7 @@ list
 
 pivot
   Renders a 2D aggregation matrix. Rows and columns define grouping dimensions,
-  values define what to aggregate. Supports multi-level row hierarchies with
+  values define what to aggregate. Supports row hierarchies with first-level
   subtotals, grand totals, sorting, and currency/percent formatting.
 
   - title: "Revenue by Region and Quarter"
