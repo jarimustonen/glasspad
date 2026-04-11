@@ -28,11 +28,11 @@ fn validate_valid_dashboard() {
 }
 
 #[test]
-fn validate_valid_dashboard_without_provided_data() {
+fn validate_declared_dataset_without_provided_data() {
     let yaml = load_fixture("valid_dashboard.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
     let errors = validate::validate(&spec, &HashSet::new());
-    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(errors.iter().any(|e| e.message.contains("declared but no data was provided")));
 }
 
 #[test]

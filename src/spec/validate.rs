@@ -53,6 +53,16 @@ pub fn validate(
     // Collect declared dataset names
     let declared: HashSet<String> = spec.datasets.keys().cloned().collect();
 
+    // Check that declared datasets are actually provided
+    for name in &declared {
+        if !provided_datasets.contains(name) {
+            errors.push(err(
+                None,
+                format!("dataset \"{}\" is declared but no data was provided", name),
+            ));
+        }
+    }
+
     // Duplicate section.id check
     let mut seen_ids: HashSet<String> = HashSet::new();
     for section in &spec.sections {
@@ -422,7 +432,8 @@ mod tests {
         spec.datasets.insert("events".to_string(), DatasetDecl {});
         spec.sections[0].source = Some("events".to_string());
         spec.sections[0].inline_data = Some(vec![]);
-        let errors = validate(&spec, &HashSet::new());
+        let provided = HashSet::from(["events".to_string()]);
+        let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -635,7 +646,8 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let provided = HashSet::from(["notes".to_string()]);
+        let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -918,6 +930,24 @@ mod tests {
         ];
         let errors = validate(&spec, &HashSet::new());
         assert!(errors.iter().any(|e| e.message.contains("only one markdown section may define toc_levels")));
+    }
+
+    #[test]
+    fn declared_dataset_not_provided() {
+        let mut spec = minimal_spec();
+        spec.datasets.insert("events".to_string(), DatasetDecl {});
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("declared but no data was provided")));
+    }
+
+    #[test]
+    fn declared_dataset_provided_is_valid() {
+        let mut spec = minimal_spec();
+        spec.datasets.insert("events".to_string(), DatasetDecl {});
+        spec.sections[0].source = Some("events".to_string());
+        let provided = HashSet::from(["events".to_string()]);
+        let errors = validate(&spec, &provided);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
     #[test]
