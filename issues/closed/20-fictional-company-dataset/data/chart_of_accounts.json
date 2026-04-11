@@ -1,0 +1,219 @@
+[
+  {
+    "account_code": "1000",
+    "name": "Cash and Bank",
+    "type": "Asset",
+    "subtype": "Current Asset",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "1100",
+    "name": "Accounts Receivable",
+    "type": "Asset",
+    "subtype": "Current Asset",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "1200",
+    "name": "Prepaid Expenses",
+    "type": "Asset",
+    "subtype": "Current Asset",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "1500",
+    "name": "Equipment",
+    "type": "Asset",
+    "subtype": "Fixed Asset",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "1510",
+    "name": "Accumulated Depreciation",
+    "type": "Asset",
+    "subtype": "Fixed Asset",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "2000",
+    "name": "Accounts Payable",
+    "type": "Liability",
+    "subtype": "Current Liability",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "2100",
+    "name": "Accrued Expenses",
+    "type": "Liability",
+    "subtype": "Current Liability",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "2200",
+    "name": "Deferred Revenue",
+    "type": "Liability",
+    "subtype": "Current Liability",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "2300",
+    "name": "Payroll Taxes Payable",
+    "type": "Liability",
+    "subtype": "Current Liability",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "2500",
+    "name": "Long-term Loan",
+    "type": "Liability",
+    "subtype": "Long-term Liability",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "3000",
+    "name": "Share Capital",
+    "type": "Equity",
+    "subtype": "Equity",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "3100",
+    "name": "Retained Earnings",
+    "type": "Equity",
+    "subtype": "Equity",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "4000",
+    "name": "Subscription Revenue",
+    "type": "Revenue",
+    "subtype": "Operating Revenue",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "4100",
+    "name": "Services Revenue",
+    "type": "Revenue",
+    "subtype": "Operating Revenue",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "4200",
+    "name": "Support Revenue",
+    "type": "Revenue",
+    "subtype": "Operating Revenue",
+    "normal_balance": "credit"
+  },
+  {
+    "account_code": "5000",
+    "name": "Cloud Infrastructure",
+    "type": "Expense",
+    "subtype": "Cost of Goods Sold",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "5100",
+    "name": "Third-party Licenses",
+    "type": "Expense",
+    "subtype": "Cost of Goods Sold",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6000",
+    "name": "Salaries & Wages",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6100",
+    "name": "Employee Benefits",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6200",
+    "name": "Payroll Taxes",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6300",
+    "name": "Rent & Facilities",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6400",
+    "name": "Marketing & Advertising",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6500",
+    "name": "Travel & Entertainment",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6600",
+    "name": "Software & Subscriptions",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6700",
+    "name": "Professional Services",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6800",
+    "name": "Depreciation",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "6900",
+    "name": "Telecommunications",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "7000",
+    "name": "Insurance",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "7100",
+    "name": "Miscellaneous Expenses",
+    "type": "Expense",
+    "subtype": "Operating Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "8000",
+    "name": "Interest Expense",
+    "type": "Expense",
+    "subtype": "Other Expense",
+    "normal_balance": "debit"
+  },
+  {
+    "account_code": "8100",
+    "name": "Interest Income",
+    "type": "Revenue",
+    "subtype": "Other Revenue",
+    "normal_balance": "credit"
+  }
+]

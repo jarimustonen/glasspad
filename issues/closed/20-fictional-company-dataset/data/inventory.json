@@ -1,0 +1,2162 @@
+[
+  {
+    "period": "2023-01",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 0,
+    "monthly_recurring_revenue": 0.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-01",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 1,
+    "monthly_recurring_revenue": 599.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-01",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 0,
+    "monthly_recurring_revenue": 0.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-01",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 4,
+    "monthly_recurring_revenue": 996.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-01",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 1,
+    "monthly_recurring_revenue": 1499.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-01",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 0,
+    "monthly_recurring_revenue": 0.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-02",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 0,
+    "monthly_recurring_revenue": 0.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-02",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 5,
+    "monthly_recurring_revenue": 2995.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-02",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 3,
+    "monthly_recurring_revenue": 447.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-02",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 4,
+    "monthly_recurring_revenue": 996.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-02",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 6,
+    "monthly_recurring_revenue": 8994.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-02",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 1,
+    "monthly_recurring_revenue": 299.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-03",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 0,
+    "monthly_recurring_revenue": 0.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-03",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 15,
+    "monthly_recurring_revenue": 8985.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-03",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 7,
+    "monthly_recurring_revenue": 1043.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-03",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 9,
+    "monthly_recurring_revenue": 2241.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-03",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 11,
+    "monthly_recurring_revenue": 16489.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-03",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 1,
+    "monthly_recurring_revenue": 299.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-04",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 2,
+    "monthly_recurring_revenue": 598.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-04",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 15,
+    "monthly_recurring_revenue": 8985.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-04",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 2682.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-04",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 12,
+    "monthly_recurring_revenue": 2988.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-04",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 14,
+    "monthly_recurring_revenue": 20986.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-04",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 4,
+    "monthly_recurring_revenue": 1196.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-05",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 12,
+    "monthly_recurring_revenue": 3588.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-05",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 10782.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-05",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 21,
+    "monthly_recurring_revenue": 3129.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-05",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 16,
+    "monthly_recurring_revenue": 3984.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-05",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 16,
+    "monthly_recurring_revenue": 23984.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-05",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 12,
+    "monthly_recurring_revenue": 3588.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-06",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 5382.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-06",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 21,
+    "monthly_recurring_revenue": 12579.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-06",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 32,
+    "monthly_recurring_revenue": 4768.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-06",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 4482.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-06",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 22,
+    "monthly_recurring_revenue": 32978.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-06",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 13,
+    "monthly_recurring_revenue": 3887.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-07",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 5382.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-07",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 31,
+    "monthly_recurring_revenue": 18569.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-07",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 46,
+    "monthly_recurring_revenue": 6854.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-07",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 21,
+    "monthly_recurring_revenue": 5229.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-07",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 27,
+    "monthly_recurring_revenue": 40473.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-07",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 24,
+    "monthly_recurring_revenue": 7176.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-08",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 5382.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-08",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 47,
+    "monthly_recurring_revenue": 28153.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-08",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 48,
+    "monthly_recurring_revenue": 7152.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-08",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 22,
+    "monthly_recurring_revenue": 5478.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-08",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 32,
+    "monthly_recurring_revenue": 47968.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-08",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 25,
+    "monthly_recurring_revenue": 7475.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-09",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 18,
+    "monthly_recurring_revenue": 5382.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-09",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 45,
+    "monthly_recurring_revenue": 26955.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-09",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 59,
+    "monthly_recurring_revenue": 8791.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-09",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 29,
+    "monthly_recurring_revenue": 7221.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-09",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 34,
+    "monthly_recurring_revenue": 50966.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-09",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 32,
+    "monthly_recurring_revenue": 9568.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-10",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 21,
+    "monthly_recurring_revenue": 6279.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-10",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 62,
+    "monthly_recurring_revenue": 37138.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-10",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 57,
+    "monthly_recurring_revenue": 8493.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-10",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 35,
+    "monthly_recurring_revenue": 8715.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-10",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 45,
+    "monthly_recurring_revenue": 67455.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-10",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 37,
+    "monthly_recurring_revenue": 11063.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-11",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 34,
+    "monthly_recurring_revenue": 10166.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-11",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 66,
+    "monthly_recurring_revenue": 39534.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-11",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 47,
+    "monthly_recurring_revenue": 7003.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-11",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 40,
+    "monthly_recurring_revenue": 9960.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-11",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 51,
+    "monthly_recurring_revenue": 76449.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-11",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 57,
+    "monthly_recurring_revenue": 17043.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-12",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 25,
+    "monthly_recurring_revenue": 7475.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2023-12",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 74,
+    "monthly_recurring_revenue": 44326.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2023-12",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 65,
+    "monthly_recurring_revenue": 9685.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2023-12",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 38,
+    "monthly_recurring_revenue": 9462.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2023-12",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 68,
+    "monthly_recurring_revenue": 101932.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2023-12",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 70,
+    "monthly_recurring_revenue": 20930.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-01",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 24,
+    "monthly_recurring_revenue": 7176.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-01",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 78,
+    "monthly_recurring_revenue": 46722.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-01",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 78,
+    "monthly_recurring_revenue": 11622.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-01",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 54,
+    "monthly_recurring_revenue": 13446.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-01",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 77,
+    "monthly_recurring_revenue": 115423.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-01",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 87,
+    "monthly_recurring_revenue": 26013.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-02",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 35,
+    "monthly_recurring_revenue": 10465.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-02",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 93,
+    "monthly_recurring_revenue": 55707.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-02",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 68,
+    "monthly_recurring_revenue": 10132.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-02",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 60,
+    "monthly_recurring_revenue": 14940.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-02",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 85,
+    "monthly_recurring_revenue": 127415.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-02",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 81,
+    "monthly_recurring_revenue": 24219.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-03",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 48,
+    "monthly_recurring_revenue": 14352.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-03",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 106,
+    "monthly_recurring_revenue": 63494.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-03",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 71,
+    "monthly_recurring_revenue": 10579.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-03",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 69,
+    "monthly_recurring_revenue": 17181.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-03",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 87,
+    "monthly_recurring_revenue": 130413.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-03",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 90,
+    "monthly_recurring_revenue": 26910.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-04",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 53,
+    "monthly_recurring_revenue": 15847.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-04",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 125,
+    "monthly_recurring_revenue": 74875.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-04",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 66,
+    "monthly_recurring_revenue": 9834.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-04",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 62,
+    "monthly_recurring_revenue": 15438.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-04",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 86,
+    "monthly_recurring_revenue": 128914.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-04",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 97,
+    "monthly_recurring_revenue": 29003.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-05",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 57,
+    "monthly_recurring_revenue": 17043.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-05",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 101,
+    "monthly_recurring_revenue": 60499.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-05",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 85,
+    "monthly_recurring_revenue": 12665.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-05",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 72,
+    "monthly_recurring_revenue": 17928.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-05",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 91,
+    "monthly_recurring_revenue": 136409.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-05",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 124,
+    "monthly_recurring_revenue": 37076.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-06",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 62,
+    "monthly_recurring_revenue": 18538.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-06",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 101,
+    "monthly_recurring_revenue": 60499.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-06",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 113,
+    "monthly_recurring_revenue": 16837.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-06",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 76,
+    "monthly_recurring_revenue": 18924.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-06",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 100,
+    "monthly_recurring_revenue": 149900.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-06",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 120,
+    "monthly_recurring_revenue": 35880.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-07",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 66,
+    "monthly_recurring_revenue": 19734.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-07",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 94,
+    "monthly_recurring_revenue": 56306.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-07",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 102,
+    "monthly_recurring_revenue": 15198.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-07",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 90,
+    "monthly_recurring_revenue": 22410.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-07",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 87,
+    "monthly_recurring_revenue": 130413.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-07",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 113,
+    "monthly_recurring_revenue": 33787.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-08",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 68,
+    "monthly_recurring_revenue": 20332.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-08",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 114,
+    "monthly_recurring_revenue": 68286.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-08",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 91,
+    "monthly_recurring_revenue": 13559.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-08",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 75,
+    "monthly_recurring_revenue": 18675.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-08",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 83,
+    "monthly_recurring_revenue": 124417.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-08",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 104,
+    "monthly_recurring_revenue": 31096.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-09",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 74,
+    "monthly_recurring_revenue": 22126.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-09",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 98,
+    "monthly_recurring_revenue": 58702.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-09",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 116,
+    "monthly_recurring_revenue": 17284.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-09",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 86,
+    "monthly_recurring_revenue": 21414.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-09",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 72,
+    "monthly_recurring_revenue": 107928.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-09",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 122,
+    "monthly_recurring_revenue": 36478.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-10",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 84,
+    "monthly_recurring_revenue": 25116.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-10",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 76,
+    "monthly_recurring_revenue": 45524.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-10",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 134,
+    "monthly_recurring_revenue": 19966.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-10",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 85,
+    "monthly_recurring_revenue": 21165.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-10",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 89,
+    "monthly_recurring_revenue": 133411.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-10",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 114,
+    "monthly_recurring_revenue": 34086.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-11",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 102,
+    "monthly_recurring_revenue": 30498.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-11",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 89,
+    "monthly_recurring_revenue": 53311.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-11",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 137,
+    "monthly_recurring_revenue": 20413.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-11",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 109,
+    "monthly_recurring_revenue": 27141.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-11",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 99,
+    "monthly_recurring_revenue": 148401.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-11",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 123,
+    "monthly_recurring_revenue": 36777.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-12",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 104,
+    "monthly_recurring_revenue": 31096.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2024-12",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 112,
+    "monthly_recurring_revenue": 67088.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2024-12",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 138,
+    "monthly_recurring_revenue": 20562.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2024-12",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 113,
+    "monthly_recurring_revenue": 28137.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2024-12",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 100,
+    "monthly_recurring_revenue": 149900.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2024-12",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 107,
+    "monthly_recurring_revenue": 31993.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-01",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 122,
+    "monthly_recurring_revenue": 36478.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-01",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 137,
+    "monthly_recurring_revenue": 82063.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-01",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 127,
+    "monthly_recurring_revenue": 18923.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-01",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 130,
+    "monthly_recurring_revenue": 32370.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-01",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 89,
+    "monthly_recurring_revenue": 133411.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-01",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 113,
+    "monthly_recurring_revenue": 33787.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-02",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 148,
+    "monthly_recurring_revenue": 44252.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-02",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 150,
+    "monthly_recurring_revenue": 89850.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-02",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 132,
+    "monthly_recurring_revenue": 19668.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-02",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 133,
+    "monthly_recurring_revenue": 33117.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-02",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 97,
+    "monthly_recurring_revenue": 145403.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-02",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 142,
+    "monthly_recurring_revenue": 42458.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-03",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 170,
+    "monthly_recurring_revenue": 50830.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-03",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 150,
+    "monthly_recurring_revenue": 89850.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-03",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 140,
+    "monthly_recurring_revenue": 20860.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-03",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 138,
+    "monthly_recurring_revenue": 34362.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-03",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 110,
+    "monthly_recurring_revenue": 164890.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-03",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 149,
+    "monthly_recurring_revenue": 44551.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-04",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 167,
+    "monthly_recurring_revenue": 49933.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-04",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 158,
+    "monthly_recurring_revenue": 94642.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-04",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 138,
+    "monthly_recurring_revenue": 20562.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-04",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 146,
+    "monthly_recurring_revenue": 36354.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-04",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 141,
+    "monthly_recurring_revenue": 211359.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-04",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 143,
+    "monthly_recurring_revenue": 42757.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-05",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 166,
+    "monthly_recurring_revenue": 49634.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-05",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 176,
+    "monthly_recurring_revenue": 105424.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-05",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 135,
+    "monthly_recurring_revenue": 20115.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-05",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 153,
+    "monthly_recurring_revenue": 38097.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-05",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 129,
+    "monthly_recurring_revenue": 193371.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-05",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 162,
+    "monthly_recurring_revenue": 48438.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-06",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 190,
+    "monthly_recurring_revenue": 56810.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-06",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 169,
+    "monthly_recurring_revenue": 101231.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-06",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 155,
+    "monthly_recurring_revenue": 23095.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-06",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 135,
+    "monthly_recurring_revenue": 33615.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-06",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 155,
+    "monthly_recurring_revenue": 232345.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-06",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 188,
+    "monthly_recurring_revenue": 56212.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-07",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 199,
+    "monthly_recurring_revenue": 59501.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-07",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 159,
+    "monthly_recurring_revenue": 95241.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-07",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 141,
+    "monthly_recurring_revenue": 21009.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-07",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 128,
+    "monthly_recurring_revenue": 31872.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-07",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 166,
+    "monthly_recurring_revenue": 248834.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-07",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 176,
+    "monthly_recurring_revenue": 52624.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-08",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 182,
+    "monthly_recurring_revenue": 54418.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-08",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 154,
+    "monthly_recurring_revenue": 92246.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-08",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 140,
+    "monthly_recurring_revenue": 20860.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-08",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 115,
+    "monthly_recurring_revenue": 28635.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-08",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 166,
+    "monthly_recurring_revenue": 248834.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-08",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 155,
+    "monthly_recurring_revenue": 46345.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-09",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 192,
+    "monthly_recurring_revenue": 57408.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-09",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 152,
+    "monthly_recurring_revenue": 91048.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-09",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 158,
+    "monthly_recurring_revenue": 23542.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-09",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 127,
+    "monthly_recurring_revenue": 31623.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-09",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 160,
+    "monthly_recurring_revenue": 239840.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-09",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 186,
+    "monthly_recurring_revenue": 55614.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-10",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 208,
+    "monthly_recurring_revenue": 62192.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-10",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 146,
+    "monthly_recurring_revenue": 87454.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-10",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 181,
+    "monthly_recurring_revenue": 26969.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-10",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 159,
+    "monthly_recurring_revenue": 39591.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-10",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 155,
+    "monthly_recurring_revenue": 232345.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-10",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 185,
+    "monthly_recurring_revenue": 55315.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-11",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 227,
+    "monthly_recurring_revenue": 67873.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-11",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 184,
+    "monthly_recurring_revenue": 110216.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-11",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 176,
+    "monthly_recurring_revenue": 26224.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-11",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 153,
+    "monthly_recurring_revenue": 38097.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-11",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 146,
+    "monthly_recurring_revenue": 218854.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-11",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 209,
+    "monthly_recurring_revenue": 62491.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-12",
+    "product_id": "PROD-001",
+    "product_name": "GlassView Analytics",
+    "category": "Analytics",
+    "active_subscriptions": 213,
+    "monthly_recurring_revenue": 63687.0,
+    "unit_cost": 120.0,
+    "list_price": 299.0
+  },
+  {
+    "period": "2025-12",
+    "product_id": "PROD-002",
+    "product_name": "GlassView Pro",
+    "category": "Analytics",
+    "active_subscriptions": 175,
+    "monthly_recurring_revenue": 104825.0,
+    "unit_cost": 200.0,
+    "list_price": 599.0
+  },
+  {
+    "period": "2025-12",
+    "product_id": "PROD-003",
+    "product_name": "DataStream Connector",
+    "category": "Integration",
+    "active_subscriptions": 197,
+    "monthly_recurring_revenue": 29353.0,
+    "unit_cost": 50.0,
+    "list_price": 149.0
+  },
+  {
+    "period": "2025-12",
+    "product_id": "PROD-004",
+    "product_name": "CloudSync Gateway",
+    "category": "Integration",
+    "active_subscriptions": 151,
+    "monthly_recurring_revenue": 37599.0,
+    "unit_cost": 80.0,
+    "list_price": 249.0
+  },
+  {
+    "period": "2025-12",
+    "product_id": "PROD-005",
+    "product_name": "NorthWave Platform",
+    "category": "Platform",
+    "active_subscriptions": 168,
+    "monthly_recurring_revenue": 251832.0,
+    "unit_cost": 500.0,
+    "list_price": 1499.0
+  },
+  {
+    "period": "2025-12",
+    "product_id": "PROD-008",
+    "product_name": "Premium Support",
+    "category": "Support",
+    "active_subscriptions": 217,
+    "monthly_recurring_revenue": 64883.0,
+    "unit_cost": 100.0,
+    "list_price": 299.0
+  }
+]

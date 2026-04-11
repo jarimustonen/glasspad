@@ -1,0 +1,66 @@
+[
+  {
+    "product_id": "PROD-001",
+    "name": "GlassView Analytics",
+    "category": "Analytics",
+    "unit_cost": 120.0,
+    "list_price": 299.0,
+    "type": "subscription"
+  },
+  {
+    "product_id": "PROD-002",
+    "name": "GlassView Pro",
+    "category": "Analytics",
+    "unit_cost": 200.0,
+    "list_price": 599.0,
+    "type": "subscription"
+  },
+  {
+    "product_id": "PROD-003",
+    "name": "DataStream Connector",
+    "category": "Integration",
+    "unit_cost": 50.0,
+    "list_price": 149.0,
+    "type": "subscription"
+  },
+  {
+    "product_id": "PROD-004",
+    "name": "CloudSync Gateway",
+    "category": "Integration",
+    "unit_cost": 80.0,
+    "list_price": 249.0,
+    "type": "subscription"
+  },
+  {
+    "product_id": "PROD-005",
+    "name": "NorthWave Platform",
+    "category": "Platform",
+    "unit_cost": 500.0,
+    "list_price": 1499.0,
+    "type": "subscription"
+  },
+  {
+    "product_id": "PROD-006",
+    "name": "Setup & Onboarding",
+    "category": "Services",
+    "unit_cost": 800.0,
+    "list_price": 2500.0,
+    "type": "one-time"
+  },
+  {
+    "product_id": "PROD-007",
+    "name": "Training Package",
+    "category": "Services",
+    "unit_cost": 400.0,
+    "list_price": 1200.0,
+    "type": "one-time"
+  },
+  {
+    "product_id": "PROD-008",
+    "name": "Premium Support",
+    "category": "Support",
+    "unit_cost": 100.0,
+    "list_price": 299.0,
+    "type": "subscription"
+  }
+]

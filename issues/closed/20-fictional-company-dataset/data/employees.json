@@ -1,0 +1,254 @@
+[
+  {
+    "employee_id": "EMP-001",
+    "name": "Mikko Virtanen",
+    "department": "Engineering",
+    "role": "CTO",
+    "hire_date": "2021-01-15",
+    "annual_salary": 120000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-002",
+    "name": "Anna Lindqvist",
+    "department": "Sales",
+    "role": "VP Sales",
+    "hire_date": "2021-03-01",
+    "annual_salary": 105000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-003",
+    "name": "Lars Johansen",
+    "department": "Engineering",
+    "role": "Senior Developer",
+    "hire_date": "2021-06-15",
+    "annual_salary": 85000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-004",
+    "name": "Sanna Korhonen",
+    "department": "Marketing",
+    "role": "Marketing Director",
+    "hire_date": "2021-09-01",
+    "annual_salary": 90000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-005",
+    "name": "Erik Nilsson",
+    "department": "Engineering",
+    "role": "Developer",
+    "hire_date": "2022-01-10",
+    "annual_salary": 72000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-006",
+    "name": "Katja M\u00e4kel\u00e4",
+    "department": "Finance",
+    "role": "CFO",
+    "hire_date": "2022-02-01",
+    "annual_salary": 110000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-007",
+    "name": "Olav Bergstr\u00f6m",
+    "department": "Sales",
+    "role": "Account Executive",
+    "hire_date": "2022-04-15",
+    "annual_salary": 65000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-008",
+    "name": "Liisa Heikkinen",
+    "department": "Support",
+    "role": "Support Lead",
+    "hire_date": "2022-06-01",
+    "annual_salary": 58000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-009",
+    "name": "Henrik Dahl",
+    "department": "Engineering",
+    "role": "Developer",
+    "hire_date": "2022-08-15",
+    "annual_salary": 70000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-010",
+    "name": "Marja Salminen",
+    "department": "HR",
+    "role": "HR Manager",
+    "hire_date": "2022-10-01",
+    "annual_salary": 68000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-011",
+    "name": "Pekka Laine",
+    "department": "Engineering",
+    "role": "Senior Developer",
+    "hire_date": "2023-01-15",
+    "annual_salary": 82000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-012",
+    "name": "Sofia Andersen",
+    "department": "Sales",
+    "role": "Account Executive",
+    "hire_date": "2023-03-01",
+    "annual_salary": 63000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-013",
+    "name": "Tuomas Rantanen",
+    "department": "Engineering",
+    "role": "DevOps Engineer",
+    "hire_date": "2023-04-15",
+    "annual_salary": 78000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-014",
+    "name": "Elina Koskinen",
+    "department": "Marketing",
+    "role": "Content Specialist",
+    "hire_date": "2023-06-01",
+    "annual_salary": 52000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-015",
+    "name": "Jonas Eriksson",
+    "department": "Support",
+    "role": "Support Engineer",
+    "hire_date": "2023-07-15",
+    "annual_salary": 50000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-016",
+    "name": "Aino Nieminen",
+    "department": "Engineering",
+    "role": "Developer",
+    "hire_date": "2023-09-01",
+    "annual_salary": 68000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-017",
+    "name": "Magnus Olsen",
+    "department": "Sales",
+    "role": "Sales Engineer",
+    "hire_date": "2023-10-15",
+    "annual_salary": 70000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-018",
+    "name": "Riikka H\u00e4m\u00e4l\u00e4inen",
+    "department": "Finance",
+    "role": "Accountant",
+    "hire_date": "2023-11-01",
+    "annual_salary": 55000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-019",
+    "name": "Nils Svensson",
+    "department": "Engineering",
+    "role": "Senior Developer",
+    "hire_date": "2024-01-15",
+    "annual_salary": 84000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-020",
+    "name": "Kaisa Lahtinen",
+    "department": "Operations",
+    "role": "Operations Manager",
+    "hire_date": "2024-02-01",
+    "annual_salary": 72000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-021",
+    "name": "Ville Aalto",
+    "department": "Engineering",
+    "role": "Developer",
+    "hire_date": "2024-04-15",
+    "annual_salary": 67000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-022",
+    "name": "Hanna Bj\u00f6rk",
+    "department": "Sales",
+    "role": "Account Executive",
+    "hire_date": "2024-06-01",
+    "annual_salary": 62000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-023",
+    "name": "Tero Koponen",
+    "department": "Engineering",
+    "role": "QA Engineer",
+    "hire_date": "2024-07-15",
+    "annual_salary": 60000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-024",
+    "name": "Iida Peltonen",
+    "department": "Marketing",
+    "role": "Growth Marketer",
+    "hire_date": "2024-09-01",
+    "annual_salary": 58000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-025",
+    "name": "Oskar Holm",
+    "department": "Support",
+    "role": "Support Engineer",
+    "hire_date": "2024-10-15",
+    "annual_salary": 48000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-026",
+    "name": "Jens Kristiansen",
+    "department": "Engineering",
+    "role": "Developer",
+    "hire_date": "2025-01-15",
+    "annual_salary": 69000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-027",
+    "name": "Maria Kallio",
+    "department": "Sales",
+    "role": "Account Executive",
+    "hire_date": "2025-03-01",
+    "annual_salary": 61000,
+    "active": true
+  },
+  {
+    "employee_id": "EMP-028",
+    "name": "Riku Toivonen",
+    "department": "Engineering",
+    "role": "Developer",
+    "hire_date": "2022-05-01",
+    "annual_salary": 71000,
+    "active": false
+  }
+]

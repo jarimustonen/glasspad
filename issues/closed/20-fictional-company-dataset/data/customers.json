@@ -1,0 +1,202 @@
+[
+  {
+    "customer_id": "CUST-001",
+    "name": "Fjord Shipping AS",
+    "segment": "Enterprise",
+    "region": "Nordics",
+    "country": "NO",
+    "acquisition_date": "2022-06-15"
+  },
+  {
+    "customer_id": "CUST-002",
+    "name": "Baltic Timber Group",
+    "segment": "Mid-Market",
+    "region": "Nordics",
+    "country": "FI",
+    "acquisition_date": "2022-09-01"
+  },
+  {
+    "customer_id": "CUST-003",
+    "name": "Volvo Logistics AB",
+    "segment": "Enterprise",
+    "region": "Nordics",
+    "country": "SE",
+    "acquisition_date": "2022-11-20"
+  },
+  {
+    "customer_id": "CUST-004",
+    "name": "Reykjavik Energy",
+    "segment": "Mid-Market",
+    "region": "Nordics",
+    "country": "IS",
+    "acquisition_date": "2023-01-10"
+  },
+  {
+    "customer_id": "CUST-005",
+    "name": "TechHub Berlin GmbH",
+    "segment": "Mid-Market",
+    "region": "DACH",
+    "country": "DE",
+    "acquisition_date": "2023-02-15"
+  },
+  {
+    "customer_id": "CUST-006",
+    "name": "Zurich Insurance Tech",
+    "segment": "Enterprise",
+    "region": "DACH",
+    "country": "CH",
+    "acquisition_date": "2023-03-01"
+  },
+  {
+    "customer_id": "CUST-007",
+    "name": "Rotterdam Port Auth",
+    "segment": "Enterprise",
+    "region": "Benelux",
+    "country": "NL",
+    "acquisition_date": "2023-04-20"
+  },
+  {
+    "customer_id": "CUST-008",
+    "name": "Copenhagen Startups",
+    "segment": "SMB",
+    "region": "Nordics",
+    "country": "DK",
+    "acquisition_date": "2023-05-10"
+  },
+  {
+    "customer_id": "CUST-009",
+    "name": "Helsinki Digital Oy",
+    "segment": "SMB",
+    "region": "Nordics",
+    "country": "FI",
+    "acquisition_date": "2023-06-01"
+  },
+  {
+    "customer_id": "CUST-010",
+    "name": "Warsaw Fintech Sp.",
+    "segment": "Mid-Market",
+    "region": "CEE",
+    "country": "PL",
+    "acquisition_date": "2023-07-15"
+  },
+  {
+    "customer_id": "CUST-011",
+    "name": "Paris Analytics SAS",
+    "segment": "Enterprise",
+    "region": "Western Europe",
+    "country": "FR",
+    "acquisition_date": "2023-08-01"
+  },
+  {
+    "customer_id": "CUST-012",
+    "name": "London DataCo Ltd",
+    "segment": "Enterprise",
+    "region": "UK",
+    "country": "GB",
+    "acquisition_date": "2023-09-10"
+  },
+  {
+    "customer_id": "CUST-013",
+    "name": "Milan Software Srl",
+    "segment": "Mid-Market",
+    "region": "Southern Europe",
+    "country": "IT",
+    "acquisition_date": "2023-10-20"
+  },
+  {
+    "customer_id": "CUST-014",
+    "name": "Madrid Cloud SA",
+    "segment": "SMB",
+    "region": "Southern Europe",
+    "country": "ES",
+    "acquisition_date": "2023-11-05"
+  },
+  {
+    "customer_id": "CUST-015",
+    "name": "Vienna Systems AG",
+    "segment": "Mid-Market",
+    "region": "DACH",
+    "country": "AT",
+    "acquisition_date": "2023-12-01"
+  },
+  {
+    "customer_id": "CUST-016",
+    "name": "Dublin SaaS Ltd",
+    "segment": "SMB",
+    "region": "UK",
+    "country": "IE",
+    "acquisition_date": "2024-01-15"
+  },
+  {
+    "customer_id": "CUST-017",
+    "name": "Tallinn Tech O\u00dc",
+    "segment": "SMB",
+    "region": "Nordics",
+    "country": "EE",
+    "acquisition_date": "2024-02-20"
+  },
+  {
+    "customer_id": "CUST-018",
+    "name": "Prague Analytics sro",
+    "segment": "Mid-Market",
+    "region": "CEE",
+    "country": "CZ",
+    "acquisition_date": "2024-03-10"
+  },
+  {
+    "customer_id": "CUST-019",
+    "name": "Brussels EU Services",
+    "segment": "Enterprise",
+    "region": "Benelux",
+    "country": "BE",
+    "acquisition_date": "2024-05-01"
+  },
+  {
+    "customer_id": "CUST-020",
+    "name": "Lisbon Waves Lda",
+    "segment": "SMB",
+    "region": "Southern Europe",
+    "country": "PT",
+    "acquisition_date": "2024-06-15"
+  },
+  {
+    "customer_id": "CUST-021",
+    "name": "Riga Innovations SIA",
+    "segment": "SMB",
+    "region": "Nordics",
+    "country": "LV",
+    "acquisition_date": "2024-08-01"
+  },
+  {
+    "customer_id": "CUST-022",
+    "name": "Munich Engineering",
+    "segment": "Enterprise",
+    "region": "DACH",
+    "country": "DE",
+    "acquisition_date": "2024-09-10"
+  },
+  {
+    "customer_id": "CUST-023",
+    "name": "Amsterdam AI BV",
+    "segment": "Mid-Market",
+    "region": "Benelux",
+    "country": "NL",
+    "acquisition_date": "2024-10-20"
+  },
+  {
+    "customer_id": "CUST-024",
+    "name": "Stockholm Growth AB",
+    "segment": "Mid-Market",
+    "region": "Nordics",
+    "country": "SE",
+    "acquisition_date": "2024-11-05"
+  },
+  {
+    "customer_id": "CUST-025",
+    "name": "Oslo Ventures AS",
+    "segment": "SMB",
+    "region": "Nordics",
+    "country": "NO",
+    "acquisition_date": "2025-01-10"
+  }
+]

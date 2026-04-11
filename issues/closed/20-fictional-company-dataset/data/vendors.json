@@ -1,0 +1,72 @@
+[
+  {
+    "vendor_id": "VEND-001",
+    "name": "AWS Europe",
+    "category": "Cloud Infrastructure",
+    "country": "IE",
+    "payment_terms": 30
+  },
+  {
+    "vendor_id": "VEND-002",
+    "name": "Hetzner Online",
+    "category": "Cloud Infrastructure",
+    "country": "DE",
+    "payment_terms": 14
+  },
+  {
+    "vendor_id": "VEND-003",
+    "name": "JetBrains sro",
+    "category": "Software Licenses",
+    "country": "CZ",
+    "payment_terms": 30
+  },
+  {
+    "vendor_id": "VEND-004",
+    "name": "Telia Finland Oyj",
+    "category": "Telecommunications",
+    "country": "FI",
+    "payment_terms": 14
+  },
+  {
+    "vendor_id": "VEND-005",
+    "name": "Leaseplan Finland",
+    "category": "Office & Facilities",
+    "country": "FI",
+    "payment_terms": 30
+  },
+  {
+    "vendor_id": "VEND-006",
+    "name": "Smartly.io",
+    "category": "Marketing Services",
+    "country": "FI",
+    "payment_terms": 30
+  },
+  {
+    "vendor_id": "VEND-007",
+    "name": "Accountor Group",
+    "category": "Professional Services",
+    "country": "FI",
+    "payment_terms": 14
+  },
+  {
+    "vendor_id": "VEND-008",
+    "name": "Visma Solutions",
+    "category": "Software Licenses",
+    "country": "NO",
+    "payment_terms": 30
+  },
+  {
+    "vendor_id": "VEND-009",
+    "name": "Stripe Payments",
+    "category": "Payment Processing",
+    "country": "IE",
+    "payment_terms": 7
+  },
+  {
+    "vendor_id": "VEND-010",
+    "name": "DataDog Inc",
+    "category": "Monitoring",
+    "country": "US",
+    "payment_terms": 30
+  }
+]
