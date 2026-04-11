@@ -2429,11 +2429,23 @@
       var valueSorter = function(a, b) {
         var va = getRowTotal(a, sortedColKeys, cells, values, vi);
         var vb = getRowTotal(b, sortedColKeys, cells, values, vi);
-        var cmp = (va === null ? -Infinity : va) - (vb === null ? -Infinity : vb);
+        if (va === null && vb === null) return 0;
+        if (va === null) return desc ? 1 : -1;
+        if (vb === null) return desc ? -1 : 1;
+        var cmp = va < vb ? -1 : va > vb ? 1 : 0;
         return desc ? -cmp : cmp;
       };
       if (needsGroupedSort) {
-        sortedRowKeys = sortWithinGroups(sortedRowKeys, rowKeys, valueSorter);
+        sortedRowKeys = sortWithinGroups(sortedRowKeys, rowKeys, valueSorter, function(a, b, groups) {
+          // Sort groups by aggregate subtotal across all members
+          var totalA = getGroupTotal(groups[a], sortedColKeys, cells, values, vi);
+          var totalB = getGroupTotal(groups[b], sortedColKeys, cells, values, vi);
+          if (totalA === null && totalB === null) return 0;
+          if (totalA === null) return desc ? 1 : -1;
+          if (totalB === null) return desc ? -1 : 1;
+          var cmp = totalA < totalB ? -1 : totalA > totalB ? 1 : 0;
+          return desc ? -cmp : cmp;
+        });
       } else {
         sortedRowKeys.sort(valueSorter);
       }
@@ -2559,8 +2571,19 @@
     return resolveAgg(total, values[vi].aggregate);
   }
 
+  function getGroupTotal(memberKeys, colKeys, cells, values, vi) {
+    var total = { sum: 0, rowCount: 0, valueCount: 0, numericCount: 0, min: Infinity, max: -Infinity, distinct: Object.create(null) };
+    for (var r = 0; r < memberKeys.length; r++) {
+      for (var c = 0; c < colKeys.length; c++) {
+        var cellKey = memberKeys[r] + '||' + colKeys[c];
+        if (cellKey in cells) mergeAggStates(total, cells[cellKey][vi]);
+      }
+    }
+    return resolveAgg(total, values[vi].aggregate);
+  }
+
   // Sort rows within first-level groups to preserve subtotal contiguity
-  function sortWithinGroups(rowKeyList, rowKeysMap, comparator) {
+  function sortWithinGroups(rowKeyList, rowKeysMap, comparator, groupComparator) {
     // Group by first row field value
     var groups = Object.create(null);
     var groupOrder = [];
@@ -2577,10 +2600,12 @@
     for (var g = 0; g < groupOrder.length; g++) {
       groups[groupOrder[g]].sort(comparator);
     }
-    // Then sort groups by their (now-sorted) first member
-    groupOrder.sort(function(a, b) {
-      return comparator(groups[a][0], groups[b][0]);
-    });
+    // Sort groups by group-level comparator or by first member
+    if (groupComparator) {
+      groupOrder.sort(function(a, b) { return groupComparator(a, b, groups); });
+    } else {
+      groupOrder.sort(function(a, b) { return comparator(groups[a][0], groups[b][0]); });
+    }
     var result = [];
     for (var g2 = 0; g2 < groupOrder.length; g2++) {
       var members = groups[groupOrder[g2]];
