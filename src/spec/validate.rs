@@ -113,6 +113,7 @@ pub fn validate(
             ("stats", section.stats.is_some() && section.section_type != SectionType::Stats),
             ("list", section.list.is_some() && section.section_type != SectionType::List),
             ("markdown", section.markdown.is_some() && section.section_type != SectionType::Markdown),
+            ("pivot", section.pivot.is_some() && section.section_type != SectionType::Pivot),
         ];
         for (block, present) in extra {
             if *present {
