@@ -221,30 +221,31 @@ fn validate_chart(
         ));
     }
 
-    // chart.encoding must be an object
-    if !chart.encoding.is_object() && !chart.encoding.is_null() {
-        errors.push(err(Some(label), "chart.encoding must be a JSON object"));
-        return;
-    }
+    // chart.encoding must be an object (null/missing is not allowed)
+    let enc = match &chart.encoding {
+        serde_json::Value::Object(enc) => enc,
+        _ => {
+            errors.push(err(Some(label), "chart.encoding must be a JSON object"));
+            return;
+        }
+    };
 
     // interactive_filter.field should appear in encoding
     if let Some(ref filter) = section.interactive_filter {
-        if let serde_json::Value::Object(ref enc) = chart.encoding {
-            let field_found = enc.values().any(|channel| {
-                channel
-                    .get("field")
-                    .and_then(|f| f.as_str())
-                    .is_some_and(|f| f == filter.field)
-            });
-            if !field_found {
-                errors.push(err(
-                    Some(label),
-                    format!(
-                        "interactive_filter.field \"{}\" not found in chart encoding",
-                        filter.field
-                    ),
-                ));
-            }
+        let field_found = enc.values().any(|channel| {
+            channel
+                .get("field")
+                .and_then(|f| f.as_str())
+                .is_some_and(|f| f == filter.field)
+        });
+        if !field_found {
+            errors.push(err(
+                Some(label),
+                format!(
+                    "interactive_filter.field \"{}\" not found in chart encoding",
+                    filter.field
+                ),
+            ));
         }
     }
 }

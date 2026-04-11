@@ -203,6 +203,68 @@ sections:
     assert!(errors.iter().any(|e| e.message.contains("only supported on chart")));
 }
 
+#[test]
+fn validate_interactive_filter_with_missing_encoding_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: c1
+    title: "Chart"
+    type: chart
+    interactive_filter:
+      field: country
+    chart:
+      mark: bar
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+        "expected encoding error, got: {:?}", errors);
+}
+
+#[test]
+fn validate_interactive_filter_with_explicit_null_encoding_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: c1
+    title: "Chart"
+    type: chart
+    interactive_filter:
+      field: country
+    chart:
+      mark: bar
+      encoding: null
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+        "expected encoding error, got: {:?}", errors);
+}
+
+#[test]
+fn validate_interactive_filter_with_non_object_encoding_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - id: c1
+    title: "Chart"
+    type: chart
+    interactive_filter:
+      field: country
+    chart:
+      mark: bar
+      encoding: "not an object"
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &HashSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+        "expected encoding error, got: {:?}", errors);
+}
+
 // --- markdown schema tests ---
 
 #[test]
