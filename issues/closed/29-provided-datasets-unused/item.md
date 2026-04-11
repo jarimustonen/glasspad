@@ -4,8 +4,11 @@ updated: 2026-04-11
 type: bug
 reporter: llm-review
 assignee: jari
-status: open
+status: closed
 priority: high
+commits:
+  - hash: 8106ed9
+    summary: "fix: validate provided_datasets properly with clean separation of concerns"
 ---
 
 # 29. `provided_datasets` parameter in `validate()` is completely unused

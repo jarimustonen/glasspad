@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use super::schema::{DashboardSpec, SectionType};
 
@@ -30,10 +30,14 @@ const SUPPORTED_AGGREGATES: &[&str] = &["count", "distinct", "sum", "avg", "min"
 
 /// Validate a parsed DashboardSpec.
 ///
-/// `provided_datasets` is the set of dataset names supplied via --data flags or API.
+/// `external_datasets` contains only dataset names provided externally (e.g. via
+/// `--data` flags or API uploads). Inline datasets derived from `section.inline_data`
+/// are computed internally from the spec — callers should NOT include them here.
+///
+/// Uses `BTreeSet` for deterministic error ordering.
 pub fn validate(
     spec: &DashboardSpec,
-    provided_datasets: &HashSet<String>,
+    external_datasets: &BTreeSet<String>,
 ) -> Vec<SpecError> {
     let mut errors = Vec::new();
 
@@ -50,12 +54,37 @@ pub fn validate(
         errors.push(err(None, "sections list is empty"));
     }
 
-    // Check that declared datasets are actually provided (BTreeMap iteration = stable order)
+    // Compute inline dataset names from the spec (single source of truth:
+    // Section::inline_dataset_name). These supplement external datasets.
+    let inline_names: BTreeSet<String> = spec
+        .sections
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, s)| s.inline_dataset_name(idx))
+        .collect();
+
+    // Check that declared datasets are actually provided (BTreeMap iteration = stable order).
+    // A dataset is available if it's either externally provided or supplied via inline_data.
     for name in spec.datasets.keys() {
-        if !provided_datasets.contains(name) {
+        if !external_datasets.contains(name) && !inline_names.contains(name) {
             errors.push(err(
                 None,
                 format!("dataset \"{}\" is declared but no data was provided", name),
+            ));
+        }
+    }
+
+    // Check that externally provided datasets are declared in spec (catches typos /
+    // stale --data flags). Only checks external datasets — inline names are derived
+    // from the spec and don't need top-level declarations. BTreeSet iteration = stable order.
+    for name in external_datasets {
+        if !spec.datasets.contains_key(name) {
+            errors.push(err(
+                None,
+                format!(
+                    "provided dataset \"{}\" is not declared in spec datasets",
+                    name
+                ),
             ));
         }
     }
@@ -571,7 +600,7 @@ mod tests {
     #[test]
     fn valid_minimal_spec() {
         let spec = minimal_spec();
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -579,7 +608,7 @@ mod tests {
     fn unsupported_spec_version() {
         let mut spec = minimal_spec();
         spec.spec_version = 99;
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("unsupported spec_version")));
     }
 
@@ -587,7 +616,7 @@ mod tests {
     fn empty_sections() {
         let mut spec = minimal_spec();
         spec.sections.clear();
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("sections list is empty")));
     }
 
@@ -595,7 +624,7 @@ mod tests {
     fn source_references_undeclared_dataset() {
         let mut spec = minimal_spec();
         spec.sections[0].source = Some("nonexistent".to_string());
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("not declared in datasets")));
     }
 
@@ -606,8 +635,8 @@ mod tests {
         spec.datasets.insert("events".to_string(), DatasetDecl {});
         spec.sections[0].source = Some("events".to_string());
         spec.sections[0].inline_data = Some(vec![]);
-        let provided = HashSet::from(["events".to_string()]);
-        let errors = validate(&spec, &provided);
+        // No external datasets needed — inline_data satisfies the "events" declaration
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -620,7 +649,7 @@ mod tests {
             mark: "scatter".to_string(),
             encoding: serde_json::json!({}),
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("unknown chart mark")));
     }
 
@@ -630,7 +659,7 @@ mod tests {
         spec.sections[0].section_type = SectionType::Chart;
         spec.sections[0].stats = None;
         spec.sections[0].chart = None;
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("chart section requires chart config")));
     }
 
@@ -650,7 +679,7 @@ mod tests {
         spec.sections[0].interactive_filter = Some(InteractiveFilter {
             field: "country".to_string(),
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("not found in chart encoding")));
     }
 
@@ -670,7 +699,7 @@ mod tests {
         spec.sections[0].interactive_filter = Some(InteractiveFilter {
             field: "country".to_string(),
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -689,7 +718,7 @@ mod tests {
             field: "country".to_string(),
         });
         // id is None
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("requires section id")));
     }
 
@@ -698,7 +727,7 @@ mod tests {
         let mut spec = minimal_spec();
         spec.sections[0].section_type = SectionType::Table;
         spec.sections[0].stats = None;
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("table section requires table config")));
     }
 
@@ -721,7 +750,7 @@ mod tests {
                 style: None,
             }]),
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("row_actions requires table.row_id_field")));
     }
 
@@ -729,7 +758,7 @@ mod tests {
     fn stats_unknown_aggregate() {
         let mut spec = minimal_spec();
         spec.sections[0].stats.as_mut().unwrap().items[0].aggregate = "median".to_string();
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("unknown aggregate \"median\"")));
     }
 
@@ -738,7 +767,7 @@ mod tests {
         let mut spec = minimal_spec();
         spec.sections[0].stats.as_mut().unwrap().items[0].aggregate = "distinct".to_string();
         spec.sections[0].stats.as_mut().unwrap().items[0].field = None;
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("requires field")));
     }
 
@@ -758,7 +787,7 @@ mod tests {
             detail: None,
             on_action: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("requires list.id_field")));
     }
 
@@ -767,7 +796,7 @@ mod tests {
         let mut spec = minimal_spec();
         spec.sections[0].section_type = SectionType::Markdown;
         spec.sections[0].stats = None;
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("markdown section requires markdown config")));
     }
 
@@ -784,7 +813,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("requires either content or content_field")));
     }
 
@@ -801,7 +830,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -820,7 +849,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let provided = HashSet::from(["notes".to_string()]);
+        let provided = BTreeSet::from(["notes".to_string()]);
         let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
@@ -841,7 +870,7 @@ mod tests {
             detail: None,
             on_action: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -906,7 +935,7 @@ mod tests {
                 batch_actions: None,
             },
         ];
-        let provided = HashSet::from(["events".to_string()]);
+        let provided = BTreeSet::from(["events".to_string()]);
         let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
@@ -926,7 +955,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("cannot specify both content and content_field")));
     }
 
@@ -944,7 +973,7 @@ mod tests {
             max_rows: None,
         });
         // No source, no inline_data
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("content_field requires source or inline_data")));
     }
 
@@ -962,7 +991,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("toc_levels must contain values 1-6, got 7")));
     }
 
@@ -980,7 +1009,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("toc_levels must contain values 1-6, got 0")));
     }
 
@@ -997,7 +1026,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -1015,7 +1044,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("toc_levels requires section id")));
     }
 
@@ -1032,7 +1061,7 @@ mod tests {
             link_target: None,
             max_rows: Some(0),
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("max_rows must be greater than 0")));
     }
 
@@ -1051,7 +1080,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("spec.toc and markdown toc_levels cannot both be enabled")));
     }
 
@@ -1106,7 +1135,7 @@ mod tests {
                 batch_actions: None,
             },
         ];
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("only one markdown section may define toc_levels")));
     }
 
@@ -1114,19 +1143,127 @@ mod tests {
     fn declared_dataset_not_provided() {
         let mut spec = minimal_spec();
         spec.datasets.insert("events".to_string(), DatasetDecl {});
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert_eq!(errors.len(), 1, "expected exactly one error, got: {:?}", errors);
         assert!(errors[0].message.contains("dataset \"events\" is declared but no data was provided"));
         assert!(errors[0].section.is_none());
     }
 
     #[test]
-    fn declared_dataset_provided_is_valid() {
+    fn declared_dataset_provided_externally() {
         let mut spec = minimal_spec();
         spec.datasets.insert("events".to_string(), DatasetDecl {});
         spec.sections[0].source = Some("events".to_string());
-        let provided = HashSet::from(["events".to_string()]);
-        let errors = validate(&spec, &provided);
+        let external = BTreeSet::from(["events".to_string()]);
+        let errors = validate(&spec, &external);
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn declared_dataset_provided_via_inline_data() {
+        // A declared dataset satisfied by inline_data (no external data needed)
+        let mut spec = minimal_spec();
+        spec.datasets.insert("events".to_string(), DatasetDecl {});
+        spec.sections[0].source = Some("events".to_string());
+        spec.sections[0].inline_data = Some(vec![]);
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn external_dataset_not_declared() {
+        let spec = minimal_spec();
+        let external = BTreeSet::from(["unknown".to_string()]);
+        let errors = validate(&spec, &external);
+        assert_eq!(errors.len(), 1, "expected exactly one error, got: {:?}", errors);
+        assert!(errors[0].message.contains("provided dataset \"unknown\" is not declared"));
+    }
+
+    #[test]
+    fn multiple_external_datasets_not_declared_deterministic_order() {
+        let spec = minimal_spec();
+        let external = BTreeSet::from(["zebra".to_string(), "alpha".to_string()]);
+        let errors = validate(&spec, &external);
+        let undeclared: Vec<&str> = errors
+            .iter()
+            .filter(|e| e.message.contains("not declared"))
+            .map(|e| e.message.as_str())
+            .collect();
+        assert_eq!(undeclared.len(), 2);
+        // BTreeSet guarantees alphabetical order
+        assert!(undeclared[0].contains("alpha"));
+        assert!(undeclared[1].contains("zebra"));
+    }
+
+    #[test]
+    fn inline_dataset_named_by_source_not_flagged() {
+        // inline_data section with source → dataset name comes from source
+        let mut spec = minimal_spec();
+        spec.datasets.insert("events".to_string(), DatasetDecl {});
+        spec.sections[0].source = Some("events".to_string());
+        spec.sections[0].inline_data = Some(vec![]);
+        // No external datasets — inline_data satisfies the declaration
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn inline_dataset_named_by_id_not_flagged() {
+        // inline_data section with id but no source → dataset name comes from id
+        let mut spec = minimal_spec();
+        spec.sections[0].id = Some("my_data".to_string());
+        spec.sections[0].inline_data = Some(vec![]);
+        // Declared dataset matches the id
+        spec.datasets.insert("my_data".to_string(), DatasetDecl {});
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn inline_dataset_synthetic_name_no_false_positive() {
+        // inline_data section with no source and no id → _inline_0
+        // This synthetic name is NOT in spec.datasets, which is fine
+        let mut spec = minimal_spec();
+        spec.sections[0].inline_data = Some(vec![]);
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(
+            !errors.iter().any(|e| e.message.contains("not declared")),
+            "synthetic inline name should not trigger undeclared error: {:?}",
+            errors,
+        );
+    }
+
+    #[test]
+    fn multiple_inline_sections_all_exempt() {
+        let mut spec = minimal_spec();
+        spec.datasets.insert("ds1".to_string(), DatasetDecl {});
+        spec.sections[0].source = Some("ds1".to_string());
+        spec.sections[0].inline_data = Some(vec![]);
+        // Add a second inline section with id
+        spec.sections.push(Section {
+            id: Some("ds2".to_string()),
+            title: "S2".to_string(),
+            section_type: SectionType::Stats,
+            source: None,
+            inline_data: Some(vec![]),
+            chart: None,
+            table: None,
+            stats: Some(StatsConfig {
+                items: vec![StatsItem {
+                    label: "Total".to_string(),
+                    aggregate: "count".to_string(),
+                    field: None,
+                    where_clause: None,
+                }],
+            }),
+            list: None,
+            markdown: None,
+            pivot: None,
+            interactive_filter: None,
+            selectable: None,
+            batch_actions: None,
+        });
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.is_empty(), "errors: {:?}", errors);
     }
 
@@ -1150,7 +1287,7 @@ mod tests {
             mark: "bar".to_string(),
             encoding: serde_json::json!({}),
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("\"chart\" config block not allowed on table section")));
     }
 
@@ -1181,7 +1318,7 @@ mod tests {
             link_target: None,
             max_rows: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("\"chart\" config block not allowed on table section")));
         assert!(errors.iter().any(|e| e.message.contains("\"markdown\" config block not allowed on table section")));
     }
@@ -1206,7 +1343,7 @@ mod tests {
             detail: None,
             on_action: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("\"list\" config block not allowed on chart section")));
     }
 
@@ -1261,7 +1398,7 @@ mod tests {
                 batch_actions: None,
             },
         ];
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("duplicate section id")));
     }
 
@@ -1270,7 +1407,7 @@ mod tests {
     #[test]
     fn pivot_valid() {
         let mut spec = minimal_spec();
-        let provided = HashSet::from(["sales".to_string()]);
+        let provided = BTreeSet::from(["sales".to_string()]);
         spec.datasets.insert("sales".to_string(), DatasetDecl {});
         spec.sections[0].section_type = SectionType::Pivot;
         spec.sections[0].stats = None;
@@ -1300,7 +1437,7 @@ mod tests {
         spec.sections[0].stats = None;
         spec.sections[0].pivot = None;
         spec.sections[0].inline_data = Some(vec![]);
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("pivot section requires pivot config")));
     }
 
@@ -1324,7 +1461,7 @@ mod tests {
             show_subtotals: false,
             sort: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("pivot.rows must not be empty")));
     }
 
@@ -1342,7 +1479,7 @@ mod tests {
             show_subtotals: false,
             sort: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("pivot.values must not be empty")));
     }
 
@@ -1366,7 +1503,7 @@ mod tests {
             show_subtotals: false,
             sort: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("unknown pivot aggregate \"median\"")));
     }
 
@@ -1391,7 +1528,7 @@ mod tests {
             show_subtotals: false,
             sort: None,
         });
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("pivot section requires source or inline_data")));
     }
 }

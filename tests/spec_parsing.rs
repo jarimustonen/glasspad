@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use glasspad::spec::schema::DashboardSpec;
 use glasspad::spec::validate;
@@ -22,7 +22,7 @@ fn parse_valid_dashboard() {
 fn validate_valid_dashboard() {
     let yaml = load_fixture("valid_dashboard.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let provided = HashSet::from(["events".to_string()]);
+    let provided = BTreeSet::from(["events".to_string()]);
     let errors = validate::validate(&spec, &provided);
     assert!(errors.is_empty(), "errors: {:?}", errors);
 }
@@ -31,7 +31,7 @@ fn validate_valid_dashboard() {
 fn validate_declared_dataset_without_provided_data() {
     let yaml = load_fixture("valid_dashboard.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert_eq!(errors.len(), 1, "expected exactly one error, got: {:?}", errors);
     assert!(errors[0].message.contains("dataset \"events\" is declared but no data was provided"));
 }
@@ -47,7 +47,7 @@ fn parse_invalid_no_version_fails() {
 fn validate_bad_aggregate() {
     let yaml = load_fixture("invalid_bad_aggregate.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("unknown aggregate")));
 }
 
@@ -98,7 +98,7 @@ fn parse_valid_markdown() {
 fn validate_valid_markdown() {
     let yaml = load_fixture("valid_markdown.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let provided = HashSet::from(["docs".to_string()]);
+    let provided = BTreeSet::from(["docs".to_string()]);
     let errors = validate::validate(&spec, &provided);
     assert!(errors.is_empty(), "errors: {:?}", errors);
 }
@@ -179,7 +179,7 @@ sections:
       encoding: "not an object"
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")));
 }
 
@@ -199,7 +199,7 @@ sections:
         - { label: "Total", aggregate: count }
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("only supported on chart")));
 }
 
@@ -342,7 +342,7 @@ fn parse_valid_pivot() {
 fn validate_valid_pivot() {
     let yaml = load_fixture("valid_pivot.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let provided = HashSet::from(["sales".to_string()]);
+    let provided = BTreeSet::from(["sales".to_string()]);
     let errors = validate::validate(&spec, &provided);
     assert!(errors.is_empty(), "errors: {:?}", errors);
 }
@@ -363,7 +363,7 @@ fn parse_valid_pivot_minimal() {
 fn validate_valid_pivot_minimal() {
     let yaml = load_fixture("valid_pivot_minimal.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.is_empty(), "errors: {:?}", errors);
 }
 
@@ -371,7 +371,7 @@ fn validate_valid_pivot_minimal() {
 fn validate_pivot_field_overlap_rejected() {
     let yaml = load_fixture("invalid_pivot_overlap.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("appears in both pivot.rows and pivot.columns")));
 }
 
@@ -379,7 +379,7 @@ fn validate_pivot_field_overlap_rejected() {
 fn validate_pivot_subtotals_single_row_rejected() {
     let yaml = load_fixture("invalid_pivot_subtotals_single_row.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("show_subtotals requires at least 2 row fields")));
 }
 
@@ -400,7 +400,7 @@ sections:
         - aggregate: sum
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("requires field")));
 }
 
@@ -422,7 +422,7 @@ sections:
           label: "Rows"
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.is_empty(), "errors: {:?}", errors);
 }
 
@@ -444,7 +444,7 @@ sections:
           aggregate: sum
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("empty field name")));
 }
 
@@ -468,7 +468,7 @@ sections:
           currency: ""
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("valid 3-letter currency code")));
 }
 
@@ -493,7 +493,7 @@ sections:
         value_index: 5
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("out of range")));
 }
 
@@ -516,7 +516,7 @@ sections:
           aggregate: sum
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("duplicate field")));
 }
 

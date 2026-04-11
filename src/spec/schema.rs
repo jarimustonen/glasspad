@@ -104,6 +104,28 @@ pub enum SectionType {
     Pivot,
 }
 
+impl Section {
+    /// Canonical dataset name for a section with inline_data.
+    ///
+    /// Returns `None` if the section has no inline_data.
+    /// Precedence: source > id > _inline_{idx} (positional fallback).
+    ///
+    /// This is the single source of truth for inline dataset naming — used by
+    /// both dataset collection (`collect_datasets`) and validation.
+    pub fn inline_dataset_name(&self, idx: usize) -> Option<String> {
+        if self.inline_data.is_some() {
+            Some(
+                self.source
+                    .clone()
+                    .or_else(|| self.id.clone())
+                    .unwrap_or_else(|| format!("_inline_{}", idx)),
+            )
+        } else {
+            None
+        }
+    }
+}
+
 impl SectionType {
     pub fn as_spec_str(&self) -> &'static str {
         match self {

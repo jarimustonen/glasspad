@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::{
@@ -35,19 +35,25 @@ fn collect_datasets(
     for (idx, section) in spec.sections.iter().enumerate() {
         if let Some(ref data) = section.inline_data {
             let name = section
-                .source
-                .clone()
-                .or_else(|| section.id.clone())
-                .unwrap_or_else(|| format!("_inline_{}", idx));
+                .inline_dataset_name(idx)
+                .expect("inline_data is Some");
 
             if let Some(existing) = datasets.get(&name) {
+                // Reject if an external dataset collides with inline data (even if
+                // payloads match — origin ambiguity hides stale --data flags).
+                if external_datasets.contains_key(&name) {
+                    return Err(format!(
+                        "Dataset '{}' is provided both externally and via inline_data (section [{}] \"{}\")",
+                        name, idx, section.title
+                    ));
+                }
                 if existing != data {
                     return Err(format!(
                         "Conflicting dataset definitions for '{}' (section [{}] \"{}\")",
                         name, idx, section.title
                     ));
                 }
-                // Same data, already present — skip
+                // Same inline data, already present — skip
             } else {
                 datasets.insert(name, data.clone());
             }
@@ -82,11 +88,12 @@ pub async fn create_pad(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
 
     // Collect datasets (no external datasets via API body-only path)
-    let datasets = collect_datasets(&spec, &BTreeMap::new())
+    let external = BTreeMap::new();
+    let datasets = collect_datasets(&spec, &external)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let provided: HashSet<String> = datasets.keys().cloned().collect();
+    let external_names: BTreeSet<String> = external.keys().cloned().collect();
 
-    let errors = validate::validate(&spec, &provided);
+    let errors = validate::validate(&spec, &external_names);
     if !errors.is_empty() {
         let msg = errors
             .iter()
@@ -173,14 +180,27 @@ pub async fn update_pad(
     let body_str = String::from_utf8(body.to_vec())
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid UTF-8".to_string()))?;
 
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !content_type.is_empty() && !content_type.contains("yaml") {
+        return Err((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Expected Content-Type: application/x-yaml".to_string(),
+        ));
+    }
+
     let spec: DashboardSpec = serde_yaml::from_str(&body_str)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
 
-    let datasets = collect_datasets(&spec, &BTreeMap::new())
+    let external = BTreeMap::new();
+    let datasets = collect_datasets(&spec, &external)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let provided: HashSet<String> = datasets.keys().cloned().collect();
+    let external_names: BTreeSet<String> = external.keys().cloned().collect();
 
-    let errors = validate::validate(&spec, &provided);
+    let errors = validate::validate(&spec, &external_names);
     if !errors.is_empty() {
         let msg = errors.iter().map(|e| format!("  - {}", e)).collect::<Vec<_>>().join("\n");
         return Err((StatusCode::BAD_REQUEST, format!("Spec validation failed:\n{}", msg)));
