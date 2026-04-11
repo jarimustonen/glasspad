@@ -24,6 +24,7 @@ issues/
 | `feature`     | New capability or system                   | New CLI command, new integration |
 | `improvement` | Enhancement to existing functionality      | Performance, UX, code quality   |
 | `chore`       | Maintenance, infrastructure, cleanup       | Backups, key rotation, upgrades |
+| `decision`    | Product/architecture choice needing resolution | Auth model, error format, API contract |
 | `epic`        | Large initiative spanning multiple issues  | CLI implementation, site redesign |
 
 There is no default type. You need to decide or ask for the type.
@@ -72,7 +73,7 @@ Quick way to verify the issue (optional section, omit if not applicable).
 | ---------- | -------- | -------------------------------------------------- |
 | `created`  | yes      | Date issue was created (YYYY-MM-DD)                |
 | `updated`  | yes      | Date of last update (YYYY-MM-DD)                   |
-| `type`     | yes      | `bug`, `task`, `feature`, `improvement`, `chore`, or `epic` |
+| `type`     | yes      | `bug`, `task`, `feature`, `improvement`, `chore`, `decision`, or `epic` |
 | `reporter` | yes      | Who reported the issue (epics: use `owner` instead) |
 | `assignee` | yes      | Who is currently responsible (epics: use `owner` instead) |
 | `status`   | yes      | Current status (see workflow below)                |
