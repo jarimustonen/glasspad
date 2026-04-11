@@ -2569,7 +2569,7 @@
     var groupOrder = [];
     for (var i = 0; i < rowKeyList.length; i++) {
       var rk = rowKeyList[i];
-      var firstVal = String(rowKeysMap[rk][0]);
+      var firstVal = distinctKey(rowKeysMap[rk][0]);
       if (!(firstVal in groups)) {
         groups[firstVal] = [];
         groupOrder.push(firstVal);
@@ -2677,6 +2677,7 @@
     // --- TBODY ---
     // Group rows by first field for subtotals
     var prevGroupKey = null;
+    var prevGroupLabel = null;
     var subtotalAcc = null; // accumulated states for subtotals
 
     for (var r = 0; r < result.sortedRowKeys.length; r++) {
@@ -2685,15 +2686,16 @@
 
       // Subtotals: detect group change on first row field
       if (showSubtotals && rowFields.length > 1) {
-        var currentGroupKey = String(rowVals[0]);
+        var currentGroupKey = distinctKey(rowVals[0]);
         if (prevGroupKey !== null && currentGroupKey !== prevGroupKey) {
           // Emit subtotal row for previous group
-          tbody.appendChild(buildSubtotalRow(prevGroupKey, subtotalAcc, colKeys, values, numValues, rowFields.length, showTotals, hasColDimension));
+          tbody.appendChild(buildSubtotalRow(prevGroupLabel, subtotalAcc, colKeys, values, numValues, rowFields.length, showTotals, hasColDimension));
           subtotalAcc = null;
         }
         if (!subtotalAcc) subtotalAcc = initSubtotalAcc(colKeys, values, showTotals);
         accumulateSubtotals(subtotalAcc, rk, colKeys, result.cells, values, showTotals);
         prevGroupKey = currentGroupKey;
+        prevGroupLabel = rowVals[0];
       }
 
       var tr = document.createElement('tr');
@@ -2740,7 +2742,7 @@
 
     // Emit final subtotal if needed
     if (showSubtotals && rowFields.length > 1 && subtotalAcc && prevGroupKey !== null) {
-      tbody.appendChild(buildSubtotalRow(prevGroupKey, subtotalAcc, colKeys, values, numValues, rowFields.length, showTotals, hasColDimension));
+      tbody.appendChild(buildSubtotalRow(prevGroupLabel, subtotalAcc, colKeys, values, numValues, rowFields.length, showTotals, hasColDimension));
     }
 
     // Grand total row
