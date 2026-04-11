@@ -55,7 +55,7 @@ Curate a collection of test datasets — both fictional and open source — for 
 
 ## Acceptance Criteria
 
-- [ ] Research report: list of suitable open source datasets with URLs and descriptions
-- [ ] At least 5 open source datasets downloaded/converted to Glasspad-compatible JSON
-- [ ] At least 3 fictional datasets created for specific visualization scenarios
-- [ ] Each Glasspad section type has at least one dedicated test dataset
+- [x] Research report: list of suitable open source datasets with URLs and descriptions
+- [x] At least 5 open source datasets downloaded/converted to Glasspad-compatible YAML
+- [x] At least 3 fictional datasets created for specific visualization scenarios
+- [x] Each Glasspad section type has at least one dedicated test dataset

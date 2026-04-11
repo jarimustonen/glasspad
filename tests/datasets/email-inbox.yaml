@@ -1,0 +1,120 @@
+spec_version: 1
+title: "Email Inbox — Marketing Team"
+description: "Fictional corporate email inbox demonstrating the list section with detail view"
+layout: stack
+
+sections:
+  - id: inbox-stats
+    title: "Inbox Overview"
+    type: stats
+    stats:
+      items:
+        - { label: "Total emails", aggregate: count }
+        - { label: "Senders", aggregate: distinct, field: from }
+        - { label: "Categories", aggregate: distinct, field: category }
+        - { label: "Unread", aggregate: count, where: { read: false } }
+    inline_data: &email_data
+      - id: "msg-001"
+        from: "Sarah Kim <sarah.kim@acme.corp>"
+        to: "marketing-team@acme.corp"
+        subject: "Q2 Campaign Results — 23% above target!"
+        date: "2026-04-11T09:15:00Z"
+        category: "Reports"
+        read: true
+        starred: true
+        preview: "Great news team! Our Q2 digital campaign exceeded targets across all channels..."
+        body: "Great news team!\n\nOur Q2 digital campaign exceeded targets across all channels. Here are the highlights:\n\n- Email open rate: 34.2% (target: 28%)\n- Click-through rate: 5.8% (target: 4.5%)\n- Conversion rate: 2.1% (target: 1.7%)\n- Total revenue attributed: $842,000 (target: $685,000)\n\nThe personalization improvements we made in March clearly paid off. The A/B test on subject lines showed a 12% improvement with the emoji variant.\n\nI've attached the full report with channel breakdowns. Let's discuss next steps in Monday's standup.\n\nBest,\nSarah"
+      - id: "msg-002"
+        from: "James Okonkwo <james.o@partner.io>"
+        to: "marketing-team@acme.corp"
+        subject: "Re: Partnership proposal — influencer collab"
+        date: "2026-04-11T08:42:00Z"
+        category: "Partnerships"
+        read: true
+        starred: false
+        preview: "Thanks for the updated terms. We're happy to proceed with the 3-month trial..."
+        body: "Hi team,\n\nThanks for the updated terms. We're happy to proceed with the 3-month trial period as discussed.\n\nA few clarifications:\n1. Content approval turnaround — can we agree on 48 hours?\n2. Exclusivity clause — we'd like to limit this to direct competitors only\n3. Payment terms — NET 30 works for us\n\nOur legal team will review the contract next week. Expecting to sign by April 18th.\n\nLooking forward to working together!\n\nJames Okonkwo\nPartner Relations, Partner.io"
+      - id: "msg-003"
+        from: "noreply@analytics.tools"
+        to: "marketing-team@acme.corp"
+        subject: "Weekly Traffic Report — April 4-10"
+        date: "2026-04-11T07:00:00Z"
+        category: "Automated"
+        read: false
+        starred: false
+        preview: "Your weekly website analytics summary is ready. Total sessions: 145,230 (+8.3%)..."
+        body: "Weekly Traffic Report\nPeriod: April 4-10, 2026\n\nTotal Sessions: 145,230 (+8.3% vs previous week)\nUnique Visitors: 98,450 (+6.1%)\nBounce Rate: 42.3% (-2.1pp)\nAvg Session Duration: 3m 24s (+12s)\n\nTop Pages:\n1. /products/pro-plan — 12,340 views\n2. /blog/ai-marketing-guide — 8,920 views\n3. /pricing — 7,650 views\n4. /case-studies — 5,430 views\n5. /about — 3,210 views\n\nTop Referrers:\n1. Google (organic) — 52%\n2. Direct — 18%\n3. LinkedIn — 12%\n4. Twitter/X — 8%\n5. Newsletter — 6%\n\nView full report: [link]"
+      - id: "msg-004"
+        from: "Lisa Chang <lisa.chang@acme.corp>"
+        to: "marketing-team@acme.corp"
+        subject: "Brand guidelines update — new logo assets"
+        date: "2026-04-10T16:30:00Z"
+        category: "Internal"
+        read: true
+        starred: false
+        preview: "Hi everyone, the refreshed brand assets are now live in the shared drive..."
+        body: "Hi everyone,\n\nThe refreshed brand assets are now live in the shared drive under /Brand/2026-Q2/.\n\nWhat changed:\n- Updated primary logo (slightly refined wordmark)\n- New icon set for social media (square + circular variants)\n- Adjusted color palette — Accent Blue is now #2563EB (was #3B82F6)\n- New PowerPoint and Google Slides templates\n\nPlease update all active campaigns and materials by end of April. The old assets will be archived on May 1st.\n\nQuestions? Ping me or check the brand wiki page.\n\nLisa"
+      - id: "msg-005"
+        from: "Tom Reeves <tom.r@acme.corp>"
+        to: "marketing-team@acme.corp"
+        subject: "Urgent: Social media crisis — product recall mention"
+        date: "2026-04-10T14:22:00Z"
+        category: "Urgent"
+        read: true
+        starred: true
+        preview: "Heads up — a viral tweet is linking our brand to a product recall that is NOT ours..."
+        body: "Heads up team,\n\nA viral tweet (38K retweets and counting) is linking our brand to a product recall that is NOT ours. It appears to be confusion with Acme Industrial (different company, similar name).\n\nImmediate actions needed:\n1. DO NOT engage with the tweet directly\n2. I'm drafting a clarification statement — review in Google Doc [link]\n3. Pause all scheduled social posts until we have the statement ready\n4. Monitor brand mentions via Sprout Social dashboard\n\nComms team is aware. Legal is reviewing the statement. ETA for posting: 2 hours.\n\nStay calm, stay professional. We've handled these before.\n\nTom"
+      - id: "msg-006"
+        from: "Maria Santos <maria.s@agency.co>"
+        to: "marketing-team@acme.corp"
+        subject: "Creative brief feedback — summer campaign"
+        date: "2026-04-10T11:45:00Z"
+        category: "Creative"
+        read: false
+        starred: false
+        preview: "We've reviewed the creative brief for the summer campaign. Overall direction is strong..."
+        body: "Hi Acme Marketing team,\n\nWe've reviewed the creative brief for the summer campaign. Overall direction is strong — here's our feedback:\n\nStrengths:\n- Clear target audience definition\n- Good channel mix (paid social + display + email)\n- Budget allocation looks reasonable\n\nSuggestions:\n- Consider adding TikTok to the channel mix — your demo skews younger than LinkedIn\n- The messaging hierarchy could be tighter. Lead with the value prop, not the feature list\n- Timeline is aggressive for video production — suggest moving shoot date 1 week earlier\n- Add a contingency plan for underperforming channels (reallocation criteria)\n\nWe can present revised concepts by April 18th if we lock the brief by this Friday.\n\nBest,\nMaria Santos\nCreative Director, Agency.co"
+      - id: "msg-007"
+        from: "hr-notifications@acme.corp"
+        to: "marketing-team@acme.corp"
+        subject: "Reminder: Team building event — April 15"
+        date: "2026-04-10T10:00:00Z"
+        category: "Internal"
+        read: false
+        starred: false
+        preview: "Don't forget! The marketing team building event is this Tuesday, April 15..."
+        body: "Don't forget! The marketing team building event is this Tuesday, April 15.\n\nDetails:\n- What: Cooking class at Chef's Table downtown\n- When: Tuesday, April 15, 4:00 PM - 7:00 PM\n- Where: Chef's Table, 245 Main Street, Suite 100\n- RSVP: 12 confirmed, 3 pending\n\nTransportation: Company shuttle departs from office lobby at 3:30 PM. Parking also available at the venue.\n\nDietary restrictions have been collected. If you haven't submitted yours, please reply to this email ASAP.\n\nSee you there!"
+      - id: "msg-008"
+        from: "David Chen <david.chen@acme.corp>"
+        to: "marketing-team@acme.corp"
+        subject: "SEO audit findings — critical issues found"
+        date: "2026-04-09T15:30:00Z"
+        category: "Reports"
+        read: true
+        starred: true
+        preview: "Completed the quarterly SEO audit. Found 3 critical issues affecting organic traffic..."
+        body: "Team,\n\nCompleted the quarterly SEO audit. Found 3 critical issues affecting organic traffic:\n\n1. CRITICAL: 47 pages returning 404 after the CMS migration (estimated traffic loss: ~2,400 sessions/week)\n2. CRITICAL: Core Web Vitals failing on mobile for /products/* pages (LCP > 4.2s)\n3. HIGH: Duplicate meta descriptions on 23 blog posts\n\nQuick wins identified:\n- Fix 301 redirects for the 404 pages (dev ticket filed)\n- Compress hero images on product pages (can cut LCP to ~2.5s)\n- Update meta descriptions (content team can batch this in 1 day)\n\nFull audit report attached. Recommend we prioritize the 404 fixes — we're losing ~$15K/week in organic traffic value.\n\nDavid"
+
+  - id: inbox
+    title: "Inbox"
+    type: list
+    list:
+      id_field: id
+      layout: rows
+      title_field: subject
+      subtitle_field: from
+      meta_field: category
+      preview_field: preview
+      item_click: open_detail
+      detail:
+        fields:
+          - { field: from, title: "From" }
+          - { field: to, title: "To" }
+          - { field: date, title: "Date" }
+          - { field: category, title: "Category" }
+        body_field: body
+        actions:
+          - { id: reply, label: "Reply", style: success }
+          - { id: forward, label: "Forward", style: info }
+          - { id: archive, label: "Archive", style: warning }
+    inline_data: *email_data

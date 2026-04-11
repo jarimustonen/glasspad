@@ -1,0 +1,85 @@
+spec_version: 1
+title: "Factory Sensor Monitoring"
+description: "Fictional IoT sensor data — temperature, humidity, and vibration from factory floor sensors"
+layout: grid-2col
+
+sections:
+  - id: temperature
+    title: "Temperature Over Time"
+    type: chart
+    interactive_filter:
+      field: sensor_id
+    chart:
+      mark: line
+      encoding:
+        x: { field: timestamp, type: temporal }
+        y: { field: temperature_c, type: quantitative, title: "Temperature (°C)" }
+        color: { field: sensor_id, type: nominal }
+    inline_data: &sensor_data
+      # Sensor A — Assembly Line 1 (normal operation ~22°C)
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T08:00:00Z", temperature_c: 21.3, humidity_pct: 45.2, vibration_mm_s: 1.2, status: "normal" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T09:00:00Z", temperature_c: 22.1, humidity_pct: 44.8, vibration_mm_s: 1.3, status: "normal" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T10:00:00Z", temperature_c: 23.5, humidity_pct: 43.1, vibration_mm_s: 1.5, status: "normal" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T11:00:00Z", temperature_c: 24.8, humidity_pct: 42.0, vibration_mm_s: 2.1, status: "warning" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T12:00:00Z", temperature_c: 28.2, humidity_pct: 39.5, vibration_mm_s: 3.8, status: "critical" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T13:00:00Z", temperature_c: 26.1, humidity_pct: 41.2, vibration_mm_s: 2.4, status: "warning" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T14:00:00Z", temperature_c: 23.4, humidity_pct: 43.8, vibration_mm_s: 1.4, status: "normal" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T15:00:00Z", temperature_c: 22.8, humidity_pct: 44.5, vibration_mm_s: 1.3, status: "normal" }
+      - { sensor_id: "Sensor-A", location: "Assembly Line 1", timestamp: "2026-04-10T16:00:00Z", temperature_c: 22.2, humidity_pct: 45.0, vibration_mm_s: 1.1, status: "normal" }
+      # Sensor B — Paint Room (controlled ~20°C)
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T08:00:00Z", temperature_c: 19.8, humidity_pct: 55.1, vibration_mm_s: 0.3, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T09:00:00Z", temperature_c: 20.1, humidity_pct: 54.8, vibration_mm_s: 0.4, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T10:00:00Z", temperature_c: 20.4, humidity_pct: 54.2, vibration_mm_s: 0.3, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T11:00:00Z", temperature_c: 20.6, humidity_pct: 53.9, vibration_mm_s: 0.5, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T12:00:00Z", temperature_c: 20.8, humidity_pct: 53.5, vibration_mm_s: 0.4, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T13:00:00Z", temperature_c: 21.0, humidity_pct: 53.2, vibration_mm_s: 0.3, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T14:00:00Z", temperature_c: 20.7, humidity_pct: 53.8, vibration_mm_s: 0.4, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T15:00:00Z", temperature_c: 20.3, humidity_pct: 54.5, vibration_mm_s: 0.3, status: "normal" }
+      - { sensor_id: "Sensor-B", location: "Paint Room", timestamp: "2026-04-10T16:00:00Z", temperature_c: 20.0, humidity_pct: 55.0, vibration_mm_s: 0.3, status: "normal" }
+      # Sensor C — Server Room (needs cooling ~18°C)
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T08:00:00Z", temperature_c: 18.2, humidity_pct: 38.0, vibration_mm_s: 0.8, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T09:00:00Z", temperature_c: 18.5, humidity_pct: 37.5, vibration_mm_s: 0.9, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T10:00:00Z", temperature_c: 19.1, humidity_pct: 36.8, vibration_mm_s: 1.0, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T11:00:00Z", temperature_c: 19.8, humidity_pct: 36.2, vibration_mm_s: 1.1, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T12:00:00Z", temperature_c: 20.5, humidity_pct: 35.5, vibration_mm_s: 1.2, status: "warning" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T13:00:00Z", temperature_c: 19.6, humidity_pct: 36.0, vibration_mm_s: 1.0, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T14:00:00Z", temperature_c: 18.9, humidity_pct: 37.0, vibration_mm_s: 0.9, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T15:00:00Z", temperature_c: 18.4, humidity_pct: 37.8, vibration_mm_s: 0.8, status: "normal" }
+      - { sensor_id: "Sensor-C", location: "Server Room", timestamp: "2026-04-10T16:00:00Z", temperature_c: 18.1, humidity_pct: 38.2, vibration_mm_s: 0.8, status: "normal" }
+
+  - id: humidity
+    title: "Humidity Over Time"
+    type: chart
+    chart:
+      mark: line
+      encoding:
+        x: { field: timestamp, type: temporal }
+        y: { field: humidity_pct, type: quantitative, title: "Humidity (%)" }
+        color: { field: sensor_id, type: nominal }
+    inline_data: *sensor_data
+
+  - id: sensor-stats
+    title: "Sensor Summary"
+    type: stats
+    stats:
+      items:
+        - { label: "Total readings", aggregate: count }
+        - { label: "Sensors", aggregate: distinct, field: sensor_id }
+        - { label: "Avg temperature", aggregate: avg, field: temperature_c }
+        - { label: "Max temperature", aggregate: max, field: temperature_c }
+        - { label: "Avg humidity", aggregate: avg, field: humidity_pct }
+        - { label: "Max vibration", aggregate: max, field: vibration_mm_s }
+    inline_data: *sensor_data
+
+  - title: "All Readings"
+    type: table
+    table:
+      columns:
+        - { field: sensor_id, title: "Sensor", sort: string }
+        - { field: location, title: "Location", sort: string }
+        - { field: timestamp, title: "Time", sort: temporal }
+        - { field: temperature_c, title: "Temp (°C)", sort: number }
+        - { field: humidity_pct, title: "Humidity %", sort: number }
+        - { field: vibration_mm_s, title: "Vibration", sort: number }
+        - { field: status, title: "Status", sort: string }
+    inline_data: *sensor_data

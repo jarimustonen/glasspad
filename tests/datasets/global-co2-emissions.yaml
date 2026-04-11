@@ -1,0 +1,142 @@
+spec_version: 1
+title: "Global CO₂ Emissions by Country"
+description: "Annual CO₂ emissions (million tonnes) for top emitters — based on Our World in Data"
+layout: grid-2col
+
+sections:
+  - id: emissions-over-time
+    title: "CO₂ Emissions Over Time"
+    type: chart
+    interactive_filter:
+      field: country
+    chart:
+      mark: line
+      encoding:
+        x: { field: year, type: ordinal }
+        y: { field: co2_mt, type: quantitative, title: "CO₂ (million tonnes)" }
+        color: { field: country, type: nominal }
+    inline_data:
+      # China
+      - { country: "China", year: 2015, co2_mt: 9679 }
+      - { country: "China", year: 2016, co2_mt: 9606 }
+      - { country: "China", year: 2017, co2_mt: 9839 }
+      - { country: "China", year: 2018, co2_mt: 10065 }
+      - { country: "China", year: 2019, co2_mt: 10175 }
+      - { country: "China", year: 2020, co2_mt: 10668 }
+      - { country: "China", year: 2021, co2_mt: 11472 }
+      - { country: "China", year: 2022, co2_mt: 11397 }
+      # United States
+      - { country: "United States", year: 2015, co2_mt: 5260 }
+      - { country: "United States", year: 2016, co2_mt: 5181 }
+      - { country: "United States", year: 2017, co2_mt: 5131 }
+      - { country: "United States", year: 2018, co2_mt: 5276 }
+      - { country: "United States", year: 2019, co2_mt: 5107 }
+      - { country: "United States", year: 2020, co2_mt: 4586 }
+      - { country: "United States", year: 2021, co2_mt: 4979 }
+      - { country: "United States", year: 2022, co2_mt: 4964 }
+      # India
+      - { country: "India", year: 2015, co2_mt: 2249 }
+      - { country: "India", year: 2016, co2_mt: 2361 }
+      - { country: "India", year: 2017, co2_mt: 2454 }
+      - { country: "India", year: 2018, co2_mt: 2622 }
+      - { country: "India", year: 2019, co2_mt: 2597 }
+      - { country: "India", year: 2020, co2_mt: 2411 }
+      - { country: "India", year: 2021, co2_mt: 2710 }
+      - { country: "India", year: 2022, co2_mt: 2830 }
+      # Russia
+      - { country: "Russia", year: 2015, co2_mt: 1620 }
+      - { country: "Russia", year: 2016, co2_mt: 1615 }
+      - { country: "Russia", year: 2017, co2_mt: 1622 }
+      - { country: "Russia", year: 2018, co2_mt: 1675 }
+      - { country: "Russia", year: 2019, co2_mt: 1678 }
+      - { country: "Russia", year: 2020, co2_mt: 1577 }
+      - { country: "Russia", year: 2021, co2_mt: 1755 }
+      - { country: "Russia", year: 2022, co2_mt: 1642 }
+      # Japan
+      - { country: "Japan", year: 2015, co2_mt: 1218 }
+      - { country: "Japan", year: 2016, co2_mt: 1206 }
+      - { country: "Japan", year: 2017, co2_mt: 1189 }
+      - { country: "Japan", year: 2018, co2_mt: 1150 }
+      - { country: "Japan", year: 2019, co2_mt: 1107 }
+      - { country: "Japan", year: 2020, co2_mt: 1031 }
+      - { country: "Japan", year: 2021, co2_mt: 1067 }
+      - { country: "Japan", year: 2022, co2_mt: 1050 }
+      # Germany
+      - { country: "Germany", year: 2015, co2_mt: 796 }
+      - { country: "Germany", year: 2016, co2_mt: 800 }
+      - { country: "Germany", year: 2017, co2_mt: 783 }
+      - { country: "Germany", year: 2018, co2_mt: 753 }
+      - { country: "Germany", year: 2019, co2_mt: 702 }
+      - { country: "Germany", year: 2020, co2_mt: 644 }
+      - { country: "Germany", year: 2021, co2_mt: 675 }
+      - { country: "Germany", year: 2022, co2_mt: 657 }
+
+  - id: latest-by-country
+    title: "2022 Emissions by Country"
+    type: chart
+    chart:
+      mark: bar
+      encoding:
+        x: { field: country, type: nominal, sort: "-y" }
+        y: { field: co2_mt, type: quantitative, title: "CO₂ (million tonnes)" }
+        color: { field: country, type: nominal }
+    inline_data:
+      - { country: "China", co2_mt: 11397 }
+      - { country: "United States", co2_mt: 4964 }
+      - { country: "India", co2_mt: 2830 }
+      - { country: "Russia", co2_mt: 1642 }
+      - { country: "Japan", co2_mt: 1050 }
+      - { country: "Germany", co2_mt: 657 }
+      - { country: "South Korea", co2_mt: 616 }
+      - { country: "Iran", co2_mt: 612 }
+      - { country: "Canada", co2_mt: 556 }
+      - { country: "Saudi Arabia", co2_mt: 517 }
+
+  - id: summary
+    title: "Summary Statistics (2022)"
+    type: stats
+    stats:
+      items:
+        - { label: "Countries tracked", aggregate: count }
+        - { label: "Highest emitter (Mt)", aggregate: max, field: co2_mt }
+        - { label: "Lowest emitter (Mt)", aggregate: min, field: co2_mt }
+        - { label: "Average (Mt)", aggregate: avg, field: co2_mt }
+        - { label: "Total (Mt)", aggregate: sum, field: co2_mt }
+    inline_data:
+      - { country: "China", co2_mt: 11397 }
+      - { country: "United States", co2_mt: 4964 }
+      - { country: "India", co2_mt: 2830 }
+      - { country: "Russia", co2_mt: 1642 }
+      - { country: "Japan", co2_mt: 1050 }
+      - { country: "Germany", co2_mt: 657 }
+      - { country: "South Korea", co2_mt: 616 }
+      - { country: "Iran", co2_mt: 612 }
+      - { country: "Canada", co2_mt: 556 }
+      - { country: "Saudi Arabia", co2_mt: 517 }
+
+  - title: "Data Table"
+    type: table
+    table:
+      columns:
+        - { field: country, title: "Country" }
+        - { field: year, title: "Year", sort: number }
+        - { field: co2_mt, title: "CO₂ (Mt)", sort: number }
+    inline_data:
+      - { country: "China", year: 2015, co2_mt: 9679 }
+      - { country: "China", year: 2018, co2_mt: 10065 }
+      - { country: "China", year: 2022, co2_mt: 11397 }
+      - { country: "United States", year: 2015, co2_mt: 5260 }
+      - { country: "United States", year: 2018, co2_mt: 5276 }
+      - { country: "United States", year: 2022, co2_mt: 4964 }
+      - { country: "India", year: 2015, co2_mt: 2249 }
+      - { country: "India", year: 2018, co2_mt: 2622 }
+      - { country: "India", year: 2022, co2_mt: 2830 }
+      - { country: "Russia", year: 2015, co2_mt: 1620 }
+      - { country: "Russia", year: 2018, co2_mt: 1675 }
+      - { country: "Russia", year: 2022, co2_mt: 1642 }
+      - { country: "Japan", year: 2015, co2_mt: 1218 }
+      - { country: "Japan", year: 2018, co2_mt: 1150 }
+      - { country: "Japan", year: 2022, co2_mt: 1050 }
+      - { country: "Germany", year: 2015, co2_mt: 796 }
+      - { country: "Germany", year: 2018, co2_mt: 753 }
+      - { country: "Germany", year: 2022, co2_mt: 657 }
