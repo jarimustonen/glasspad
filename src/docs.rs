@@ -111,7 +111,7 @@ PIVOT CONFIG
       - quarter
     values:
       - {{ field: revenue, aggregate: sum, label: "Revenue", format: currency, currency: USD }}
-      - {{ field: orders, aggregate: count, label: "Orders" }}
+      - {{ aggregate: count, label: "Orders" }}
     show_totals: true
     show_subtotals: true
     sort:
@@ -236,7 +236,7 @@ pivot
         - quarter
       values:
         - {{ field: revenue, aggregate: sum, label: "Revenue", format: currency, currency: USD }}
-        - {{ field: orders, aggregate: count, label: "Orders" }}
+        - {{ aggregate: count, label: "Orders" }}
       show_totals: true
       show_subtotals: true
       sort:

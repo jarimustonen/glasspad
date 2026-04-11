@@ -437,18 +437,27 @@ fn validate_pivot(
 
     // Empty field names
     for field in &pivot.rows {
-        if field.is_empty() {
+        if field.trim().is_empty() {
             errors.push(err(Some(label), "pivot.rows contains empty field name"));
         }
     }
     for field in &pivot.columns {
-        if field.is_empty() {
+        if field.trim().is_empty() {
             errors.push(err(Some(label), "pivot.columns contains empty field name"));
         }
     }
     for value in &pivot.values {
-        if value.field.is_empty() {
-            errors.push(err(Some(label), "pivot.values contains empty field name"));
+        match value.field.as_deref() {
+            None if value.aggregate != "count" => {
+                errors.push(err(
+                    Some(label),
+                    format!("pivot aggregate \"{}\" requires field", value.aggregate),
+                ));
+            }
+            Some(f) if f.trim().is_empty() => {
+                errors.push(err(Some(label), "pivot.values contains empty field name"));
+            }
+            _ => {}
         }
     }
 
@@ -1260,7 +1269,7 @@ mod tests {
             rows: vec!["region".to_string()],
             columns: vec!["quarter".to_string()],
             values: vec![PivotValue {
-                field: "revenue".to_string(),
+                field: Some("revenue".to_string()),
                 aggregate: "sum".to_string(),
                 label: Some("Revenue".to_string()),
                 format: None,
@@ -1295,7 +1304,7 @@ mod tests {
             rows: vec![],
             columns: vec![],
             values: vec![PivotValue {
-                field: "x".to_string(),
+                field: Some("x".to_string()),
                 aggregate: "sum".to_string(),
                 label: None,
                 format: None,
@@ -1337,7 +1346,7 @@ mod tests {
             rows: vec!["a".to_string()],
             columns: vec![],
             values: vec![PivotValue {
-                field: "x".to_string(),
+                field: Some("x".to_string()),
                 aggregate: "median".to_string(),
                 label: None,
                 format: None,
@@ -1362,7 +1371,7 @@ mod tests {
             rows: vec!["a".to_string()],
             columns: vec![],
             values: vec![PivotValue {
-                field: "x".to_string(),
+                field: Some("x".to_string()),
                 aggregate: "sum".to_string(),
                 label: None,
                 format: None,

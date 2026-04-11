@@ -252,7 +252,9 @@ pub struct PivotConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PivotValue {
-    pub field: String,
+    /// Field to aggregate. Required for all aggregates except count.
+    #[serde(default)]
+    pub field: Option<String>,
     pub aggregate: String,
     #[serde(default)]
     pub label: Option<String>,
@@ -641,7 +643,7 @@ sections:
         assert_eq!(pivot.rows, vec!["region", "product"]);
         assert_eq!(pivot.columns, vec!["quarter"]);
         assert_eq!(pivot.values.len(), 2);
-        assert_eq!(pivot.values[0].field, "revenue");
+        assert_eq!(pivot.values[0].field.as_deref(), Some("revenue"));
         assert_eq!(pivot.values[0].aggregate, "sum");
         assert_eq!(pivot.values[0].label.as_deref(), Some("Revenue"));
         assert_eq!(pivot.values[1].aggregate, "count");

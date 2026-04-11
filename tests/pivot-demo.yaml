@@ -58,8 +58,7 @@ sections:
           label: "Avg Order"
           format: currency
           currency: USD
-        - field: total_amount
-          aggregate: count
+        - aggregate: count
           label: "Orders"
         - field: total_amount
           aggregate: sum
