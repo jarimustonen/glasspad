@@ -27,7 +27,6 @@ fn err(section: Option<&str>, msg: impl Into<String>) -> SpecError {
 const SUPPORTED_SPEC_VERSIONS: &[u32] = &[1];
 const SUPPORTED_MARKS: &[&str] = &["bar", "line", "arc"];
 const SUPPORTED_AGGREGATES: &[&str] = &["count", "distinct", "sum", "avg", "min", "max"];
-const SUPPORTED_PIVOT_AGGREGATES: &[&str] = &["sum", "count", "avg", "min", "max", "distinct"];
 
 /// Validate a parsed DashboardSpec.
 ///
@@ -395,12 +394,12 @@ fn validate_pivot(
 
     let supported_formats = ["currency", "number", "percent"];
     for value in &pivot.values {
-        if !SUPPORTED_PIVOT_AGGREGATES.contains(&value.aggregate.as_str()) {
+        if !SUPPORTED_AGGREGATES.contains(&value.aggregate.as_str()) {
             errors.push(err(
                 Some(label),
                 format!(
                     "unknown pivot aggregate \"{}\", supported: {:?}",
-                    value.aggregate, SUPPORTED_PIVOT_AGGREGATES
+                    value.aggregate, SUPPORTED_AGGREGATES
                 ),
             ));
         }
