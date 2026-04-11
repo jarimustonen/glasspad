@@ -121,6 +121,7 @@ PIVOT CONFIG
 
   Supported aggregates: sum, count, avg, min, max, distinct
   Value formats: currency (requires currency code), number, percent
+  Note: percent expects ratio input (0.42 → 42%), not whole numbers
 
 ENCODING FIELDS (Vega-Lite)
   field:      string    Data field name
@@ -256,6 +257,7 @@ pivot
 
   Aggregates: sum, count, avg, min, max, distinct
   Value formats: currency (+ currency: USD/EUR/...), number, percent
+  Note: percent expects ratio input (0.42 → 42%), not whole numbers
 "#
     );
 }
