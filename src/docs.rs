@@ -120,7 +120,7 @@ PIVOT CONFIG
       value_index: 0       Which value to sort by (default: 0)
 
   Supported aggregates: sum, count, avg, min, max, distinct
-  Value formats: currency (requires currency code), number, percent
+  Value formats: currency (requires 3-letter code e.g. USD), percent (ratio input)
   Note: percent expects ratio input (0.42 → 42%), not whole numbers
 
 ENCODING FIELDS (Vega-Lite)
@@ -256,7 +256,7 @@ pivot
         - {{ field: amount, aggregate: avg }}
 
   Aggregates: sum, count, avg, min, max, distinct
-  Value formats: currency (+ currency: USD/EUR/...), number, percent
+  Value formats: currency (+ currency: USD/EUR/...), percent (ratio input)
   Note: percent expects ratio input (0.42 → 42%), not whole numbers
 "#
     );

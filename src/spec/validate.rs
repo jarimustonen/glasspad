@@ -392,7 +392,7 @@ fn validate_pivot(
         errors.push(err(Some(label), "pivot.values must not be empty"));
     }
 
-    let supported_formats = ["currency", "number", "percent"];
+    let supported_formats = ["currency", "percent"];
     for value in &pivot.values {
         if !SUPPORTED_AGGREGATES.contains(&value.aggregate.as_str()) {
             errors.push(err(
@@ -414,11 +414,16 @@ fn validate_pivot(
                     ),
                 ));
             }
-            if fmt == "currency" && value.currency.is_none() {
-                errors.push(err(
-                    Some(label),
-                    "pivot value format \"currency\" requires currency field (e.g. \"USD\", \"EUR\")",
-                ));
+            if fmt == "currency" {
+                match value.currency.as_deref().map(str::trim) {
+                    Some(code) if code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic()) => {}
+                    _ => {
+                        errors.push(err(
+                            Some(label),
+                            "pivot value format \"currency\" requires a valid 3-letter currency code (e.g. \"USD\", \"EUR\")",
+                        ));
+                    }
+                }
             }
         }
 

@@ -2642,6 +2642,7 @@
           for (var vi = 0; vi < numValues; vi++) {
             var valTh = document.createElement('th');
             valTh.className = 'pivot-value-header';
+            valTh.scope = 'col';
             valTh.textContent = values[vi].label || values[vi].field;
             headerRow2.appendChild(valTh);
           }
@@ -2650,6 +2651,7 @@
           for (var vit = 0; vit < numValues; vit++) {
             var valThT = document.createElement('th');
             valThT.className = 'pivot-value-header pivot-total-header';
+            valThT.scope = 'col';
             valThT.textContent = values[vit].label || values[vit].field;
             headerRow2.appendChild(valThT);
           }
@@ -2668,6 +2670,7 @@
       for (var vh = 0; vh < numValues; vh++) {
         var vhTh = document.createElement('th');
         vhTh.className = 'pivot-value-header';
+        vhTh.scope = 'col';
         vhTh.textContent = values[vh].label || values[vh].field;
         simpleHeader.appendChild(vhTh);
       }
@@ -2821,10 +2824,14 @@
         fmt = function(v) { return formatDecimal(v); };
       }
     } else if (valueDef.format === 'percent') {
-      var pf = new Intl.NumberFormat(undefined, {
-        style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1
-      });
-      fmt = function(v) { return pf.format(v); };
+      try {
+        var pf = new Intl.NumberFormat(undefined, {
+          style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1
+        });
+        fmt = function(v) { return pf.format(v); };
+      } catch (e) {
+        fmt = formatDecimal;
+      }
     } else {
       fmt = formatDecimal;
     }
