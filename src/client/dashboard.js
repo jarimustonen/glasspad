@@ -2541,10 +2541,10 @@
     }
   }
 
-  function resolveAgg(state, aggregate) {
+  function resolveAgg(state, aggregate, hasField) {
     switch (aggregate) {
       case 'sum': return state.numericCount > 0 ? state.sum : null;
-      case 'count': return state.rowCount;
+      case 'count': return hasField ? state.valueCount : state.rowCount;
       case 'avg': return state.numericCount > 0 ? state.sum / state.numericCount : null;
       case 'min': return state.min === Infinity ? null : state.min;
       case 'max': return state.max === -Infinity ? null : state.max;
@@ -2569,7 +2569,7 @@
       var cellKey = rk + '||' + colKeys[c];
       if (cellKey in cells) mergeAggStates(total, cells[cellKey][vi]);
     }
-    return resolveAgg(total, values[vi].aggregate);
+    return resolveAgg(total, values[vi].aggregate, !!values[vi].field);
   }
 
   function getGroupTotal(memberKeys, colKeys, cells, values, vi) {
@@ -2580,7 +2580,7 @@
         if (cellKey in cells) mergeAggStates(total, cells[cellKey][vi]);
       }
     }
-    return resolveAgg(total, values[vi].aggregate);
+    return resolveAgg(total, values[vi].aggregate, !!values[vi].field);
   }
 
   // Sort rows within first-level groups to preserve subtotal contiguity
@@ -2669,7 +2669,7 @@
             var valTh = document.createElement('th');
             valTh.className = 'pivot-value-header';
             valTh.scope = 'col';
-            valTh.textContent = values[vi].label || values[vi].field;
+            valTh.textContent = values[vi].label || values[vi].field || values[vi].aggregate;
             headerRow2.appendChild(valTh);
           }
         }
@@ -2678,7 +2678,7 @@
             var valThT = document.createElement('th');
             valThT.className = 'pivot-value-header pivot-total-header';
             valThT.scope = 'col';
-            valThT.textContent = values[vit].label || values[vit].field;
+            valThT.textContent = values[vit].label || values[vit].field || values[vit].aggregate;
             headerRow2.appendChild(valThT);
           }
         }
@@ -2697,7 +2697,7 @@
         var vhTh = document.createElement('th');
         vhTh.className = 'pivot-value-header';
         vhTh.scope = 'col';
-        vhTh.textContent = values[vh].label || values[vh].field;
+        vhTh.textContent = values[vh].label || values[vh].field || values[vh].aggregate;
         simpleHeader.appendChild(vhTh);
       }
       thead.appendChild(simpleHeader);
@@ -2746,7 +2746,7 @@
           var td2 = document.createElement('td');
           td2.className = 'pivot-cell';
           if (aggStates) {
-            var val = resolveAgg(aggStates[v], values[v].aggregate);
+            var val = resolveAgg(aggStates[v], values[v].aggregate, !!values[v].field);
             td2.textContent = formatPivotValue(val, values[v]);
           } else {
             td2.textContent = '\u2014';
@@ -2795,7 +2795,7 @@
             var gCellKey = result.sortedRowKeys[gr] + '||' + colKeys[gc];
             if (gCellKey in result.cells) mergeAggStates(colTotal, result.cells[gCellKey][gv]);
           }
-          var gtVal = resolveAgg(colTotal, values[gv].aggregate);
+          var gtVal = resolveAgg(colTotal, values[gv].aggregate, !!values[gv].field);
           gtTd.textContent = formatPivotValue(gtVal, values[gv]);
           grandTr.appendChild(gtTd);
         }
@@ -2813,7 +2813,7 @@
               if (allKey in result.cells) mergeAggStates(grandTotal, result.cells[allKey][gvt]);
             }
           }
-          var gtCorner = resolveAgg(grandTotal, values[gvt].aggregate);
+          var gtCorner = resolveAgg(grandTotal, values[gvt].aggregate, !!values[gvt].field);
           cornerTd.textContent = formatPivotValue(gtCorner, values[gvt]);
           grandTr.appendChild(cornerTd);
         }
@@ -2912,7 +2912,7 @@
         var td = document.createElement('td');
         td.className = 'pivot-cell pivot-subtotal-cell';
         var st = acc[colKeys[c] + '||' + v];
-        var val = st ? resolveAgg(st, values[v].aggregate) : null;
+        var val = st ? resolveAgg(st, values[v].aggregate, !!values[v].field) : null;
         td.textContent = formatPivotValue(val, values[v]);
         tr.appendChild(td);
       }
@@ -2923,7 +2923,7 @@
         var totalTd = document.createElement('td');
         totalTd.className = 'pivot-cell pivot-subtotal-cell';
         var stTotal = acc['__total__||' + vt];
-        var tVal = stTotal ? resolveAgg(stTotal, values[vt].aggregate) : null;
+        var tVal = stTotal ? resolveAgg(stTotal, values[vt].aggregate, !!values[vt].field) : null;
         totalTd.textContent = formatPivotValue(tVal, values[vt]);
         tr.appendChild(totalTd);
       }
