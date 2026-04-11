@@ -2452,7 +2452,7 @@
     } else {
       var labelDesc = sortCfg && sortCfg.direction === 'desc';
       var labelSorter = function(a, b) {
-        var pa = JSON.parse(a), pb = JSON.parse(b);
+        var pa = rowKeys[a], pb = rowKeys[b];
         var cmp = 0;
         for (var k = 0; k < pa.length && cmp === 0; k++) {
           cmp = compareGroupValues(pa[k], pb[k]);
@@ -2468,7 +2468,8 @@
 
     // Always sort columns by label (type-aware)
     sortedColKeys.sort(function(a, b) {
-      var pa = JSON.parse(a), pb = JSON.parse(b);
+      var pa = colKeys[a], pb = colKeys[b];
+      if (!pa || !pb) return pa ? 1 : pb ? -1 : 0;
       var cmp = 0;
       for (var k = 0; k < pa.length && cmp === 0; k++) {
         cmp = compareGroupValues(pa[k], pb[k]);
@@ -2529,7 +2530,7 @@
       if (v !== null && v !== undefined) {
         st.valueCount++;
         st.distinct[distinctKey(v)] = true;
-        var n = typeof v === 'number' ? v : parseFloat(v);
+        var n = typeof v === 'number' ? v : Number(v);
         if (isFinite(n)) {
           st.numericCount++;
           st.sum += n;

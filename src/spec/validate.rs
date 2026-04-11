@@ -493,6 +493,14 @@ fn validate_pivot(
         }
     }
 
+    // show_subtotals requires at least 2 row fields
+    if pivot.show_subtotals && pivot.rows.len() < 2 {
+        errors.push(err(
+            Some(label),
+            "pivot.show_subtotals requires at least 2 row fields",
+        ));
+    }
+
     // sort.value_index must be within bounds
     if let Some(ref sort) = pivot.sort {
         if let Some(value_index) = sort.value_index {
