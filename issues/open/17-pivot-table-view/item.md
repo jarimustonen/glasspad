@@ -25,22 +25,25 @@ The universal pivot table model (Excel, Power BI, Google Sheets, Tableau):
 
 ## Issues
 
-- **#18** Pivot table competitor analysis (open)
+- **#18** Pivot table competitor analysis (done)
 - **#19** Basic 2D pivot table (open)
+- **#22** Pivot "Show Values As" secondary calculations (open)
+- **#23** Pivot expand/collapse row hierarchies (open)
+- **#24** Pivot conditional formatting (open)
 
 ## Phases
 
 ### Phase 1: Research & core
-- [ ] Competitor analysis (#18)
+- [x] Competitor analysis (#18)
 - [ ] Basic 2D pivot with aggregation (#19)
 
 ### Phase 2: Enhanced display
-- [ ] Conditional formatting (color scales, thresholds)
-- [ ] "Show Values As" secondary calculations (% of total, running total)
+- [ ] "Show Values As" secondary calculations (#22)
+- [ ] Conditional formatting (#24)
 - [ ] Number formatting (currency, percentage, decimals)
 
 ### Phase 3: Interactivity
-- [ ] Expand/collapse for hierarchical row groupings
+- [ ] Expand/collapse for hierarchical row groupings (#23)
 - [ ] Click cell → cross-filter other sections
 - [ ] Click cell → drill-down to underlying records
 

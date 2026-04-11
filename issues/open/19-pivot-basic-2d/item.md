@@ -15,7 +15,9 @@ _Epic: **#17** Pivot tables_
 
 ## Description
 
-Implement the core pivot table section type: a two-dimensional aggregation matrix with configurable rows, columns, and cell function (aggregation).
+Implement the core pivot table section type: a two-dimensional aggregation matrix with configurable rows, columns, and cell function (aggregation). Based on the universal four-zone model (Rows, Columns, Values, Filters) identified in the competitor analysis (#18).
+
+Follows the declarative spec approach — configuration in YAML, similar to how Vega-Lite defines encodings.
 
 ## Configuration
 
@@ -62,3 +64,7 @@ sections:
 - [ ] Multiple value fields display side by side
 - [ ] Grand totals row and column are correct
 - [ ] Sorting by value works
+
+## References
+
+- **#18** analysis.md — competitor feature comparison informing design decisions
