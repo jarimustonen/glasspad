@@ -105,6 +105,23 @@ pub fn validate(
             SectionType::Markdown => validate_markdown(section, label, &mut errors),
         }
 
+        // Reject config blocks that don't match the section type
+        let extra: &[(&str, bool)] = &[
+            ("chart", section.chart.is_some() && section.section_type != SectionType::Chart),
+            ("table", section.table.is_some() && section.section_type != SectionType::Table),
+            ("stats", section.stats.is_some() && section.section_type != SectionType::Stats),
+            ("list", section.list.is_some() && section.section_type != SectionType::List),
+            ("markdown", section.markdown.is_some() && section.section_type != SectionType::Markdown),
+        ];
+        for (block, present) in extra {
+            if *present {
+                errors.push(err(
+                    Some(label),
+                    format!("\"{}\" config block not allowed on {} section", block, section.section_type.as_spec_str()),
+                ));
+            }
+        }
+
         // Count markdown sections with active TOC
         if section.section_type == SectionType::Markdown {
             if let Some(ref md) = section.markdown {
@@ -947,6 +964,86 @@ mod tests {
         let provided = HashSet::from(["events".to_string()]);
         let errors = validate(&spec, &provided);
         assert!(errors.is_empty(), "errors: {:?}", errors);
+    }
+
+    #[test]
+    fn extra_config_block_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Table;
+        spec.sections[0].stats = None;
+        spec.sections[0].table = Some(TableConfig {
+            columns: vec![ColumnDef {
+                field: "name".to_string(),
+                title: None,
+                width: None,
+                sort: None,
+            }],
+            row_id_field: None,
+            row_actions: None,
+        });
+        // Add a chart block that doesn't match the table type
+        spec.sections[0].chart = Some(ChartConfig {
+            mark: "bar".to_string(),
+            encoding: serde_json::json!({}),
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("\"chart\" config block not allowed on table section")));
+    }
+
+    #[test]
+    fn multiple_extra_config_blocks_all_reported() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Table;
+        spec.sections[0].stats = None;
+        spec.sections[0].table = Some(TableConfig {
+            columns: vec![ColumnDef {
+                field: "name".to_string(),
+                title: None,
+                width: None,
+                sort: None,
+            }],
+            row_id_field: None,
+            row_actions: None,
+        });
+        spec.sections[0].chart = Some(ChartConfig {
+            mark: "bar".to_string(),
+            encoding: serde_json::json!({}),
+        });
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("x".to_string()),
+            content_field: None,
+            toc_levels: None,
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("\"chart\" config block not allowed on table section")));
+        assert!(errors.iter().any(|e| e.message.contains("\"markdown\" config block not allowed on table section")));
+    }
+
+    #[test]
+    fn extra_config_block_on_chart_section() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Chart;
+        spec.sections[0].stats = None;
+        spec.sections[0].chart = Some(ChartConfig {
+            mark: "bar".to_string(),
+            encoding: serde_json::json!({}),
+        });
+        spec.sections[0].list = Some(ListConfig {
+            id_field: Some("id".to_string()),
+            layout: None,
+            title_field: None,
+            subtitle_field: None,
+            meta_field: None,
+            preview_field: None,
+            item_click: None,
+            detail: None,
+            on_action: None,
+        });
+        let errors = validate(&spec, &HashSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("\"list\" config block not allowed on chart section")));
     }
 
     #[test]

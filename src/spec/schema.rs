@@ -89,6 +89,18 @@ pub enum SectionType {
     Markdown,
 }
 
+impl SectionType {
+    pub fn as_spec_str(&self) -> &'static str {
+        match self {
+            SectionType::Chart => "chart",
+            SectionType::Table => "table",
+            SectionType::Stats => "stats",
+            SectionType::List => "list",
+            SectionType::Markdown => "markdown",
+        }
+    }
+}
+
 /// Chart configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
