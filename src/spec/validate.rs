@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashSet};
 
-use super::schema::{DashboardSpec, SectionType};
+use super::schema::{ActionDef, DashboardSpec, SectionType};
 
 #[derive(Debug, PartialEq)]
 pub struct SpecError {
@@ -162,6 +162,56 @@ pub fn validate(
             }
         }
 
+        // selectable / batch_actions: only supported on table and list sections
+        if section.selectable.is_some() || section.batch_actions.is_some() {
+            if !matches!(section.section_type, SectionType::Table | SectionType::List) {
+                errors.push(err(
+                    Some(label),
+                    format!(
+                        "selectable and batch_actions are not supported on {} sections",
+                        section.section_type.as_spec_str()
+                    ),
+                ));
+            }
+        }
+
+        // batch_actions validation
+        if let Some(ref actions) = section.batch_actions {
+            validate_actions(actions, "batch_actions", label, &mut errors);
+            if section.selectable != Some(true) {
+                errors.push(err(
+                    Some(label),
+                    "batch_actions requires selectable: true",
+                ));
+            }
+            // batch_actions requires a stable row identity
+            match section.section_type {
+                SectionType::Table => {
+                    let has_row_id = section.table.as_ref()
+                        .and_then(|t| t.row_id_field.as_deref())
+                        .is_some_and(|s| !s.trim().is_empty());
+                    if !has_row_id {
+                        errors.push(err(
+                            Some(label),
+                            "batch_actions on table requires table.row_id_field",
+                        ));
+                    }
+                }
+                SectionType::List => {
+                    let has_id_field = section.list.as_ref()
+                        .and_then(|l| l.id_field.as_deref())
+                        .is_some_and(|s| !s.trim().is_empty());
+                    if !has_id_field {
+                        errors.push(err(
+                            Some(label),
+                            "batch_actions on list requires list.id_field",
+                        ));
+                    }
+                }
+                _ => {} // already caught by section-type check above
+            }
+        }
+
         // interactive_filter requires id
         if section.interactive_filter.is_some() && section.id.is_none() {
             errors.push(err(
@@ -196,6 +246,38 @@ pub fn validate(
     }
 
     errors
+}
+
+fn validate_actions(
+    actions: &[ActionDef],
+    context: &str,
+    label: &str,
+    errors: &mut Vec<SpecError>,
+) {
+    if actions.is_empty() {
+        errors.push(err(Some(label), format!("{} list must not be empty", context)));
+    }
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    for action in actions {
+        let id = action.id.trim();
+        if id.is_empty() {
+            errors.push(err(
+                Some(label),
+                format!("{} contains action with empty id", context),
+            ));
+        } else if !seen_ids.insert(id.to_string()) {
+            errors.push(err(
+                Some(label),
+                format!("duplicate {} id \"{}\"", context, id),
+            ));
+        }
+        if action.label.trim().is_empty() {
+            errors.push(err(
+                Some(label),
+                format!("{} action \"{}\" has empty label", context, id),
+            ));
+        }
+    }
 }
 
 fn validate_chart(
@@ -267,12 +349,15 @@ fn validate_table(
         errors.push(err(Some(label), "table columns list is empty"));
     }
 
-    // row_actions requires row_id_field
-    if table.row_actions.is_some() && table.row_id_field.is_none() {
-        errors.push(err(
-            Some(label),
-            "row_actions requires table.row_id_field",
-        ));
+    // row_actions validation
+    if let Some(ref actions) = table.row_actions {
+        validate_actions(actions, "row_actions", label, errors);
+        if table.row_id_field.as_deref().is_none_or(|s| s.trim().is_empty()) {
+            errors.push(err(
+                Some(label),
+                "row_actions requires table.row_id_field",
+            ));
+        }
     }
 }
 
@@ -331,11 +416,18 @@ fn validate_list(
     };
 
     // id_field is required for all list sections (detail view navigation)
-    if list.id_field.is_none() {
+    if list.id_field.as_deref().is_none_or(|s| s.trim().is_empty()) {
         errors.push(err(
             Some(label),
             "list section requires list.id_field",
         ));
+    }
+
+    // detail.actions validation
+    if let Some(ref detail) = list.detail {
+        if let Some(ref actions) = detail.actions {
+            validate_actions(actions, "detail.actions", label, errors);
+        }
     }
 }
 
@@ -763,7 +855,7 @@ mod tests {
     fn stats_empty_items() {
         let mut spec = minimal_spec();
         spec.sections[0].stats.as_mut().unwrap().items.clear();
-        let errors = validate(&spec, &HashSet::new());
+        let errors = validate(&spec, &BTreeSet::new());
         assert_eq!(errors.len(), 1, "expected exactly 1 error, got: {:?}", errors);
         assert_eq!(errors[0].message, "stats.items must not be empty");
     }
@@ -1545,4 +1637,387 @@ mod tests {
         let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("pivot section requires source or inline_data")));
     }
+
+    // -- Helper: creates a table section suitable for batch_actions tests --
+    fn table_section_with_batch_actions(
+        selectable: Option<bool>,
+        batch_actions: Option<Vec<ActionDef>>,
+        row_id_field: Option<String>,
+    ) -> Section {
+        Section {
+            id: None,
+            title: "Items".to_string(),
+            section_type: SectionType::Table,
+            source: None,
+            inline_data: None,
+            chart: None,
+            table: Some(TableConfig {
+                columns: vec![ColumnDef {
+                    field: "name".to_string(),
+                    title: None,
+                    width: None,
+                    sort: None,
+                }],
+                row_id_field,
+                row_actions: None,
+            }),
+            stats: None,
+            list: None,
+            markdown: None,
+            pivot: None,
+            interactive_filter: None,
+            selectable,
+            batch_actions,
+        }
+    }
+
+    fn sample_actions() -> Vec<ActionDef> {
+        vec![
+            ActionDef { id: "approve".to_string(), label: "Approve".to_string(), style: None },
+            ActionDef { id: "reject".to_string(), label: "Reject".to_string(), style: None },
+        ]
+    }
+
+    // -- batch_actions: section type constraints --
+
+    #[test]
+    fn batch_actions_rejected_on_stats() {
+        let mut spec = minimal_spec();
+        spec.sections[0].selectable = Some(true);
+        spec.sections[0].batch_actions = Some(sample_actions());
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("not supported on stats sections")));
+    }
+
+    #[test]
+    fn selectable_rejected_on_markdown() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Markdown;
+        spec.sections[0].stats = None;
+        spec.sections[0].markdown = Some(MarkdownConfig {
+            content: Some("hello".to_string()),
+            content_field: None,
+            toc_levels: None,
+            toc_side: None,
+            link_target: None,
+            max_rows: None,
+        });
+        spec.sections[0].selectable = Some(true);
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("not supported on markdown sections")));
+    }
+
+    // -- batch_actions: requires selectable --
+
+    #[test]
+    fn batch_actions_requires_selectable() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            None, // selectable not set
+            Some(sample_actions()),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions requires selectable: true")));
+    }
+
+    #[test]
+    fn batch_actions_with_selectable_false() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(false),
+            Some(sample_actions()),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions requires selectable: true")));
+    }
+
+    // -- batch_actions: requires row identity --
+
+    #[test]
+    fn batch_actions_on_table_requires_row_id_field() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(sample_actions()),
+            None, // no row_id_field
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions on table requires table.row_id_field")));
+    }
+
+    // -- batch_actions: empty list --
+
+    #[test]
+    fn batch_actions_empty_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(vec![]),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions list must not be empty")));
+    }
+
+    // -- batch_actions: duplicate IDs --
+
+    #[test]
+    fn batch_actions_duplicate_ids() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(vec![
+                ActionDef { id: "approve".to_string(), label: "Approve".to_string(), style: None },
+                ActionDef { id: "approve".to_string(), label: "Approve Again".to_string(), style: None },
+            ]),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("duplicate batch_actions id \"approve\"")));
+    }
+
+    // -- batch_actions: empty/blank action IDs --
+
+    #[test]
+    fn batch_actions_empty_action_id_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(vec![
+                ActionDef { id: "".to_string(), label: "No ID".to_string(), style: None },
+            ]),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions contains action with empty id")));
+    }
+
+    #[test]
+    fn batch_actions_blank_action_label_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(vec![
+                ActionDef { id: "approve".to_string(), label: "   ".to_string(), style: None },
+            ]),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("has empty label")));
+    }
+
+    // -- batch_actions: valid --
+
+    #[test]
+    fn batch_actions_valid_on_table() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(sample_actions()),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    // -- row_actions: validation via shared helper --
+
+    #[test]
+    fn row_actions_empty_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Table;
+        spec.sections[0].stats = None;
+        spec.sections[0].table = Some(TableConfig {
+            columns: vec![ColumnDef {
+                field: "name".to_string(),
+                title: None,
+                width: None,
+                sort: None,
+            }],
+            row_id_field: Some("id".to_string()),
+            row_actions: Some(vec![]),
+        });
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("row_actions list must not be empty")));
+    }
+
+    #[test]
+    fn row_actions_duplicate_ids_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Table;
+        spec.sections[0].stats = None;
+        spec.sections[0].table = Some(TableConfig {
+            columns: vec![ColumnDef {
+                field: "name".to_string(),
+                title: None,
+                width: None,
+                sort: None,
+            }],
+            row_id_field: Some("id".to_string()),
+            row_actions: Some(vec![
+                ActionDef { id: "edit".to_string(), label: "Edit".to_string(), style: None },
+                ActionDef { id: "edit".to_string(), label: "Edit 2".to_string(), style: None },
+            ]),
+        });
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("duplicate row_actions id \"edit\"")));
+    }
+
+    // -- selectable: false on unsupported section --
+
+    #[test]
+    fn selectable_false_rejected_on_stats() {
+        let mut spec = minimal_spec();
+        spec.sections[0].selectable = Some(false);
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("not supported on stats sections")));
+    }
+
+    // -- batch_actions: list section --
+
+    #[test]
+    fn batch_actions_valid_on_list() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::List;
+        spec.sections[0].stats = None;
+        spec.sections[0].selectable = Some(true);
+        spec.sections[0].list = Some(ListConfig {
+            id_field: Some("id".to_string()),
+            layout: None,
+            title_field: None,
+            subtitle_field: None,
+            meta_field: None,
+            preview_field: None,
+            item_click: None,
+            detail: None,
+            on_action: None,
+        });
+        spec.sections[0].batch_actions = Some(sample_actions());
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn batch_actions_on_list_requires_id_field() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::List;
+        spec.sections[0].stats = None;
+        spec.sections[0].selectable = Some(true);
+        spec.sections[0].list = Some(ListConfig {
+            id_field: None,
+            layout: None,
+            title_field: None,
+            subtitle_field: None,
+            meta_field: None,
+            preview_field: None,
+            item_click: None,
+            detail: None,
+            on_action: None,
+        });
+        spec.sections[0].batch_actions = Some(sample_actions());
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions on list requires list.id_field")));
+    }
+
+    // -- blank identity fields --
+
+    #[test]
+    fn blank_row_id_field_rejected_for_batch_actions() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(sample_actions()),
+            Some("   ".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("batch_actions on table requires table.row_id_field")));
+    }
+
+    #[test]
+    fn blank_row_id_field_rejected_for_row_actions() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::Table;
+        spec.sections[0].stats = None;
+        spec.sections[0].table = Some(TableConfig {
+            columns: vec![ColumnDef {
+                field: "name".to_string(),
+                title: None,
+                width: None,
+                sort: None,
+            }],
+            row_id_field: Some("".to_string()),
+            row_actions: Some(sample_actions()),
+        });
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("row_actions requires table.row_id_field")));
+    }
+
+    // -- trimmed duplicate detection --
+
+    #[test]
+    fn batch_actions_whitespace_duplicate_ids_caught() {
+        let mut spec = minimal_spec();
+        spec.sections[0] = table_section_with_batch_actions(
+            Some(true),
+            Some(vec![
+                ActionDef { id: "approve".to_string(), label: "Approve".to_string(), style: None },
+                ActionDef { id: " approve ".to_string(), label: "Approve 2".to_string(), style: None },
+            ]),
+            Some("id".to_string()),
+        );
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("duplicate batch_actions id \"approve\"")));
+    }
+
+    // -- interactive_filter: null encoding --
+
+    #[test]
+    fn interactive_filter_null_encoding_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0].id = Some("c1".to_string());
+        spec.sections[0].section_type = SectionType::Chart;
+        spec.sections[0].stats = None;
+        spec.sections[0].chart = Some(ChartConfig {
+            mark: "bar".to_string(),
+            encoding: serde_json::Value::Null,
+        });
+        spec.sections[0].interactive_filter = Some(InteractiveFilter {
+            field: "country".to_string(),
+        });
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")));
+    }
+
+    // -- detail.actions validation --
+
+    #[test]
+    fn detail_actions_duplicate_ids_rejected() {
+        let mut spec = minimal_spec();
+        spec.sections[0].section_type = SectionType::List;
+        spec.sections[0].stats = None;
+        spec.sections[0].list = Some(ListConfig {
+            id_field: Some("id".to_string()),
+            layout: None,
+            title_field: None,
+            subtitle_field: None,
+            meta_field: None,
+            preview_field: None,
+            item_click: None,
+            detail: Some(DetailConfig {
+                fields: None,
+                body_field: None,
+                body_format: None,
+                actions: Some(vec![
+                    ActionDef { id: "edit".to_string(), label: "Edit".to_string(), style: None },
+                    ActionDef { id: "edit".to_string(), label: "Edit 2".to_string(), style: None },
+                ]),
+            }),
+            on_action: None,
+        });
+        let errors = validate(&spec, &BTreeSet::new());
+        assert!(errors.iter().any(|e| e.message.contains("duplicate detail.actions id \"edit\"")));
+    }
+
 }

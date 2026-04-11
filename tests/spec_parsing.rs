@@ -197,7 +197,7 @@ sections:
       encoding: null
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
         "null encoding should be rejected even without interactive_filter, got: {:?}", errors);
 }
@@ -215,7 +215,7 @@ sections:
       mark: bar
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
         "missing encoding should be rejected even without interactive_filter, got: {:?}", errors);
 }
@@ -255,7 +255,7 @@ sections:
       mark: bar
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
         "expected encoding error, got: {:?}", errors);
 }
@@ -276,7 +276,7 @@ sections:
       encoding: null
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
         "expected encoding error, got: {:?}", errors);
 }
@@ -297,7 +297,7 @@ sections:
       encoding: "not an object"
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
-    let errors = validate::validate(&spec, &HashSet::new());
+    let errors = validate::validate(&spec, &BTreeSet::new());
     assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
         "expected encoding error, got: {:?}", errors);
 }
