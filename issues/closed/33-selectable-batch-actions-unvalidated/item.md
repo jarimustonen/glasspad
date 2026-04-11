@@ -4,7 +4,7 @@ updated: 2026-04-11
 type: bug
 reporter: llm-review
 assignee: jari
-status: open
+status: closed
 priority: normal
 ---
 
