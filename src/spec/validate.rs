@@ -431,6 +431,38 @@ fn validate_pivot(
         }
     }
 
+    // Duplicate fields in rows
+    let mut seen_row_fields: HashSet<&str> = HashSet::new();
+    for field in &pivot.rows {
+        if !seen_row_fields.insert(field.as_str()) {
+            errors.push(err(
+                Some(label),
+                format!("duplicate field \"{}\" in pivot.rows", field),
+            ));
+        }
+    }
+
+    // Duplicate fields in columns
+    let mut seen_col_fields: HashSet<&str> = HashSet::new();
+    for field in &pivot.columns {
+        if !seen_col_fields.insert(field.as_str()) {
+            errors.push(err(
+                Some(label),
+                format!("duplicate field \"{}\" in pivot.columns", field),
+            ));
+        }
+    }
+
+    // Overlap between rows and columns
+    for field in &pivot.columns {
+        if seen_row_fields.contains(field.as_str()) {
+            errors.push(err(
+                Some(label),
+                format!("field \"{}\" appears in both pivot.rows and pivot.columns", field),
+            ));
+        }
+    }
+
     // sort.value_index must be within bounds
     if let Some(ref sort) = pivot.sort {
         if let Some(value_index) = sort.value_index {
