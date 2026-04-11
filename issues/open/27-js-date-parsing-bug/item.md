@@ -6,7 +6,7 @@ status: open
 priority: normal
 ---
 
-# 13. Unchecked Date parsing in hour/timeUnit filters
+# 27. Unchecked Date parsing in hour/timeUnit filters
 
 _Source: `src/client/dashboard.js` — `getFilteredData()`, `getFilteredDataExcluding()`_
 

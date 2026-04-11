@@ -6,7 +6,7 @@ status: open
 priority: high
 ---
 
-# 12. getFilteredDataExcluding() broken cache
+# 26. getFilteredDataExcluding() broken cache
 
 _Source: `src/client/dashboard.js` — `getFilteredDataExcluding()`_
 

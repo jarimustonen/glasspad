@@ -6,7 +6,7 @@ status: open
 priority: low
 ---
 
-# 14. provided_datasets parameter unused in validate()
+# 28. provided_datasets parameter unused in validate()
 
 _Source: `src/spec/validate.rs` — `validate()` function_
 
