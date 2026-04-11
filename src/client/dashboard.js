@@ -358,12 +358,12 @@
 
   function formatDecimal(n) {
     if (!isFinite(n)) return String(n);
-    if (Math.trunc(n) === n) return Math.trunc(n).toLocaleString('en-US');
-    return n.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    if (Math.trunc(n) === n) return Math.trunc(n).toLocaleString(undefined);
+    return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   }
 
   function formatCount(n) {
-    return Math.trunc(n).toLocaleString('en-US');
+    return Math.trunc(n).toLocaleString(undefined);
   }
 
   function distinctKey(v) {
