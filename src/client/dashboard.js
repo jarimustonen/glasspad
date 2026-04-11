@@ -202,8 +202,10 @@
         var hRange = srcHours[hf];
         var hv = row[hf];
         if (hv == null) return false;
-        var unitVal = extractTimeUnit(new Date(hv), hRange.timeUnit || 'hours');
-        if (unitVal < hRange.min || unitVal > hRange.max) return false;
+        var d = new Date(hv);
+        if (!isFinite(d.getTime())) return false;
+        var unitVal = extractTimeUnit(d, hRange.timeUnit || 'hours');
+        if (!isFinite(unitVal) || unitVal < hRange.min || unitVal > hRange.max) return false;
       }
       return true;
     });
@@ -263,8 +265,10 @@
         var hRange = srcHours[hourFields[h]];
         var hv = row[hourFields[h]];
         if (hv == null) return false;
-        var unitVal = extractTimeUnit(new Date(hv), hRange.timeUnit || 'hours');
-        if (unitVal < hRange.min || unitVal > hRange.max) return false;
+        var d = new Date(hv);
+        if (!isFinite(d.getTime())) return false;
+        var unitVal = extractTimeUnit(d, hRange.timeUnit || 'hours');
+        if (!isFinite(unitVal) || unitVal < hRange.min || unitVal > hRange.max) return false;
       }
       return true;
     });
@@ -835,7 +839,10 @@
       var allUnits = Object.create(null);
       for (var hi = 0; hi < rawData.length; hi++) {
         var hv = rawData[hi][temporalField];
-        if (hv != null) allUnits[extractTimeUnit(new Date(hv), tu)] = true;
+        if (hv != null) {
+          var d = new Date(hv);
+          if (isFinite(d.getTime())) allUnits[extractTimeUnit(d, tu)] = true;
+        }
       }
       // unitList: sorted unique bin values; slider works on boundary indices 0..N
       // where N = unitList.length.  Boundary i sits at the left edge of bin i
