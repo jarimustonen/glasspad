@@ -389,15 +389,21 @@ fn validate_stats(
             ));
         }
 
-        // distinct, sum, avg, min, max require field
-        if item.aggregate != "count" && item.field.is_none() {
-            errors.push(err(
-                Some(label),
-                format!(
-                    "aggregate \"{}\" requires field",
-                    item.aggregate
-                ),
-            ));
+        // field validation: required for non-count, must not be empty/whitespace if provided
+        match item.field.as_deref().map(str::trim) {
+            Some("") => {
+                errors.push(err(
+                    Some(label),
+                    format!("aggregate \"{}\" field must not be empty", item.aggregate),
+                ));
+            }
+            None if item.aggregate != "count" => {
+                errors.push(err(
+                    Some(label),
+                    format!("aggregate \"{}\" requires field", item.aggregate),
+                ));
+            }
+            _ => {}
         }
     }
 }

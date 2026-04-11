@@ -302,6 +302,46 @@ sections:
         "expected encoding error, got: {:?}", errors);
 }
 
+// --- stats validation tests ---
+
+#[test]
+fn validate_stats_whitespace_field_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Stats"
+    type: stats
+    inline_data:
+      - { x: 1 }
+    stats:
+      items:
+        - { label: "Total", aggregate: sum, field: "   " }
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("field must not be empty")));
+}
+
+#[test]
+fn validate_stats_count_with_whitespace_field_rejected() {
+    let yaml = r#"
+spec_version: 1
+title: "Test"
+sections:
+  - title: "Stats"
+    type: stats
+    inline_data:
+      - { x: 1 }
+    stats:
+      items:
+        - { label: "Count", aggregate: count, field: "  " }
+"#;
+    let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
+    let errors = validate::validate(&spec, &BTreeSet::new());
+    assert!(errors.iter().any(|e| e.message.contains("field must not be empty")));
+}
+
 // --- markdown schema tests ---
 
 #[test]
