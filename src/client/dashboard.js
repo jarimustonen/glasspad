@@ -2433,7 +2433,11 @@
     } else {
       var labelDesc = sortCfg && sortCfg.direction === 'desc';
       var labelSorter = function(a, b) {
-        var cmp = a < b ? -1 : a > b ? 1 : 0;
+        var pa = JSON.parse(a), pb = JSON.parse(b);
+        var cmp = 0;
+        for (var k = 0; k < pa.length && cmp === 0; k++) {
+          cmp = compareGroupValues(pa[k], pb[k]);
+        }
         return labelDesc ? -cmp : cmp;
       };
       if (needsGroupedSort) {
@@ -2441,7 +2445,14 @@
       } else {
         sortedRowKeys.sort(labelSorter);
       }
-      sortedColKeys.sort();
+      sortedColKeys.sort(function(a, b) {
+        var pa = JSON.parse(a), pb = JSON.parse(b);
+        var cmp = 0;
+        for (var k = 0; k < pa.length && cmp === 0; k++) {
+          cmp = compareGroupValues(pa[k], pb[k]);
+        }
+        return cmp;
+      });
     }
 
     return {
@@ -2454,6 +2465,20 @@
       cols: cols,
       values: values
     };
+  }
+
+  function compareGroupValues(a, b) {
+    if (a === b) return 0;
+    if (a == null) return -1;
+    if (b == null) return 1;
+    // Numeric comparison if both are numbers
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    // Try numeric parse for string values
+    var na = Number(a), nb = Number(b);
+    if (isFinite(na) && isFinite(nb)) return na - nb;
+    // String comparison fallback
+    var sa = String(a), sb = String(b);
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
   }
 
   function makeGroupKey(row, fields) {
