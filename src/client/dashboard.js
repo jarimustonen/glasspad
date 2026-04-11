@@ -249,7 +249,7 @@
 
     if (fields.length === 0 && rangeFields.length === 0 && hourFields.length === 0) return raw;
 
-    return raw.filter(function(row) {
+    var result = raw.filter(function(row) {
       for (var i = 0; i < fields.length; i++) {
         var allowed = srcFilters[fields[i]];
         if (!(distinctKey(row[fields[i]]) in allowed)) return false;
