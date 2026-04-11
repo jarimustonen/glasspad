@@ -2414,23 +2414,33 @@
 
     // Apply sorting
     var sortCfg = cfg.sort;
+    var needsGroupedSort = cfg.show_subtotals && rows.length > 1;
+
     if (sortCfg && sortCfg.by === 'value') {
       var vi = sortCfg.value_index || 0;
       var desc = sortCfg.direction === 'desc';
-      sortedRowKeys.sort(function(a, b) {
-        // Use grand total for this row across all columns
+      var valueSorter = function(a, b) {
         var va = getRowTotal(a, sortedColKeys, cells, values, vi);
         var vb = getRowTotal(b, sortedColKeys, cells, values, vi);
         var cmp = (va === null ? -Infinity : va) - (vb === null ? -Infinity : vb);
         return desc ? -cmp : cmp;
-      });
+      };
+      if (needsGroupedSort) {
+        sortedRowKeys = sortWithinGroups(sortedRowKeys, rowKeys, valueSorter);
+      } else {
+        sortedRowKeys.sort(valueSorter);
+      }
     } else {
-      // Sort by label (alphabetically by row key fields)
       var labelDesc = sortCfg && sortCfg.direction === 'desc';
-      sortedRowKeys.sort(function(a, b) {
+      var labelSorter = function(a, b) {
         var cmp = a < b ? -1 : a > b ? 1 : 0;
         return labelDesc ? -cmp : cmp;
-      });
+      };
+      if (needsGroupedSort) {
+        sortedRowKeys = sortWithinGroups(sortedRowKeys, rowKeys, labelSorter);
+      } else {
+        sortedRowKeys.sort(labelSorter);
+      }
       sortedColKeys.sort();
     }
 
@@ -2518,6 +2528,33 @@
       if (cellKey in cells) mergeAggStates(total, cells[cellKey][vi]);
     }
     return resolveAgg(total, values[vi].aggregate);
+  }
+
+  // Sort rows within first-level groups to preserve subtotal contiguity
+  function sortWithinGroups(rowKeyList, rowKeysMap, comparator) {
+    // Group by first row field value
+    var groups = Object.create(null);
+    var groupOrder = [];
+    for (var i = 0; i < rowKeyList.length; i++) {
+      var rk = rowKeyList[i];
+      var firstVal = String(rowKeysMap[rk][0]);
+      if (!(firstVal in groups)) {
+        groups[firstVal] = [];
+        groupOrder.push(firstVal);
+      }
+      groups[firstVal].push(rk);
+    }
+    // Sort groups by first member's sort value, sort within each group
+    groupOrder.sort(function(a, b) {
+      return comparator(groups[a][0], groups[b][0]);
+    });
+    var result = [];
+    for (var g = 0; g < groupOrder.length; g++) {
+      var members = groups[groupOrder[g]];
+      members.sort(comparator);
+      for (var m = 0; m < members.length; m++) result.push(members[m]);
+    }
+    return result;
   }
 
   function renderPivotTable(result, cfg) {
