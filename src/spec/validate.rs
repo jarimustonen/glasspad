@@ -288,6 +288,10 @@ fn validate_stats(
         }
     };
 
+    if stats.items.is_empty() {
+        errors.push(err(Some(label), "stats.items must not be empty"));
+    }
+
     for item in &stats.items {
         if !SUPPORTED_AGGREGATES.contains(&item.aggregate.as_str()) {
             errors.push(err(
@@ -752,6 +756,15 @@ mod tests {
         });
         let errors = validate(&spec, &BTreeSet::new());
         assert!(errors.iter().any(|e| e.message.contains("row_actions requires table.row_id_field")));
+    }
+
+    #[test]
+    fn stats_empty_items() {
+        let mut spec = minimal_spec();
+        spec.sections[0].stats.as_mut().unwrap().items.clear();
+        let errors = validate(&spec, &HashSet::new());
+        assert_eq!(errors.len(), 1, "expected exactly 1 error, got: {:?}", errors);
+        assert_eq!(errors[0].message, "stats.items must not be empty");
     }
 
     #[test]
