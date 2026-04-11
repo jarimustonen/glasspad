@@ -18,6 +18,30 @@ use crate::spec::schema::DashboardSpec;
 use crate::spec::validate;
 use crate::store::PadStore;
 
+/// Require a YAML Content-Type header. Rejects missing, malformed, or non-YAML types.
+fn require_yaml_content_type(headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
+    let raw = headers
+        .get("content-type")
+        .ok_or((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Expected Content-Type: application/x-yaml".to_string(),
+        ))?
+        .to_str()
+        .map_err(|_| (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Invalid Content-Type header".to_string(),
+        ))?;
+
+    let media_type = raw.split(';').next().unwrap_or("").trim();
+    if !matches!(media_type, "application/x-yaml" | "application/yaml" | "text/yaml") {
+        return Err((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Expected Content-Type: application/x-yaml".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Collect datasets from both top-level spec.datasets (external, provided via --data)
 /// and section.inline_data (inline in spec). Detects duplicate/conflicting definitions.
 fn collect_datasets(
@@ -68,23 +92,9 @@ pub async fn create_pad(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<(StatusCode, Json<PadCreated>), (StatusCode, String)> {
-    let body_str = String::from_utf8(body.to_vec())
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid UTF-8".to_string()))?;
+    require_yaml_content_type(&headers)?;
 
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    // Reject obviously wrong content types, but don't sniff body content
-    if !content_type.is_empty() && !content_type.contains("yaml") {
-        return Err((
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "Expected Content-Type: application/x-yaml".to_string(),
-        ));
-    }
-
-    let spec: DashboardSpec = serde_yaml::from_str(&body_str)
+    let spec: DashboardSpec = serde_yaml::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
 
     // Collect datasets (no external datasets via API body-only path)
@@ -177,22 +187,9 @@ pub async fn update_pad(
         return Err((StatusCode::FORBIDDEN, "Invalid token".to_string()));
     }
 
-    let body_str = String::from_utf8(body.to_vec())
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid UTF-8".to_string()))?;
+    require_yaml_content_type(&headers)?;
 
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    if !content_type.is_empty() && !content_type.contains("yaml") {
-        return Err((
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "Expected Content-Type: application/x-yaml".to_string(),
-        ));
-    }
-
-    let spec: DashboardSpec = serde_yaml::from_str(&body_str)
+    let spec: DashboardSpec = serde_yaml::from_slice(&body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid YAML: {}", e)))?;
 
     let external = BTreeMap::new();
@@ -249,5 +246,141 @@ pub async fn delete_pad(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err((StatusCode::NOT_FOUND, "Pad not found".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    // --- Unit tests for require_yaml_content_type ---
+
+    fn headers_with(ct: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("content-type", HeaderValue::from_str(ct).unwrap());
+        h
+    }
+
+    #[test]
+    fn rejects_missing_content_type() {
+        let h = HeaderMap::new();
+        let err = require_yaml_content_type(&h).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn rejects_malformed_content_type() {
+        let mut h = HeaderMap::new();
+        h.insert("content-type", HeaderValue::from_bytes(b"application/\xff").unwrap());
+        let err = require_yaml_content_type(&h).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn rejects_json_content_type() {
+        let err = require_yaml_content_type(&headers_with("application/json")).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn rejects_substring_trick() {
+        // "yaml" appears as substring but is not a valid YAML media type
+        let err = require_yaml_content_type(&headers_with("application/notyaml")).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn rejects_yaml_in_parameter() {
+        let err = require_yaml_content_type(&headers_with("application/json; note=yaml")).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn accepts_application_x_yaml() {
+        require_yaml_content_type(&headers_with("application/x-yaml")).unwrap();
+    }
+
+    #[test]
+    fn accepts_application_yaml() {
+        require_yaml_content_type(&headers_with("application/yaml")).unwrap();
+    }
+
+    #[test]
+    fn accepts_text_yaml() {
+        require_yaml_content_type(&headers_with("text/yaml")).unwrap();
+    }
+
+    #[test]
+    fn accepts_yaml_with_charset() {
+        require_yaml_content_type(&headers_with("application/x-yaml; charset=utf-8")).unwrap();
+    }
+
+    // --- Integration tests for endpoint wiring ---
+
+    use axum::{body::Body, http::Request, routing::{post, get}, Router};
+    use tower::util::ServiceExt;
+
+    const MINIMAL_SPEC: &str = "spec_version: 1\ntitle: test\nsections:\n  - title: s1\n    type: markdown\n    markdown:\n      content: hello\n";
+
+    fn app() -> Router {
+        let store = Arc::new(PadStore::new(9999));
+        Router::new()
+            .route("/api/pads", post(create_pad))
+            .route("/api/pads/{id}", get(get_pad).put(update_pad))
+            .with_state(store)
+    }
+
+    #[tokio::test]
+    async fn create_rejects_non_yaml_content_type() {
+        let resp = app()
+            .oneshot(
+                Request::post("/api/pads")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn update_rejects_non_yaml_content_type() {
+        let app = app();
+
+        // Create a pad first
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::post("/api/pads")
+                    .header("content-type", "application/x-yaml")
+                    .body(Body::from(MINIMAL_SPEC))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_resp.status(), StatusCode::CREATED);
+        let body_bytes = axum::body::to_bytes(create_resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let id = created["id"].as_str().unwrap();
+        let token = created["token"].as_str().unwrap();
+
+        // Try to update with wrong content type
+        let resp = app
+            .oneshot(
+                Request::put(format!("/api/pads/{}", id))
+                    .header("content-type", "application/json")
+                    .header("x-glasspad-token", token)
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 }
