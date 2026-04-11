@@ -3,6 +3,8 @@ title: "Bad aggregate"
 sections:
   - title: "Stats"
     type: stats
+    inline_data:
+      - { x: 1 }
     stats:
       items:
         - { label: "Median", aggregate: median }

@@ -48,7 +48,9 @@ fn validate_bad_aggregate() {
     let yaml = load_fixture("invalid_bad_aggregate.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
+    assert_eq!(errors.len(), 2, "expected 2 errors, got: {:?}", errors);
     assert!(errors.iter().any(|e| e.message.contains("unknown aggregate")));
+    assert!(errors.iter().any(|e| e.message.contains("requires field")));
 }
 
 #[test]
@@ -174,13 +176,16 @@ title: "Test"
 sections:
   - title: "Chart"
     type: chart
+    inline_data:
+      - { x: 1 }
     chart:
       mark: bar
       encoding: "not an object"
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart.encoding must be a JSON object"));
 }
 
 #[test]
@@ -192,13 +197,16 @@ sections:
   - id: c1
     title: "Chart"
     type: chart
+    inline_data:
+      - { x: 1 }
     chart:
       mark: bar
       encoding: null
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart.encoding must be a JSON object"),
         "null encoding should be rejected even without interactive_filter, got: {:?}", errors);
 }
 
@@ -211,12 +219,15 @@ sections:
   - id: c1
     title: "Chart"
     type: chart
+    inline_data:
+      - { x: 1 }
     chart:
       mark: bar
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart.encoding must be a JSON object"),
         "missing encoding should be rejected even without interactive_filter, got: {:?}", errors);
 }
 
@@ -229,6 +240,8 @@ sections:
   - id: s1
     title: "Stats"
     type: stats
+    inline_data:
+      - { x: 1 }
     interactive_filter:
       field: country
     stats:
@@ -237,7 +250,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("only supported on chart")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("only supported on chart"));
 }
 
 // --- data source validation tests ---
@@ -256,7 +270,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart section requires source or inline_data")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart section requires source or inline_data"));
 }
 
 #[test]
@@ -273,7 +288,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("table section requires source or inline_data")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("table section requires source or inline_data"));
 }
 
 #[test]
@@ -290,7 +306,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("stats section requires source or inline_data")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("stats section requires source or inline_data"));
 }
 
 // --- section id validation tests ---
@@ -312,7 +329,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("must not be empty or whitespace")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("must not be empty or whitespace"));
 }
 
 #[test]
@@ -332,7 +350,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("must not be empty or whitespace")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("must not be empty or whitespace"));
 }
 
 #[test]
@@ -352,7 +371,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("contains invalid characters")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("contains invalid characters"));
 }
 
 #[test]
@@ -380,7 +400,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("duplicate section id")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("duplicate section id"));
 }
 
 #[test]
@@ -392,6 +413,8 @@ sections:
   - id: c1
     title: "Chart"
     type: chart
+    inline_data:
+      - { x: 1 }
     interactive_filter:
       field: country
     chart:
@@ -399,7 +422,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart.encoding must be a JSON object"),
         "expected encoding error, got: {:?}", errors);
 }
 
@@ -412,6 +436,8 @@ sections:
   - id: c1
     title: "Chart"
     type: chart
+    inline_data:
+      - { x: 1 }
     interactive_filter:
       field: country
     chart:
@@ -420,7 +446,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart.encoding must be a JSON object"),
         "expected encoding error, got: {:?}", errors);
 }
 
@@ -433,6 +460,8 @@ sections:
   - id: c1
     title: "Chart"
     type: chart
+    inline_data:
+      - { x: 1 }
     interactive_filter:
       field: country
     chart:
@@ -441,7 +470,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("chart.encoding must be a JSON object")),
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("chart.encoding must be a JSON object"),
         "expected encoding error, got: {:?}", errors);
 }
 
@@ -463,7 +493,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("field must not be empty")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("field must not be empty"));
 }
 
 #[test]
@@ -482,7 +513,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("field must not be empty")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("field must not be empty"));
 }
 
 // --- markdown schema tests ---
@@ -654,7 +686,8 @@ fn validate_pivot_field_overlap_rejected() {
     let yaml = load_fixture("invalid_pivot_overlap.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("appears in both pivot.rows and pivot.columns")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("appears in both pivot.rows and pivot.columns"));
 }
 
 #[test]
@@ -662,7 +695,8 @@ fn validate_pivot_subtotals_single_row_rejected() {
     let yaml = load_fixture("invalid_pivot_subtotals_single_row.yaml");
     let spec: DashboardSpec = serde_yaml::from_str(&yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("show_subtotals requires at least 2 row fields")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("show_subtotals requires at least 2 row fields"));
 }
 
 #[test]
@@ -683,7 +717,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("requires field")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("requires field"));
 }
 
 #[test]
@@ -727,7 +762,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("empty field name")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("empty field name"));
 }
 
 #[test]
@@ -751,7 +787,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("valid 3-letter currency code")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("valid 3-letter currency code"));
 }
 
 #[test]
@@ -776,7 +813,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("out of range")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("out of range"));
 }
 
 #[test]
@@ -799,7 +837,8 @@ sections:
 "#;
     let spec: DashboardSpec = serde_yaml::from_str(yaml).unwrap();
     let errors = validate::validate(&spec, &BTreeSet::new());
-    assert!(errors.iter().any(|e| e.message.contains("duplicate field")));
+    assert_eq!(errors.len(), 1, "expected 1 error, got: {:?}", errors);
+    assert!(errors[0].message.contains("duplicate field"));
 }
 
 #[test]
