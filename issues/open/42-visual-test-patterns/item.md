@@ -4,8 +4,8 @@ updated: 2026-04-13
 type: task
 reporter: jari
 assignee: jari
-status: open
-priority: normal
+status: in-progress
+priority: high
 ---
 
 # 42. Visual test patterns for comprehensive feature coverage

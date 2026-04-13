@@ -1,0 +1,43 @@
+spec_version: 1
+title: "Table Variants — Visual Test"
+description: "Covers table columns, sort types, row actions, selectable rows, and batch actions"
+layout: stack
+
+sections:
+  # --- Table with all sort types ---
+  - id: employee-table
+    title: "Employee Directory"
+    type: table
+    table:
+      columns:
+        - { field: id, title: "ID", sort: number, width: 60 }
+        - { field: name, title: "Name", sort: string }
+        - { field: department, title: "Department", sort: string }
+        - { field: salary, title: "Salary ($)", sort: number, width: 120 }
+        - { field: hired, title: "Hired", sort: temporal, width: 120 }
+        - { field: active, title: "Active", sort: boolean, width: 80 }
+      row_id_field: id
+      row_actions:
+        - { id: promote, label: "Promote", style: success }
+        - { id: transfer, label: "Transfer" }
+        - { id: terminate, label: "Terminate", style: danger }
+    selectable: true
+    batch_actions:
+      - { id: export, label: "Export Selected" }
+      - { id: bulk-deactivate, label: "Deactivate", style: danger }
+    inline_data:
+      - { id: 1, name: "Aisha Patel", department: "Engineering", salary: 128000, hired: "2021-03-15", active: true }
+      - { id: 2, name: "Björn Eriksson", department: "Marketing", salary: 95000, hired: "2022-06-01", active: true }
+      - { id: 3, name: "Carmen Vega", department: "Engineering", salary: 135000, hired: "2020-01-10", active: true }
+      - { id: 4, name: "Dmitri Volkov", department: "Operations", salary: 87000, hired: "2023-09-22", active: false }
+      - { id: 5, name: "Elena Rossi", department: "Sales", salary: 105000, hired: "2019-11-03", active: true }
+      - { id: 6, name: "Fatima Al-Rashid", department: "Engineering", salary: 142000, hired: "2018-07-20", active: true }
+      - { id: 7, name: "Gabriel Santos", department: "Support", salary: 72000, hired: "2024-01-08", active: true }
+      - { id: 8, name: "Haruki Tanaka", department: "Engineering", salary: 131000, hired: "2021-05-14", active: true }
+      - { id: 9, name: "Ingrid Larsen", department: "Marketing", salary: 98000, hired: "2022-11-30", active: false }
+      - { id: 10, name: "James O'Brien", department: "Sales", salary: 110000, hired: "2020-08-19", active: true }
+      - { id: 11, name: "Keiko Yamamoto", department: "Operations", salary: 91000, hired: "2023-03-05", active: true }
+      - { id: 12, name: "Luca Moretti", department: "Engineering", salary: 125000, hired: "2021-12-01", active: true }
+      - { id: 13, name: "Maria Gonzalez", department: "Support", salary: 76000, hired: "2024-02-14", active: true }
+      - { id: 14, name: "Nikolai Petrov", department: "Sales", salary: 102000, hired: "2019-04-22", active: false }
+      - { id: 15, name: "Olivia Chen", department: "Engineering", salary: 148000, hired: "2017-09-11", active: true }

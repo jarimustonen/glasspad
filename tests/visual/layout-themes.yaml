@@ -1,0 +1,57 @@
+spec_version: 1
+title: "Layout & Themes — Visual Test (Light)"
+description: "Tests grid-2col layout with light theme and mixed section types"
+layout: grid-2col
+theme: light
+
+sections:
+  - id: light-chart
+    title: "Quarterly Revenue"
+    type: chart
+    chart:
+      mark: bar
+      encoding:
+        x: { field: quarter, type: ordinal }
+        y: { field: revenue, type: quantitative }
+    inline_data:
+      - { quarter: "Q1", revenue: 186000 }
+      - { quarter: "Q2", revenue: 237000 }
+      - { quarter: "Q3", revenue: 201000 }
+      - { quarter: "Q4", revenue: 316000 }
+
+  - id: light-stats
+    title: "Summary Metrics"
+    type: stats
+    stats:
+      items:
+        - { label: "Total Revenue", aggregate: sum, field: revenue }
+        - { label: "Average", aggregate: avg, field: revenue }
+        - { label: "Quarters", aggregate: count }
+    inline_data:
+      - { quarter: "Q1", revenue: 186000 }
+      - { quarter: "Q2", revenue: 237000 }
+      - { quarter: "Q3", revenue: 201000 }
+      - { quarter: "Q4", revenue: 316000 }
+
+  - id: light-table
+    title: "Team Members"
+    type: table
+    table:
+      columns:
+        - { field: name, title: "Name" }
+        - { field: role, title: "Role" }
+    inline_data:
+      - { name: "Alice", role: "Engineer" }
+      - { name: "Bob", role: "Designer" }
+      - { name: "Carol", role: "PM" }
+
+  - id: light-markdown
+    title: "Notes"
+    type: markdown
+    markdown:
+      content: |
+        This section verifies that **markdown** renders cleanly in light theme alongside other section types.
+
+        - Charts should use light backgrounds
+        - Tables should have subtle borders
+        - Stats cards should be readable

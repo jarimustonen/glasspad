@@ -1,0 +1,102 @@
+spec_version: 1
+title: "Markdown Variants — Visual Test"
+description: "Covers inline content, content_field from data, TOC sidebar (left/right), toc_levels, link_target"
+layout: stack
+
+sections:
+  # --- Inline content with rich formatting ---
+  - id: md-inline
+    title: "Inline Markdown Content"
+    type: markdown
+    markdown:
+      toc_levels: [1, 2, 3]
+      toc_side: left
+      link_target: _blank
+      content: |
+        # API Reference
+
+        Welcome to the **Glasspad API Reference**. This document covers all endpoints and their parameters.
+
+        ## Authentication
+
+        All API requests require a bearer token:
+
+        ```bash
+        curl -H "Authorization: Bearer YOUR_TOKEN" \
+          https://api.example.com/pads
+        ```
+
+        > **Note:** Tokens expire after 24 hours. Use the `/auth/refresh` endpoint to obtain a new token.
+
+        ## Endpoints
+
+        ### POST /api/pads
+
+        Create a new pad from a YAML spec.
+
+        | Parameter     | Type   | Required | Description                |
+        |---------------|--------|----------|----------------------------|
+        | Content-Type  | Header | Yes      | Must be application/x-yaml |
+        | spec          | Body   | Yes      | The YAML dashboard spec    |
+        | ttl           | Query  | No       | Time-to-live in seconds    |
+
+        ### GET /api/pads/:id
+
+        Retrieve a pad by its unique identifier.
+
+        ### DELETE /api/pads/:id
+
+        Delete a pad permanently. Returns `204 No Content` on success.
+
+        ## Data Types
+
+        Supported data types in inline datasets:
+
+        - **string** — text values
+        - **number** — integers and floats
+        - **boolean** — `true` or `false`
+        - **null** — missing values
+
+        ## Rate Limits
+
+        | Tier       | Requests/min | Burst |
+        |------------|-------------|-------|
+        | Free       | 60          | 10    |
+        | Pro        | 600         | 50    |
+        | Enterprise | 6000        | 200   |
+
+        ---
+
+        *Last updated: April 2026*
+
+  # --- Content from dataset field ---
+  - id: md-from-data
+    title: "Release Notes (from data)"
+    type: markdown
+    markdown:
+      content_field: body
+    inline_data:
+      - body: |
+          ## v2.14.0 — April 2026
+
+          **New Features:**
+          - Pivot table sections with multi-level row/column dimensions
+          - Markdown sections with TOC sidebar support
+          - Dark mode theme option
+
+          **Bug Fixes:**
+          - Fixed chart flicker on browser resize
+          - Fixed CSV export truncating Unicode characters
+          - Fixed login redirect loop on Safari
+
+      - body: |
+          ## v2.13.0 — March 2026
+
+          **New Features:**
+          - Interactive filters on chart sections
+          - Batch actions for table and list sections
+          - Selectable rows with checkbox UI
+
+          **Improvements:**
+          - 40% faster initial page load
+          - Reduced memory usage for large datasets

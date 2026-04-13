@@ -1,0 +1,136 @@
+spec_version: 1
+title: "List Variants — Visual Test"
+description: "Covers cards/rows/compact layouts, detail views, body formats, actions, selectable + batch"
+layout: grid-2col
+
+sections:
+  # --- Cards layout with full detail (text body) ---
+  - id: cards-projects
+    title: "Active Projects (Cards)"
+    type: list
+    list:
+      id_field: id
+      layout: cards
+      title_field: name
+      subtitle_field: lead
+      meta_field: status
+      preview_field: summary
+      item_click: open_detail
+      detail:
+        fields:
+          - { field: id, title: "Project ID" }
+          - { field: lead, title: "Lead" }
+          - { field: status, title: "Status" }
+          - { field: team_size, title: "Team Size", sort: number }
+          - { field: deadline, title: "Deadline", sort: temporal }
+          - { field: budget, title: "Budget ($)", sort: number }
+        body_field: description
+        body_format: text
+        actions:
+          - { id: approve, label: "Approve", style: success }
+          - { id: pause, label: "Pause" }
+          - { id: cancel, label: "Cancel", style: danger }
+    inline_data:
+      - id: "PRJ-001"
+        name: "Atlas Migration"
+        lead: "Aisha Patel"
+        status: "In Progress"
+        team_size: 8
+        deadline: "2026-06-30"
+        budget: 450000
+        summary: "Migrating legacy data warehouse to cloud-native architecture"
+        description: "The Atlas Migration project involves moving our entire data warehouse from on-premises PostgreSQL clusters to a cloud-native solution using distributed query engines. Key milestones include schema redesign, ETL pipeline migration, and performance benchmarking. Current progress: 65% complete with data migration phase starting next sprint."
+      - id: "PRJ-002"
+        name: "Phoenix UI Redesign"
+        lead: "Carmen Vega"
+        status: "Planning"
+        team_size: 5
+        deadline: "2026-09-15"
+        budget: 280000
+        summary: "Complete overhaul of customer-facing dashboard interface"
+        description: "Phoenix is a ground-up redesign of our customer dashboard. Focus areas include accessibility compliance (WCAG 2.1 AA), responsive mobile layout, and reduced time-to-interactive. Design system components are being built in Storybook before integration."
+      - id: "PRJ-003"
+        name: "Sentinel Monitoring"
+        lead: "Haruki Tanaka"
+        status: "In Progress"
+        team_size: 4
+        deadline: "2026-05-01"
+        budget: 150000
+        summary: "Real-time infrastructure monitoring and alerting platform"
+        description: "Sentinel replaces our aging Nagios setup with a modern observability stack. Components: metric collection (OpenTelemetry), storage (Prometheus), visualization (Grafana), and intelligent alerting with anomaly detection. Beta testing with the SRE team is underway."
+
+  # --- Rows layout ---
+  - id: rows-tasks
+    title: "Sprint Tasks (Rows)"
+    type: list
+    list:
+      id_field: id
+      layout: rows
+      title_field: title
+      subtitle_field: assignee
+      meta_field: priority
+    inline_data:
+      - { id: "T-101", title: "Fix login redirect loop on Safari", assignee: "Carol Wu", priority: "High" }
+      - { id: "T-102", title: "Add rate limiting to /api/export", assignee: "David Park", priority: "Medium" }
+      - { id: "T-103", title: "Update dependency versions for Q2", assignee: "Elena Rossi", priority: "Low" }
+      - { id: "T-104", title: "Implement CSV export for pivot tables", assignee: "Fatima Al-Rashid", priority: "High" }
+      - { id: "T-105", title: "Write integration tests for webhook handler", assignee: "Gabriel Santos", priority: "Medium" }
+
+  # --- Compact layout ---
+  - id: compact-alerts
+    title: "Recent Alerts (Compact)"
+    type: list
+    list:
+      id_field: id
+      layout: compact
+      title_field: message
+      meta_field: severity
+    inline_data:
+      - { id: "ALT-001", message: "CPU usage > 90% on prod-web-3", severity: "Critical" }
+      - { id: "ALT-002", message: "SSL certificate expires in 14 days", severity: "Warning" }
+      - { id: "ALT-003", message: "Disk space below 10% on db-replica-2", severity: "Critical" }
+      - { id: "ALT-004", message: "API latency p99 > 500ms", severity: "Warning" }
+      - { id: "ALT-005", message: "Failed login attempts spike detected", severity: "Info" }
+      - { id: "ALT-006", message: "Deployment pipeline completed successfully", severity: "Info" }
+
+  # --- Detail view with sanitized_html body ---
+  - id: html-articles
+    title: "Knowledge Base (HTML Detail)"
+    type: list
+    selectable: true
+    batch_actions:
+      - { id: archive, label: "Archive Selected" }
+      - { id: publish, label: "Publish", style: success }
+    list:
+      id_field: id
+      layout: cards
+      title_field: title
+      subtitle_field: author
+      meta_field: category
+      preview_field: excerpt
+      item_click: open_detail
+      detail:
+        fields:
+          - { field: author, title: "Author" }
+          - { field: category, title: "Category" }
+          - { field: updated, title: "Last Updated", sort: temporal }
+        body_field: content_html
+        body_format: sanitized_html
+        actions:
+          - { id: edit, label: "Edit" }
+          - { id: delete, label: "Delete", style: danger }
+    inline_data:
+      - id: "KB-001"
+        title: "Getting Started with Glasspad"
+        author: "Documentation Team"
+        category: "Tutorial"
+        updated: "2026-04-01"
+        excerpt: "Learn how to create your first dashboard with Glasspad"
+        content_html: "<h2>Welcome to Glasspad</h2><p>Glasspad makes it easy to create <strong>rich data visualizations</strong> from simple YAML specs.</p><h3>Step 1: Create a Spec</h3><p>Write a YAML file describing your dashboard sections.</p><h3>Step 2: Post to the API</h3><p>Use <code>curl</code> to post your spec and get a shareable URL.</p>"
+      - id: "KB-002"
+        title: "Advanced Chart Configuration"
+        author: "Engineering Team"
+        category: "Reference"
+        updated: "2026-03-28"
+        excerpt: "Deep dive into Vega-Lite encoding options"
+        content_html: "<h2>Chart Encodings</h2><p>Charts support <em>bar</em>, <em>line</em>, and <em>arc</em> marks with flexible encoding channels.</p><ul><li><strong>x/y</strong> — positional encoding</li><li><strong>color</strong> — categorical distinction</li><li><strong>theta</strong> — angular encoding for pie charts</li></ul>"

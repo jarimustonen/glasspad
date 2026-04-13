@@ -1,0 +1,60 @@
+spec_version: 1
+title: "Stack Layout — Visual Test"
+description: "Tests stack layout with full-width sections"
+layout: stack
+
+sections:
+  - id: stack-chart
+    title: "Revenue Trend (Full Width)"
+    type: chart
+    chart:
+      mark: line
+      encoding:
+        x: { field: week, type: ordinal }
+        y: { field: revenue, type: quantitative }
+        color: { field: channel, type: nominal }
+    inline_data:
+      - { week: "W1", channel: "Online", revenue: 42000 }
+      - { week: "W1", channel: "Retail", revenue: 28000 }
+      - { week: "W2", channel: "Online", revenue: 45000 }
+      - { week: "W2", channel: "Retail", revenue: 31000 }
+      - { week: "W3", channel: "Online", revenue: 51000 }
+      - { week: "W3", channel: "Retail", revenue: 29000 }
+      - { week: "W4", channel: "Online", revenue: 48000 }
+      - { week: "W4", channel: "Retail", revenue: 33000 }
+
+  - id: stack-table
+    title: "Detailed Breakdown"
+    type: table
+    table:
+      columns:
+        - { field: week, title: "Week" }
+        - { field: channel, title: "Channel" }
+        - { field: revenue, title: "Revenue ($)", sort: number }
+    inline_data:
+      - { week: "W1", channel: "Online", revenue: 42000 }
+      - { week: "W1", channel: "Retail", revenue: 28000 }
+      - { week: "W2", channel: "Online", revenue: 45000 }
+      - { week: "W2", channel: "Retail", revenue: 31000 }
+      - { week: "W3", channel: "Online", revenue: 51000 }
+      - { week: "W3", channel: "Retail", revenue: 29000 }
+      - { week: "W4", channel: "Online", revenue: 48000 }
+      - { week: "W4", channel: "Retail", revenue: 33000 }
+
+  - id: stack-stats
+    title: "Channel Summary"
+    type: stats
+    stats:
+      items:
+        - { label: "Total Revenue", aggregate: sum, field: revenue }
+        - { label: "Online Revenue", aggregate: sum, field: revenue, where: { channel: "Online" } }
+        - { label: "Retail Revenue", aggregate: sum, field: revenue, where: { channel: "Retail" } }
+    inline_data:
+      - { week: "W1", channel: "Online", revenue: 42000 }
+      - { week: "W1", channel: "Retail", revenue: 28000 }
+      - { week: "W2", channel: "Online", revenue: 45000 }
+      - { week: "W2", channel: "Retail", revenue: 31000 }
+      - { week: "W3", channel: "Online", revenue: 51000 }
+      - { week: "W3", channel: "Retail", revenue: 29000 }
+      - { week: "W4", channel: "Online", revenue: 48000 }
+      - { week: "W4", channel: "Retail", revenue: 33000 }

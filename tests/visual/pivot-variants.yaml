@@ -1,0 +1,140 @@
+spec_version: 1
+title: "Pivot Variants — Visual Test"
+description: "Covers single/multi dimensions, all aggregates, formats, totals, subtotals, and sorting"
+layout: stack
+
+sections:
+  # --- Single row + single column, currency format, totals, sort by value ---
+  - id: pivot-sales
+    title: "Quarterly Sales by Region"
+    type: pivot
+    pivot:
+      rows:
+        - region
+      columns:
+        - quarter
+      values:
+        - field: revenue
+          aggregate: sum
+          label: "Revenue"
+          format: currency
+          currency: USD
+        - aggregate: count
+          label: "Deals"
+      show_totals: true
+      sort:
+        by: value
+        direction: desc
+        value_index: 0
+    inline_data: &sales_data
+      - { region: "North America", quarter: "Q1", revenue: 245000, margin: 0.32 }
+      - { region: "North America", quarter: "Q2", revenue: 312000, margin: 0.35 }
+      - { region: "North America", quarter: "Q3", revenue: 289000, margin: 0.31 }
+      - { region: "North America", quarter: "Q4", revenue: 378000, margin: 0.38 }
+      - { region: "Europe", quarter: "Q1", revenue: 198000, margin: 0.28 }
+      - { region: "Europe", quarter: "Q2", revenue: 234000, margin: 0.30 }
+      - { region: "Europe", quarter: "Q3", revenue: 215000, margin: 0.27 }
+      - { region: "Europe", quarter: "Q4", revenue: 267000, margin: 0.33 }
+      - { region: "Asia Pacific", quarter: "Q1", revenue: 156000, margin: 0.25 }
+      - { region: "Asia Pacific", quarter: "Q2", revenue: 189000, margin: 0.29 }
+      - { region: "Asia Pacific", quarter: "Q3", revenue: 201000, margin: 0.26 }
+      - { region: "Asia Pacific", quarter: "Q4", revenue: 243000, margin: 0.31 }
+      - { region: "Latin America", quarter: "Q1", revenue: 87000, margin: 0.22 }
+      - { region: "Latin America", quarter: "Q2", revenue: 102000, margin: 0.24 }
+      - { region: "Latin America", quarter: "Q3", revenue: 95000, margin: 0.21 }
+      - { region: "Latin America", quarter: "Q4", revenue: 128000, margin: 0.26 }
+
+  # --- Multiple row dimensions + subtotals ---
+  - id: pivot-product
+    title: "Revenue by Region and Product Line"
+    type: pivot
+    pivot:
+      rows:
+        - region
+        - product
+      columns:
+        - quarter
+      values:
+        - field: amount
+          aggregate: sum
+          label: "Total"
+          format: currency
+          currency: EUR
+        - field: amount
+          aggregate: avg
+          label: "Average"
+          format: currency
+          currency: EUR
+      show_totals: true
+      show_subtotals: true
+    inline_data:
+      - { region: "EMEA", product: "Cloud", quarter: "H1", amount: 142000 }
+      - { region: "EMEA", product: "Cloud", quarter: "H2", amount: 178000 }
+      - { region: "EMEA", product: "On-Prem", quarter: "H1", amount: 95000 }
+      - { region: "EMEA", product: "On-Prem", quarter: "H2", amount: 82000 }
+      - { region: "EMEA", product: "Services", quarter: "H1", amount: 63000 }
+      - { region: "EMEA", product: "Services", quarter: "H2", amount: 71000 }
+      - { region: "APAC", product: "Cloud", quarter: "H1", amount: 108000 }
+      - { region: "APAC", product: "Cloud", quarter: "H2", amount: 135000 }
+      - { region: "APAC", product: "On-Prem", quarter: "H1", amount: 54000 }
+      - { region: "APAC", product: "On-Prem", quarter: "H2", amount: 48000 }
+      - { region: "APAC", product: "Services", quarter: "H1", amount: 42000 }
+      - { region: "APAC", product: "Services", quarter: "H2", amount: 56000 }
+
+  # --- Percent format + sort by label ---
+  - id: pivot-margins
+    title: "Profit Margins by Region"
+    type: pivot
+    pivot:
+      rows:
+        - region
+      values:
+        - field: margin
+          aggregate: avg
+          label: "Avg Margin"
+          format: percent
+        - field: margin
+          aggregate: min
+          label: "Min Margin"
+          format: percent
+        - field: margin
+          aggregate: max
+          label: "Max Margin"
+          format: percent
+      show_totals: true
+      sort:
+        by: label
+        direction: asc
+    inline_data: *sales_data
+
+  # --- Multiple column dimensions ---
+  - id: pivot-multicol
+    title: "Headcount by Department and Level"
+    type: pivot
+    pivot:
+      rows:
+        - department
+      columns:
+        - level
+      values:
+        - aggregate: count
+          label: "Headcount"
+        - field: salary
+          aggregate: avg
+          label: "Avg Salary"
+          format: currency
+          currency: USD
+    inline_data:
+      - { department: "Engineering", level: "Junior", salary: 85000 }
+      - { department: "Engineering", level: "Junior", salary: 90000 }
+      - { department: "Engineering", level: "Senior", salary: 145000 }
+      - { department: "Engineering", level: "Senior", salary: 155000 }
+      - { department: "Engineering", level: "Senior", salary: 138000 }
+      - { department: "Engineering", level: "Staff", salary: 185000 }
+      - { department: "Marketing", level: "Junior", salary: 65000 }
+      - { department: "Marketing", level: "Senior", salary: 110000 }
+      - { department: "Marketing", level: "Senior", salary: 105000 }
+      - { department: "Sales", level: "Junior", salary: 60000 }
+      - { department: "Sales", level: "Junior", salary: 62000 }
+      - { department: "Sales", level: "Senior", salary: 120000 }
+      - { department: "Sales", level: "Staff", salary: 160000 }
