@@ -8,7 +8,7 @@ status: open
 priority: normal
 ---
 
-# 37. Replace string-based validation errors with structured error types
+# 59. Replace string-based validation errors with structured error types
 
 _Source: src/spec/validate.rs_
 

@@ -8,7 +8,7 @@ status: open
 priority: normal
 ---
 
-# 36. Add item index to per-item validation error messages
+# 57. Add item index to per-item validation error messages
 
 _Source: spec validation layer_
 

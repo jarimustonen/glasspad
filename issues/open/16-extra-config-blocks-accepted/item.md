@@ -1,7 +1,9 @@
 ---
 created: 2026-04-09
+updated: 2026-04-13
 type: improvement
 reporter: ai-review
+assignee: jari
 status: open
 priority: low
 ---

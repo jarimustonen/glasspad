@@ -1,7 +1,7 @@
 ---
 created: 2026-04-11
 updated: 2026-04-11
-type: enhancement
+type: improvement
 reporter: jari
 assignee: jari
 status: open
