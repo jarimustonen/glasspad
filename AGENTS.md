@@ -12,6 +12,10 @@ Every directory follows this structure:
 - `AGENTS.md` — all AI-relevant info (consolidated)
 - `AGENTS-<TOPIC>.md` — complex topics split out (optional)
 
+## CLI Design Principles
+
+This project follows the AI-first CLI conventions in [`AGENTS-AI-FIRST-CLI.md`](AGENTS-AI-FIRST-CLI.md) — strict input validation, `--json` output, JSONL logs, no interactive prompts, informative errors, composable commands. Read that file before designing or changing CLI surface. The file is a verbatim copy from `homebase`; treat it as shared canon, not a project-local doc to edit.
+
 ## Gitignored directories
 
 - `history/` — agent scratchpad and ephemeral planning docs (not tracked)
