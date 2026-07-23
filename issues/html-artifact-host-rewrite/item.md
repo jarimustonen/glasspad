@@ -1,6 +1,6 @@
 ---
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-07-23
 type: feature
 reporter: jari
 assignee: jari
@@ -30,32 +30,48 @@ Requirements from the product owner:
   libraries** (design tokens, chart helper, link/theme bridge) — opt-in.
 - Make it **as easy as possible for the calling agent** (convention over
   configuration; a directory of `.html` files is a valid space).
-- Support three deployment modes: **localhost**, **team shared server**,
-  **glasspad.ai hosted cloud**.
 
-## Key decisions (settled with PO)
+**v0.2 is localhost-only.** Team/shared-server and glasspad.ai cloud tiers are
+explicitly dropped from this scope (see "Out of scope"). That removes accounts,
+persistence backends, separate content domains, and per-space subdomains from
+the picture and lets v0.2 stay small.
 
-- **Security model**: arbitrary agent HTML + JS is allowed, rendered inside a
-  sandboxed `<iframe sandbox="allow-scripts">` (null origin). On team/cloud, a
-  **separate content origin** (per-space subdomain) isolates spaces from the app
-  and from each other. See `design.md`.
+## Key decisions (settled with PO, post-review)
+
+Locked after the multi-model review (`analysis.md`); "go with recommendations,
+localhost only":
+
+- **Security model** (D1): arbitrary agent HTML+JS is allowed, rendered in a
+  null-origin `<iframe sandbox="allow-scripts">`, **plus** a `Content-Security-
+  Policy: sandbox allow-scripts` **response header** on artifacts (so a directly-
+  opened artifact URL is still sandboxed), an egress-restricting CSP that names
+  the **explicit content host** (not `'self'`, which is meaningless under a null
+  origin), loopback-only binding, and a control/API that rejects `Origin: null`
+  and requires its own capability token — the sandbox is **not** an API auth
+  boundary. Path to `allow-scripts allow-same-origin` kept open for when an
+  artifact needs storage/workers/same-origin data-fetch. See `design.md`.
 - **Model**: a **Space** = a set of artifacts sharing a URL namespace + nav; an
-  **Artifact** = one HTML view addressed by a slug. Cross-links via a
-  `glasspad:<slug>` scheme resolved by a parent-frame bridge.
-- **Persistence**: the on-disk format (a directory of `.html` + optional
-  `glasspad.yaml`) IS the wire format. localhost serves a directory live (no
-  persistence); team/cloud persist so links survive. The directory is the
-  portable, repo-committable source of truth.
-- **Data ingestion** (csv/json/mbox): cut from core; keep the parser code as an
-  optional `glasspad data` CLI helper (file → JSON to stdout). Reversible.
+  **Artifact** = one HTML view addressed by a slug. Cross-links use **ordinary
+  relative links** (`./sales`), intercepted by a parent-frame bridge — the
+  `glasspad:` custom scheme is dropped (it broke static-file portability).
+- **Assets/data** (D2): a space is a static-site tree — HTML **plus** first-class
+  assets and data files (`.json`/`.css`/`.js`/images/fonts). This **reverses**
+  the earlier "cut data ingestion" call: inlining large data blows up the agent's
+  context, so `./data.json` alongside the HTML is first-class.
+- **Persistence / update model** (D3): localhost serves the directory **live**
+  from disk (`glasspad serve ./dir`, re-read per request via an atomic snapshot).
+  The directory literally IS the source of truth — no server-side store, no
+  `push`, no incremental mutation API. The agent edits files; the browser
+  refreshes.
 - Container is named **space** (was "pad").
 
 ## Scope
 
 See `plan.md` for the phased implementation plan and `design.md` for the
-iframe / origin-isolation security model.
+localhost security model.
 
-## Out of scope (follow-up)
+## Out of scope (dropped for v0.2)
 
-- Accounts / real auth for team & cloud modes (token model generalizes to it).
-- Wildcard-DNS + TLS automation for per-space subdomains.
+- **Team shared server and glasspad.ai cloud tiers** — and everything they imply:
+  accounts/real auth, DB/persistent storage, separate content origins, per-space
+  subdomains, wildcard-DNS + TLS. Revisit as a later epic if sharing is wanted.

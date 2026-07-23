@@ -1,5 +1,14 @@
 # Review synthesis — plan.md + design.md
 
+> **RESOLVED (2026-07-23).** Decisions locked with the PO: **v0.2 is
+> localhost-only** (D4 and the whole team/cloud story dropped), and we go with
+> the recommendations — D1 = null-origin sandbox + `CSP: sandbox` response
+> header + egress CSP naming the host (single local origin; `allow-same-origin`
+> flip kept for later); D2 = first-class assets/data; D3 = serve the directory
+> live, no push / no server store; `glasspad:` scheme replaced by relative links.
+> The updated `plan.md` and `design.md` reflect this; the "Decisions the PO needs
+> to make" section below is kept for the record.
+
 Multi-model review (`/llm-review`, 2 rounds): Gemini 3.1 Pro, GPT-5.6-sol,
 Claude Opus 4.7, DeepSeek v4 Pro. The direction (delete the section-DSL, host
 agent HTML) was endorsed by all four. The security model needs the most work.

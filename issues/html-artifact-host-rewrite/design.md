@@ -1,114 +1,149 @@
-# Design — Security & origin isolation model
+# Design — Security model (localhost)
 
-This is the part that must be right. Letting an agent supply arbitrary HTML +
-JS is the whole point of the rewrite, and it directly conflicts with today's
-allowlist sanitizer. This document defines how arbitrary agent content is
-rendered safely across the three deployment modes.
+> **Scope: localhost-only.** No team/cloud tiers, no separate content domain, no
+> per-space subdomains, no accounts. Isolation rests on the sandbox + CSP + a
+> control plane that never trusts artifact code. The multi-model review
+> (`analysis.md`) drove every correction below.
 
 ## 1. Threat model
 
-- **Content author = the agent.** Semi-trusted: it acts for the user, but its
-  output can be prompt-injected into hostile HTML/JS.
-- **Viewer = the user's browser**, same browser that talks to the Glasspad app
-  and API.
-- **Deployment tiers**: localhost (single user), team server (multiple users,
-  one host), glasspad.ai (multi-tenant cloud).
+- **Content author = the agent.** Semi-trusted: acts for the user, but its output
+  can be prompt-injected into hostile HTML/JS.
+- **Viewer = the user's browser**, the same browser that talks to the Glasspad
+  control API on loopback.
+- **Deployment: one local user.** But "single user" does **not** mean safe: a
+  hostile web page the user also has open can attack `127.0.0.1` via DNS
+  rebinding, cross-origin requests, and predictable ports.
 
-Concrete risks if agent JS runs same-origin with the app:
+Concrete risks if artifact JS is not contained:
 
-1. It calls the Glasspad API (`DELETE /api/spaces/...`, read other spaces).
-2. It reads app cookies / localStorage / tokens.
-3. On a shared host, it attacks *other users'* spaces (cross-tenant).
-4. It exfiltrates page/user data to an external server.
+1. It calls the Glasspad control API (delete/overwrite a space, read others).
+2. It reads anything the app origin holds.
+3. It exfiltrates page/user data to an external server.
 
-## 2. Defense 1 — sandboxed iframe (all modes)
+## 2. What the sandbox does — and does not — do
 
-Every artifact is rendered inside:
+Every artifact renders in:
 
 ```html
-<iframe sandbox="allow-scripts" src="…" ></iframe>
+<iframe sandbox="allow-scripts allow-top-navigation-by-user-activation" src="/{space}/_c/{slug}"></iframe>
 ```
 
 `allow-scripts` **without** `allow-same-origin` gives the artifact a **null
-origin**. It can run JS (charts, interactivity) but cannot:
+origin**. It can run JS (charts, interactivity) but cannot reach the parent
+frame, read app storage/cookies, or *read* same-origin API responses.
 
-- reach the parent frame (the trusted nav chrome),
-- read app cookies / localStorage,
-- make same-origin requests to the Glasspad API.
+**Correction (review consensus): the sandbox does NOT block egress.** A
+null-origin document can still *send* requests — `fetch`, `sendBeacon`,
+`<img>`, WebSocket, form posts — it just can't *read* the responses. So the
+sandbox is a DOM/API-object boundary, **not** a network firewall and **not** an
+API-authorization boundary. Egress is blocked by CSP (§4); the API is protected
+independently (§5).
 
-The **navigation chrome lives in the parent document** (Glasspad-authored,
-trusted). Untrusted content lives only in the iframe. This separation is what
-makes arbitrary agent HTML safe. It is the model Claude's own Artifacts use.
+The **navigation chrome lives in the trusted parent document**; only the artifact
+lives in the iframe. This is the pattern Claude's Artifacts use — though note
+Artifacts run `allow-same-origin` on a *separate registrable domain*; we
+deliberately keep the stricter null-origin form because localhost has no storage/
+multi-tenant needs. The path to `allow-scripts allow-same-origin` stays open for
+if an artifact later needs storage/workers/same-origin data-fetch.
 
-## 3. Defense 2 — separate content origin (team / cloud)
+## 3. Direct-open must also be sandboxed (response-level CSP)
 
-Sandbox alone is not enough on a shared host: browser bugs and future
-`allow-same-origin` needs mean we should not co-locate untrusted content with
-the app origin. So:
+The iframe `sandbox` attribute does nothing if the artifact URL is opened
+directly (copied link, new tab). So the **artifact response itself** carries:
 
-- **App / API** on the app origin (e.g. `glasspad.ai`).
-- **Rendered artifact content** on a **distinct content origin**, ideally a
-  **per-space subdomain** (`{space}.usercontent.glasspad.ai`).
+```http
+Content-Security-Policy: sandbox allow-scripts;
+```
 
-Per-space subdomains give origin isolation **between spaces** too, so even a
-sandbox escape in space A cannot reach space B (different origin). This mirrors
-Claude's `claudeusercontent.com`.
+A directly-opened `/{space}/_c/{slug}` is then sandboxed by the response, not
+just by the framing. Artifacts are served from a dedicated `/{space}/_c/*` route
+that exposes **no** mutation endpoints.
 
-**Degradation**: localhost cannot easily host two origins, so it runs
-sandbox-iframe only (acceptable — no other users, no cross-tenant surface).
+## 4. Egress-restricting CSP (the actual exfil boundary)
 
-Open question for the PO: start with a single content origin and add per-space
-subdomains later, or target wildcard-DNS + TLS per-space from the start? (Adds
-deployment complexity: wildcard cert, DNS.)
+Artifact responses carry a concrete, tested policy. `'self'` is useless under a
+null origin (it matches nothing), so directives **name the explicit host**:
 
-## 4. Defense 3 — egress-restricting CSP on the artifact frame
+```http
+Content-Security-Policy:
+  sandbox allow-scripts;
+  default-src 'none';
+  script-src 'unsafe-inline' http://127.0.0.1:PORT;
+  style-src  'unsafe-inline' http://127.0.0.1:PORT;
+  img-src    http://127.0.0.1:PORT data:;
+  font-src   http://127.0.0.1:PORT;
+  connect-src 'none';            /* widened only for the SSE reload path */
+  object-src 'none'; frame-src 'none'; worker-src 'none';
+  base-uri 'none'; form-action 'none';
+  frame-ancestors http://127.0.0.1:PORT;
+```
 
-Even sandboxed and cross-origin, artifact JS could `fetch()` an attacker server
-to exfiltrate. The artifact response carries a CSP that:
+Notes / open items resolved during Phase 1:
 
-- allows `script-src`/`style-src` inline (needed — agent writes inline JS/CSS),
-- allows `connect-src`/`img-src`/`font-src` only `self` (the content origin) so
-  the `/_gp/*` base libraries load,
-- blocks arbitrary external hosts (no exfiltration, no external tracking),
-- `frame-ancestors` limited to the app origin (only the Glasspad shell may frame
-  the content).
+- Inline JS/CSS require `'unsafe-inline'` (agents write inline) — stated, not
+  hidden. Vega-Lite may additionally require `'unsafe-eval'`; acceptable inside
+  the sandbox, but must be **verified** before the policy is frozen.
+- `/_gp/v1/*` needs `Access-Control-Allow-Origin: *` (no credentials) for the
+  requests that are CORS-gated (modules, fonts, `fetch` of data); classic
+  `<script src>`/`<link>` are not.
+- CSP does **not** stop the artifact navigating *its own* iframe to an external
+  URL — accepted as a residual channel; the parent restores the expected
+  document on unexpected navigation.
+- Also set `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and
+  a `Permissions-Policy` deny-list (`camera=(), microphone=(), geolocation=() …`)
+  on artifact + asset responses.
 
-This is a policy shift from today's CSP (which allows `cdn.jsdelivr.net`): base
-libraries move **local** (`/_gp/*`) precisely so we can keep egress closed while
-still shipping charts. Interactive AND locked down.
+## 5. The control plane never trusts the sandbox
 
-Trade-off to decide: strict `connect-src 'self'` blocks artifacts that
-legitimately need to call an external API. Options: (a) forbid it (safest),
-(b) per-space allowlist in `glasspad.yaml`, (c) relax only on localhost.
+The API/CLI control surface (serve/create/reload) is independent of iframe
+isolation:
 
-## 5. The parent ↔ iframe bridge
+- **Bind loopback only** (`127.0.0.1`); binding `0.0.0.0` requires an explicit
+  unsafe flag.
+- **Reject `Origin: null`** and unexpected origins; **validate the `Host` header**
+  (defeats DNS rebinding).
+- No state-mutating `GET`s; a capability token for any mutating control op.
+- The artifact-content route (`/{space}/_c/*`) and asset routes expose no
+  mutation endpoints at all.
 
-- `bridge.js` (auto-injected into fragment-wrapped artifacts) runs *inside* the
-  iframe. It:
-  - intercepts clicks on `a[href^="glasspad:"]` and `postMessage`s the parent to
-    navigate/swap the iframe,
-  - receives the current theme from the parent and applies it (theme sync).
-- The parent validates every `postMessage` `origin` and only accepts a fixed
-  message schema (navigate-to-slug). No `eval`, no arbitrary DOM injection from
-  child → parent.
-- Full-document artifacts opt out of the bridge; they cross-link with
-  `target="_top"` and a real `/{space}/{slug}` path.
+## 6. The parent ↔ iframe bridge
 
-## 6. Why not keep the sanitizer?
+- `bridge.js` (auto-injected into fragment-wrapped artifacts) intercepts clicks
+  on same-space **relative** links and `postMessage`s the parent to swap the
+  iframe; it also applies the theme (the correct theme is inlined at wrap time to
+  avoid FOUC — the bridge only handles later toggles).
+- The parent validates **`event.source === iframe.contentWindow`** — not
+  `event.origin`, which is the string `"null"` for every sandboxed frame and
+  proves nothing. It accepts only a fixed, low-authority schema (navigate-to-
+  known-slug resolved against the server's artifact table), bounds slug length
+  and message rate, and invalidates bridge state on iframe navigation. A nonce is
+  not an auth boundary — artifact JS can read anything injected into it.
+- The trusted parent inserts any artifact-derived text (titles, slugs) as **text,
+  never `innerHTML`**; enable Trusted Types in the parent CSP.
 
-Sanitizing to an allowlist (today's `sanitize.rs`) cannot express interactive
-UIs — no `<script>`, no `<style>`, no event handlers. Extending the allowlist to
-allow scripts defeats sanitization entirely. The correct boundary is the
-**origin/sandbox**, not tag filtering. Sanitization may survive as an *optional*
-"static/safe" render mode for callers who want it, but it is no longer the
-primary mechanism.
+## 7. Why not keep the sanitizer?
 
-## 7. Summary of layered defenses
+Allowlist sanitizing (`sanitize.rs`) cannot express interactive UIs (no
+`<script>`/`<style>`/handlers); widening it to allow scripts defeats it. The
+boundary is the **sandbox/CSP**, not tag filtering. Sanitization may survive only
+as an optional "static-safe" render mode.
 
-| Layer | localhost | team | cloud |
-|---|---|---|---|
-| Sandbox iframe (null origin) | ✅ | ✅ | ✅ |
-| Separate content origin | — | ✅ | ✅ |
-| Per-space subdomain isolation | — | optional | ✅ |
-| Egress-restricting CSP | ✅ | ✅ | ✅ |
-| Validated postMessage bridge | ✅ | ✅ | ✅ |
+## 8. Layered defenses (localhost)
+
+| Layer | Role |
+|---|---|
+| Null-origin sandbox iframe | DOM / API-object isolation (not egress, not auth) |
+| `CSP: sandbox` response header | Sandboxes direct-opens too |
+| Egress CSP (explicit host) | The actual exfiltration boundary |
+| Loopback bind + Host/Origin checks + token | Control-plane protection (DNS-rebinding, CSRF) |
+| Validated `event.source` bridge | Low-authority parent↔child channel |
+
+## 9. Residual risks (accepted for a local dev tool)
+
+- Iframe self-navigation to an external URL (parent restores expected document).
+- Browser-tab DoS from runaway artifact JS — a sandbox is not a resource boundary;
+  provide a "stop/reload artifact" control and bound artifact/data sizes.
+- A browser sandbox-escape bug — no separate origin locally to contain blast
+  radius; acceptable for single-user localhost, and the flip to a separate origin
+  is the mitigation if the tool ever grows a shared tier again.

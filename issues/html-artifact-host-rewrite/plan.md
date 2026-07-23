@@ -1,171 +1,170 @@
-# Plan — Glasspad v2: HTML-artifact host
+# Plan — Glasspad v2: localhost HTML-artifact host
+
+> Scope locked to **localhost-only** after the multi-model review. Team/cloud
+> tiers are dropped (see `item.md`). Decisions D1–D3 are settled; `design.md`
+> holds the security model.
 
 ## 1. Motivation
 
-The core problem is not YAML-as-a-format — it is that **content is encoded in a
-rigid section-DSL**. Concretely, the weight lives in:
+The weight in v1 is not YAML-as-a-format — it is that **content is encoded in a
+rigid section-DSL**:
 
-- `src/spec/schema.rs` (810 lines) + `src/spec/validate.rs` (2043 lines) — the
-  section grammar (chart/table/stats/list/markdown/pivot, Vega-Lite encodings,
-  dataset references) and its validator.
-- `src/client/dashboard.js` (3062 lines) — the client renderer that turns that
-  spec into DOM.
+- `src/spec/schema.rs` (810) + `src/spec/validate.rs` (2043) — the section
+  grammar and validator.
+- `src/client/dashboard.js` (3062) — the client renderer.
 
-That is ~6000 lines whose job is "describe a dashboard structurally instead of
-in HTML". The rewrite deletes this and lets the agent write HTML.
+~6000 lines whose job is "describe a dashboard structurally instead of in HTML".
+The rewrite deletes this and lets the agent write HTML.
 
-**Reused as-is**: axum server, in-memory/store abstraction, token-based update
-auth, `ensure_server` auto-spawn, `glasspad open`, skill install, the design
+**Reused as-is (pending a coupling audit — see Phase 6):** axum server, token
+scheme, `ensure_server` auto-spawn, `glasspad open`, skill install, the design
 system (`DESIGN.md` + `--gp-*` tokens), the Vega-Lite choice, CSP infra.
 
 ## 2. Concept
 
-Glasspad becomes a **host for agent-authored HTML artifacts**, rendered safely
-inside a sandboxed iframe, grouped into **spaces** with navigation and
-cross-links. The only structured config left is a tiny, optional manifest —
-all *content* is HTML.
+Glasspad becomes a **local host for agent-authored HTML artifacts**, rendered
+safely inside a sandboxed iframe, grouped into **spaces** with navigation and
+cross-links. The only structured config left is a tiny, optional manifest — all
+*content* is HTML. There is no server-side store: `glasspad serve ./dir` renders
+a directory live from disk.
 
 ## 3. Model
 
-- **Space** — a set of artifacts sharing a URL namespace and a nav. (Renames
-  the current "pad".)
-- **Artifact** — one HTML view within a space, addressed by a **slug**
-  (e.g. `home`, `sales`, `detail`). The agent assigns slugs so it can link to
-  them at authoring time.
+- **Space** — a directory of artifacts sharing a URL namespace and a nav.
+- **Artifact** — one HTML view within a space, addressed by a **slug** the agent
+  assigns (so it can link at authoring time).
 
-URL structure:
+URL structure (single local origin, e.g. `http://127.0.0.1:PORT`):
 
 ```
 /{space}/                    → space entry (home artifact + nav chrome)
-/{space}/{artifact-slug}     → a specific artifact
+/{space}/{artifact-slug}     → the trusted shell hosting that artifact
+/{space}/_c/{artifact-slug}  → the raw artifact document (iframe src; carries the sandbox CSP)
+/_gp/v1/*                    → pinned base libraries
 ```
 
-## 4. Authoring: content is HTML, config is minimal
+## 4. Authoring: content is HTML
 
-Two authoring levels, smooth ramp:
-
-**Fragment level (default, easy path).** The agent writes only body content:
+**Fragment level (default).** The agent writes body content; Glasspad wraps it
+in a skeleton (`<!doctype>`, reset, design tokens, correct theme inlined at wrap
+time, the bridge, opt-in base libs):
 
 ```html
 <h1>Sales Q3</h1>
-<p>Revenue up 12%.</p>
 <div id="chart"></div>
 <script>gp.chart('#chart', { /* vega-lite spec */ })</script>
 ```
 
-Glasspad wraps this in a skeleton: `<!doctype>`, CSS reset, design tokens,
-theme toggle, and opt-in base libraries come for free.
+**Full-document level.** If the payload starts with `<!doctype`/`<html>` (after
+skipping BOM, whitespace, and comments — not a naive prefix check), it is served
+verbatim, and it opts into nav only by including `/_gp/v1/bridge.js` itself.
 
-**Full-document level (full control).** If the payload starts with `<!doctype`
-or `<html>`, Glasspad serves it verbatim. The agent owns everything.
+## 5. A space is a static-site tree (D2)
 
-Detection is a trivial prefix check.
-
-## 5. Directory = space (persistence + portability in one)
-
-A space is a directory of `.html` files plus an optional `glasspad.yaml`. The
-**on-disk format is the wire format** — no separate serialization.
+A space holds HTML **plus first-class assets and data** — not `.html` only:
 
 ```
 myspace/
-  glasspad.yaml        # OPTIONAL: title, theme, nav order/grouping
+  glasspad.yaml        # OPTIONAL: title, theme, explicit nav order/grouping
   index.html           # home
-  02-sales.html
-  03-detail.html
+  sales.html
+  detail.html
+  assets/
+    sales.js
+    data.json
+    logo.svg
 ```
 
-Conventions cover the common case (manifest is usually unnecessary):
+Rules (all enforced on load):
 
-- nav order = filename sort (numeric prefixes like `02-` are stripped from slug)
-- artifact title = `<title>` or first `<h1>`
-- home = `index.html` / `home.html` / first artifact
-- slug = filename without extension and numeric prefix
+- **Slug = filename stem, literally** — no numeric-prefix magic. Ordering comes
+  from `glasspad.yaml` (`nav: [home, sales, detail]`) or lexicographic fallback.
+- Slugs validated against a canonical grammar; **collisions and reserved names
+  (`_gp`, `_c`, `assets`, `api`) are hard errors**, never silently resolved.
+- Assets served by path with MIME detection + `X-Content-Type-Options: nosniff`;
+  symlink / path-traversal rejected; per-file and per-space size limits.
+- Home = `index.html` > `home.html` > first in nav order.
+- Title = manifest > `<title>` > first `<h1>`, parsed (not regexed), decoded,
+  length-bounded, and inserted into the trusted chrome **as text**.
 
-`glasspad.yaml` only overrides these (grouping, icons, nesting, explicit order).
+## 6. CLI contract (localhost)
 
-## 6. CLI contract
-
-Convention over configuration, three-step ramp:
-
-**Trivial (one artifact):**
 ```bash
-glasspad create ./report.html      # slug = filename, no manifest
+glasspad serve ./myspace     # render the directory LIVE from disk (primary loop)
+glasspad create ./report.html # one-artifact space from a single file
+glasspad open <space>        # open in browser
 ```
 
-**Common (directory of HTML, default path):**
-```bash
-glasspad serve ./myspace           # localhost: serve directory LIVE (re-read per request)
-glasspad push  ./myspace           # team/cloud: upload snapshot → stable URL + token
-```
+No `push`, no `artifact add/update/rm`, no `--token` juggling — the directory on
+disk is the single source of truth (D3). The agent edits files; a filesystem
+watcher + SSE reload (narrow `connect-src`) refreshes the browser. `serve` builds
+an immutable in-memory snapshot per rescan and swaps it atomically, so a
+half-written file is never served.
 
-**Incremental (long-lived spaces, editing):**
-```bash
-glasspad artifact add    {space} detail ./detail.html --token …
-glasspad artifact update {space} sales  ./sales.html  --token …
-glasspad artifact rm     {space} detail                --token …
-```
+`glasspad.yaml` is the only YAML left, and it is *structure* (title / theme / nav
+order / grouping), never *content* — usually absent.
 
-`glasspad.yaml` is the only YAML left, and it is *structure* (title/theme/nav
-order), never *content*. Usually ~5 lines or absent.
+## 7. Base libraries (`/_gp/v1/*`, pinned)
 
-## 7. Base libraries ("sensible base structures")
+Served locally so the egress CSP can name the host and stay closed. All opt-in
+except the bridge:
 
-Served locally under `/_gp/*` so the iframe CSP can allow `self` for these but
-block arbitrary egress → interactive AND safe. All opt-in except the bridge:
+- **`base.css`** — the existing design system (`--gp-*` tokens, typography,
+  light/dark). Auto-included by the fragment wrapper. Preserves `DESIGN.md`.
+- **`charts.js`** — a thin `gp.chart(el, spec)` over Vega-Lite. (Vega may need
+  `'unsafe-eval'` in the artifact CSP — verified in Phase 1, acceptable inside
+  the sandbox.)
+- **`bridge.js`** — the only auto-injected script: intercepts same-space relative
+  links → `postMessage` the parent to swap the iframe, and applies the theme.
+- **`manifest.json`** — so the agent can discover `gp.chart()`'s signature.
 
-- **`/_gp/base.css`** — the existing design system (`--gp-*` tokens, typography,
-  light/dark, theme toggle). Auto-included by the fragment wrapper. Preserves
-  all of `DESIGN.md`.
-- **`/_gp/charts.js`** — a thin `gp.chart(el, spec)` helper over Vega-Lite. Same
-  easy charting as today, but embedded in the agent's own HTML.
-- **`/_gp/bridge.js`** — a tiny script (the only auto-injected one) that resolves
-  `glasspad:<slug>` links and syncs the theme into the iframe.
+Versioned under `/_gp/v1/` from day one so a committed space renders the same
+after a Glasspad upgrade.
 
 ## 8. Navigation and cross-links
 
-- Nav chrome is rendered in the **trusted parent frame** from the space's
-  artifact list (+ optional `glasspad.yaml` overrides).
-- Cross-links inside an artifact use `<a href="glasspad:detail">`. Because the
-  artifact runs in a sandboxed iframe (null origin), `bridge.js` intercepts the
-  click and asks the parent to swap the iframe / navigate.
-- Full-document artifacts (no injected bridge) use `target="_top"` +
-  `/{space}/{slug}`.
+- Nav chrome renders in the **trusted parent frame** from the space's artifacts
+  (+ optional `glasspad.yaml`).
+- Cross-links are **ordinary relative links** (`<a href="./detail">`). The bridge
+  intercepts clicks on same-space links and asks the parent to swap the iframe;
+  the raw href still resolves under `file://` and copy-link, preserving
+  portability. No custom `glasspad:` scheme.
+- Full-document artifacts that skip the bridge fall back to `target="_top"` +
+  `/{space}/{slug}`, which requires `allow-top-navigation-by-user-activation` on
+  the iframe (user-gesture only).
 
-## 9. Deployment modes
+## 9. Security
 
-| Mode | Origin isolation | Persistence | Auth |
-|---|---|---|---|
-| localhost | sandbox iframe | none (serve from directory) | none |
-| team server | separate content origin / subdomain | disk | token → later accounts |
-| glasspad.ai | per-space subdomain | database | accounts |
+Single local origin; isolation via null-origin sandbox + a `CSP: sandbox`
+response header + egress CSP + a control/API that never trusts the sandbox. Full
+model, threat analysis, and the exact headers: **`design.md`**.
 
-See `design.md` for the security rationale (why sandbox + separate origin).
+## 10. Phased implementation (reordered per review)
 
-## 10. Phased implementation
-
-1. **Iframe host + content origin** — render arbitrary HTML into a sandboxed
-   iframe with an egress-restricting CSP; an origin-isolation abstraction that
-   degrades to sandbox-only on localhost.
-2. **Space/Artifact model + directory format** — `serve ./dir` live, slug
-   addressing, conventions (nav order, home, titles).
-3. **CLI contract** — `create` / `serve` / `push` / `artifact add|update|rm`;
-   ramp: one file → directory → incremental.
-4. **Base libraries** — `/_gp/base.css`, `/_gp/charts.js`, `/_gp/bridge.js`
-   (fragment wrapper + `glasspad:` links + theme sync).
-5. **Nav + cross-links** — parent-frame chrome, bridge script.
-6. **Removals + migration** — drop `spec/`, the section `dashboard.js`; move the
-   data parsers to a `glasspad data` helper; update skill.md and docs.
-
-Accounts/auth for team & cloud is a separate follow-up; the token model
-generalizes into it.
+1. **Security contract + iframe shell.** URL topology; artifact-response headers
+   (`CSP: sandbox allow-scripts` + egress CSP naming the host + `nosniff` +
+   `Permissions-Policy` deny-list); null-origin iframe via `/{space}/_c/{slug}`;
+   validated `postMessage` bridge (`event.source` check). Ship with an
+   **adversarial browser test** (exfil attempts per channel, sandbox-escape,
+   direct-open, postMessage abuse). Verify what Vega needs.
+2. **Space model + directory serving.** Snapshot scanner, slug grammar +
+   collision/reserved rejection, asset routing + MIME + limits, live rescan +
+   SSE reload.
+3. **CLI.** `serve` / `create` / `open`; fragment vs full-document detection.
+4. **Base libraries.** `base.css`, `charts.js`, `bridge.js`, `manifest.json`,
+   pinned under `/_gp/v1/`.
+5. **Nav + relative-link cross-navigation** via the bridge.
+6. **Removals + migration.** Coupling audit of the "reused" pieces first; then
+   drop `spec/`, `dashboard.js`; move data parsers to an optional `glasspad data`
+   helper; keep `sanitize.rs` only if an optional static-safe mode wants it.
+   Delete the old path only after the new one passes the Phase 1 test suite.
 
 ## 11. What gets deleted
 
 - `src/spec/schema.rs` + `src/spec/validate.rs` — the section DSL and validator.
 - `src/client/dashboard.js` — the section renderer.
-- `src/security/sanitize.rs` as the *primary* mechanism (iframe sandbox replaces
-  it; sanitization may remain an optional mode).
+- `src/security/sanitize.rs` as the primary mechanism (sandbox replaces it).
 - `src/data/*` from core (moved to an optional `glasspad data` helper).
 
-Net: ~6000 lines of the most complex code replaced by a small host + iframe
-sandbox + thin optional helpers — a genuinely lighter system.
+Net: ~6000 lines of the most complex code replaced by a small host + sandbox +
+thin pinned helpers.
