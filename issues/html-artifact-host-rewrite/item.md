@@ -75,3 +75,9 @@ localhost security model.
 - **Team shared server and glasspad.ai cloud tiers** — and everything they imply:
   accounts/real auth, DB/persistent storage, separate content origins, per-space
   subdomains, wildcard-DNS + TLS. Revisit as a later epic if sharing is wanted.
+
+## Decisions
+
+### 2026-07-23T06:20:51Z · @jari
+
+Locked v0.2 as localhost-only (dropped team/cloud tiers, accounts, separate content origin, per-space subdomains). Going with review recommendations: D1 null-origin sandbox + CSP:sandbox response header + egress CSP naming the host (allow-same-origin flip kept for later); D2 first-class assets/data (reverses the data-parser cut); D3 serve directory live, no push/no store; relative links replace the glasspad: scheme. plan.md + design.md rewritten accordingly.
