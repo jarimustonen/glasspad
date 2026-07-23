@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: chore
 reporter: claude
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: starkly-keen-tongue
+slug: strict-test-assertions
+closed: 2026-07-23
 ---
 
 # Tighten validation test assertions from substring to exact matching

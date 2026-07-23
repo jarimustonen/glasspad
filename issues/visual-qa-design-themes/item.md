@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: task
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: highly-breezy-bedroom
+slug: visual-qa-design-themes
+closed: 2026-07-23
 ---
 
 # Visual QA for design themes

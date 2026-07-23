@@ -7,7 +7,7 @@ reporter: jari
 assignee: jari
 status: done
 priority: normal
-slug: intensely-condemned-drum
+slug: test-datasets-collection
 ---
 
 # Test datasets collection

@@ -1,12 +1,13 @@
 ---
 created: 2026-04-09
-updated: 2026-04-13
+updated: 2026-07-23
 type: improvement
 reporter: ai-review
 assignee: jari
-status: open
+status: obsolete
 priority: low
-slug: purely-synonymous-verse
+slug: extra-config-blocks-accepted
+closed: 2026-07-23
 ---
 
 # Extra config blocks for wrong section type silently accepted

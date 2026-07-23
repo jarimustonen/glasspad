@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: medium
-slug: altogether-dark-nail
+slug: typed-chart-encoding-structs
+closed: 2026-07-23
 ---
 
 # Replace untyped serde_json::Value for chart.encoding with typed structs

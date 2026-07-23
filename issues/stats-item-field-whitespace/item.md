@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: bug
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: vastly-flashy-geese
+slug: stats-item-field-whitespace
+closed: 2026-07-23
 ---
 
 # Validate whitespace/empty strings in stats item fields

@@ -1,12 +1,13 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-07-23
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: seriously-deranged-van
+slug: mermaid-flowchart-sequence
+closed: 2026-07-23
 ---
 
 # Mermaid flowchart and sequence diagram

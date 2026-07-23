@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: bug
 reporter: llm-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: partially-childlike-change
+slug: chartconfig-deny-unknown-fields
+closed: 2026-07-23
 ---
 
 # 30. `ChartConfig` missing `deny_unknown_fields`

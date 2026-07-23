@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: decision
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: essentially-rough-heat
+slug: pad-visibility-model
+closed: 2026-07-23
 ---
 
 # Decide pad visibility model: public-read vs fully private

@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: llm-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: passably-aggressive-camera
+slug: chart-encoding-allows-null
+closed: 2026-07-23
 ---
 
 # 32. `chart.encoding` allows null despite being practically required

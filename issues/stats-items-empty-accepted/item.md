@@ -9,7 +9,7 @@ priority: normal
 commits:
 - hash: 7e00cd7
   summary: 'fix: reject empty stats.items list in validation'
-slug: altogether-late-park
+slug: stats-items-empty-accepted
 closed: 2026-04-11
 ---
 

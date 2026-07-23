@@ -7,7 +7,7 @@ reporter: jari
 assignee: jari
 status: done
 priority: normal
-slug: very-giddy-middle
+slug: fictional-company-dataset
 ---
 
 # Fictional company financial dataset

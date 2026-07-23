@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: claude
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: relatively-naive-committee
+slug: typed-chart-encoding-schema
+closed: 2026-07-23
 ---
 
 # Replace raw serde_json::Value with typed chart encoding schema

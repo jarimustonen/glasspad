@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: ai-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: nearly-late-crow
+slug: fragile-aria-label-parsing
+closed: 2026-07-23
 ---
 
 # Replace aria-label parsing with stable data access

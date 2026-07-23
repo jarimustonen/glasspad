@@ -5,7 +5,7 @@ type: bug
 reporter: ai-review
 status: done
 priority: normal
-slug: immoderately-bent-mark
+slug: js-date-parsing-bug
 closed: 2026-04-11
 ---
 

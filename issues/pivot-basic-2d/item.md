@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: unreasonably-faithful-clam
+slug: pivot-basic-2d
+closed: 2026-07-23
 ---
 
 # Basic 2D pivot table

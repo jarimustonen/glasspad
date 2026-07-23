@@ -6,7 +6,7 @@ reporter: jari
 assignee: jari
 status: done
 priority: normal
-slug: enormously-penitent-respect
+slug: design-themes
 closed: 2026-04-11
 ---
 

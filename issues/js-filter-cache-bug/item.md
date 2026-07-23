@@ -5,7 +5,7 @@ reporter: ai-review
 status: done
 priority: high
 closed: 2026-04-11
-slug: awfully-abaft-egg
+slug: js-filter-cache-bug
 ---
 
 # getFilteredDataExcluding() broken cache

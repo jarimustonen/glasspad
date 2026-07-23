@@ -6,7 +6,7 @@ reporter: jari
 assignee: jari
 status: open
 priority: high
-slug: ridiculously-ambiguous-business
+slug: html-artifact-host-rewrite
 ---
 
 # Rewrite Glasspad as an HTML-artifact host

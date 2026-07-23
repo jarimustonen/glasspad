@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: low
-slug: partially-innate-afternoon
+slug: validate-structural-semantic-phases
+closed: 2026-07-23
 ---
 
 # Separate structural and semantic validation phases in validator

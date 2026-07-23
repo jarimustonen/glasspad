@@ -1,11 +1,12 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-07-23
 type: epic
 owner: jari
-status: open
+status: obsolete
 priority: normal
-slug: supremely-rampant-faucet
+slug: bidirectional-actions
+closed: 2026-07-23
 ---
 
 # Bidirectional actions

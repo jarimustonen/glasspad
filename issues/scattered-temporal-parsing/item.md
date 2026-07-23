@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: ai-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: tolerably-wide-book
+slug: scattered-temporal-parsing
+closed: 2026-07-23
 ---
 
 # Centralize temporal parsing in dashboard.js

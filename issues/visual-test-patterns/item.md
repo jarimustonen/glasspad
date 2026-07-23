@@ -1,12 +1,13 @@
 ---
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-07-23
 type: task
 reporter: jari
 assignee: jari
-status: in-progress
+status: obsolete
 priority: high
-slug: rather-abashed-fruit
+slug: visual-test-patterns
+closed: 2026-07-23
 ---
 
 # Visual test patterns for comprehensive feature coverage

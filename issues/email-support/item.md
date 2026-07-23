@@ -1,11 +1,12 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-07-23
 type: epic
 owner: jari
-status: open
+status: obsolete
 priority: normal
-slug: somewhat-grouchy-root
+slug: email-support
+closed: 2026-07-23
 ---
 
 # Email support

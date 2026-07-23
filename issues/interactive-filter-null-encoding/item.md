@@ -11,7 +11,7 @@ commits:
   summary: 'fix: reject null/missing chart.encoding instead of silently skipping'
 - hash: 95a246e
   summary: 'fix: add tests proving null/missing encoding rejection is intentional'
-slug: seriously-truculent-ghost
+slug: interactive-filter-null-encoding
 closed: 2026-04-11
 ---
 

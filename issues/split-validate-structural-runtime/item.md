@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: ai-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: essentially-striped-cabbage
+slug: split-validate-structural-runtime
+closed: 2026-07-23
 ---
 
 # Split validate() into structural and runtime validation

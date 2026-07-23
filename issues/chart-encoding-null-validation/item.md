@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: bug
 reporter: ai-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: unusually-guarded-jump
+slug: chart-encoding-null-validation
+closed: 2026-07-23
 ---
 
 # validate_chart() allows encoding: null despite comment saying "must be an object"

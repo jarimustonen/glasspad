@@ -1,11 +1,12 @@
 ---
 created: 2026-04-10
-updated: 2026-04-11
+updated: 2026-07-23
 type: epic
 owner: jari
-status: open
+status: obsolete
 priority: normal
-slug: wholly-shiny-cart
+slug: pivot-table-view
+closed: 2026-07-23
 ---
 
 # Pivot tables

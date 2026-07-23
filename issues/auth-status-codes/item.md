@@ -6,7 +6,7 @@ reporter: jari
 assignee: jari
 status: open
 priority: normal
-slug: seriously-laughable-sheep
+slug: auth-status-codes
 ---
 
 # Decide on auth error status codes (401 vs 403)

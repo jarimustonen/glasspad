@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: immensely-abandoned-wall
+slug: custom-yaml-extractor
+closed: 2026-07-23
 ---
 
 # Replace manual header/body handling with custom Axum Yaml extractor

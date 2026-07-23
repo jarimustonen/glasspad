@@ -6,7 +6,7 @@ reporter: jari
 assignee: jari
 status: open
 priority: normal
-slug: decidedly-organic-sun
+slug: structured-api-errors
 ---
 
 # Decide on structured API error responses

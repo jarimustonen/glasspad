@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: low
-slug: somewhat-meek-bag
+slug: pivot-precompute-totals
+closed: 2026-07-23
 ---
 
 # Precompute pivot row/column/grand totals in buildPivotData

@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: bug
 reporter: claude
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: altogether-screeching-help
+slug: shallow-encoding-field-lookup
+closed: 2026-07-23
 ---
 
 # Shallow encoding field lookup falsely rejects nested fields

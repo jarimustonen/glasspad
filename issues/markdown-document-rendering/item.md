@@ -6,7 +6,7 @@ reporter: jari
 assignee: jari
 status: done
 priority: normal
-slug: greatly-jumbled-park
+slug: markdown-document-rendering
 closed: 2026-04-09
 ---
 

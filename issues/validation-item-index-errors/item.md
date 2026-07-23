@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: fairly-young-name
+slug: validation-item-index-errors
+closed: 2026-07-23
 ---
 
 # Add item index to per-item validation error messages

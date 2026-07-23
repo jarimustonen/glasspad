@@ -5,7 +5,7 @@ reporter: ai-review
 status: done
 closed: 2026-04-11
 priority: low
-slug: strikingly-spectacular-clam
+slug: chart-config-deny-unknown
 ---
 
 # ChartConfig lacks deny_unknown_fields

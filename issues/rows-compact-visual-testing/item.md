@@ -1,12 +1,13 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-07-23
 type: task
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: insanely-curly-winter
+slug: rows-compact-visual-testing
+closed: 2026-07-23
 ---
 
 # Rows and compact layout visual testing

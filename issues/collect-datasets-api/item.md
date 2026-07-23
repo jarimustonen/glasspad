@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: overly-hypnotic-cave
+slug: collect-datasets-api
+closed: 2026-07-23
 ---
 
 # Clean up collect_datasets API for route-only usage

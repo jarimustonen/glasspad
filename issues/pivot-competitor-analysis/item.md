@@ -6,7 +6,7 @@ reporter: jari
 assignee: jari
 status: done
 priority: normal
-slug: painfully-damaging-tramp
+slug: pivot-competitor-analysis
 closed: 2026-04-11
 ---
 

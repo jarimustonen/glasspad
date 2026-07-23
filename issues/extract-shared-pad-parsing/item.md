@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: moderately-scandalous-bikes
+slug: extract-shared-pad-parsing
+closed: 2026-07-23
 ---
 
 # Extract shared parse/validate pipeline from create_pad and update_pad

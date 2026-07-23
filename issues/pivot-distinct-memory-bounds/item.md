@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: low
-slug: enormously-average-skin
+slug: pivot-distinct-memory-bounds
+closed: 2026-07-23
 ---
 
 # Bound memory usage for pivot distinct aggregation

@@ -5,7 +5,7 @@ type: epic
 owner: jari
 status: open
 priority: normal
-slug: incredibly-spiteful-faucet
+slug: mcp-integration
 ---
 
 # MCP integration

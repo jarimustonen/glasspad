@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: llm-review
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: profoundly-polite-queen
+slug: mark-aggregate-should-be-enums
+closed: 2026-07-23
 ---
 
 # 35. `chart.mark` and `stats.aggregate` should be enums instead of strings

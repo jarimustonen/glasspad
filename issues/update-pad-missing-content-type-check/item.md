@@ -9,7 +9,7 @@ priority: normal
 commits:
 - hash: b9ff6a6
   summary: 'fix: validate Content-Type with proper MIME parsing on create and update'
-slug: vaguely-dirty-room
+slug: update-pad-missing-content-type-check
 closed: 2026-04-11
 ---
 

@@ -1,11 +1,12 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-07-23
 type: epic
 owner: jari
-status: open
+status: obsolete
 priority: normal
-slug: immoderately-cluttered-land
+slug: diagrams-and-charts
+closed: 2026-07-23
 ---
 
 # Diagrams and charts

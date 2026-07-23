@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: fiercely-small-spiders
+slug: pivot-show-values-as
+closed: 2026-07-23
 ---
 
 # Pivot "Show Values As" secondary calculations

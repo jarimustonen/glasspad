@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: moderately-six-snow
+slug: pivot-conditional-formatting
+closed: 2026-07-23
 ---
 
 # Pivot conditional formatting

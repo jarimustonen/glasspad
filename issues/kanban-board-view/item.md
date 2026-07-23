@@ -1,12 +1,13 @@
 ---
 created: 2026-04-10
-updated: 2026-04-10
+updated: 2026-07-23
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: needlessly-clammy-fruit
+slug: kanban-board-view
+closed: 2026-07-23
 ---
 
 # Kanban board view

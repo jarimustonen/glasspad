@@ -6,7 +6,7 @@ reporter: llm-review
 assignee: jari
 status: done
 priority: normal
-slug: greatly-needy-religion
+slug: selectable-batch-actions-unvalidated
 closed: 2026-04-11
 ---
 

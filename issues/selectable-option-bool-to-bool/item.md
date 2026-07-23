@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-23
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: obsolete
 priority: normal
-slug: outright-exotic-use
+slug: selectable-option-bool-to-bool
+closed: 2026-07-23
 ---
 
 # Refactor selectable from Option<bool> to bool
