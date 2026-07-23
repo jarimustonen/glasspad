@@ -23,18 +23,37 @@ This project follows the AI-first CLI conventions in [`AGENTS-AI-FIRST-CLI.md`](
 
 ## Issues & Planning
 
-Work is tracked as issues in `issues/`. Use `/issue` to create, search, update, and close issues.
+Work is tracked with **`issuectl`** in a flat, slug-based layout. Use `/issue` (or `issuectl` directly) to create, search, update, and close issues. `issuectl doctor` health-checks the tree.
 
-- `issues/open/NN-slug/item.md` — active issues
-- `issues/closed/NN-slug/item.md` — completed issues
-- `issues/AGENTS.md` — templates, types, and workflow docs
+- `issues/<slug>/item.md` — one issue (status lives in frontmatter, not the directory)
+- `issues/.schema.yaml` — frontmatter schema (types, statuses, priorities)
+- `issues/AGENTS.md` + `.issuectl/AGENTS.md` — workflow and agent policy docs
+
+Slugs are descriptive kebab-case (`html-artifact-host-rewrite`), never numbered. Create with `issuectl new --slug <2-3-word-kebab> …`.
 
 All planning documents (plans, analyses, designs, todos) belong under their parent issue directory — not as standalone files. If work needs a planning document, it also needs an issue. This ties every piece of planning to a trackable item.
 
-- `issues/open/NN-title/plan.md` — architecture, implementation plans
-- `issues/open/NN-title/analysis.md` — research and analysis
-- `issues/open/NN-title/design.md` — design documents
-- `issues/open/NN-title/todo.md` — task checklists
+- `issues/<slug>/plan.md` — architecture, implementation plans
+- `issues/<slug>/analysis.md` — research and analysis
+- `issues/<slug>/design.md` — design documents
+
+The repo-root `TODO.md` is the round-by-round handoff for `/stint`; the issue tracker is the source of truth for detail.
+
+## Operating Policy
+
+Generic operating policy for orchestrated work sessions (`/stint`) and worktrees.
+
+**Roles.** A `/stint` session is the **orchestrator** the user talks to in product-owner language. It plans rounds, triages incoming bugs, reports status, and owns the single local deploy — it **does not write code in its own session**. Actual coding happens in worktrees spawned via `/worktree` (interactive `/worktree-code` for reviewed work, `/worktree-spinoff` for autonomous units).
+
+**Pre-authorized in any worktree** (no need to ask): read anything, `cargo build`, `cargo test`, `cargo clippy`, and `./test-browser.sh` (check `./test-browser.sh errors` first). Verifying a change end-to-end before merge is expected, not optional.
+
+**Deploy = localhost.** There is no remote deploy. "Deploy/verify" means: `cargo build`, restart the local server, create a new pad, and confirm in the browser. The orchestrator owns this single build+restart when integrating a round.
+
+**Merge & review.** Interactive `/worktree-code` units are merged by the user via `/worktree-merge` after review. Autonomous units self-merge only when no user decision is required; anything ambiguous is surfaced to the orchestrator, not decided silently.
+
+**Main stays clean.** Commit issue/status/doc changes immediately; never leave `main` modified-but-uncommitted across a session boundary (parallel worktrees branch from `main`'s current state). Pushing is the user's call.
+
+**CLI surface** follows the AI-first conventions above: strict validation, `--json`, no interactive prompts, informative errors.
 
 ## Debugging rendered output
 
