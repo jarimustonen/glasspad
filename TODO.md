@@ -45,8 +45,9 @@ land **before** any old code is deleted. Each phase = one worktree unit tracked
 under `html-artifact-host-rewrite` (Phase 1 interactive; later phases per the
 wave plan's merge policy).
 
-- [ ] **Phase 0 — Wave plan.** Write `wave-plan.md` (see "Start here"). Planning
-  only, no code.
+- [x] **Phase 0 — Wave plan.** `wave-plan.md` written (2026-07-23). Waves: 1=Phase 1
+  (interactive gate); 2a∥2b=Phase 2 ∥ Phase 4-static; 3a∥3b=Phase 3 CLI ∥
+  Phase 4-bridge; 4=Phase 5 nav; 5=Phase 6 removals. See the issue's `wave-plan.md`.
 - [ ] **Phase 1 — Security contract + iframe shell.** URL topology
   (`/{space}/{slug}` shell, `/{space}/_c/{slug}` raw content, `/_gp/v1/*`);
   artifact-response headers (`CSP: sandbox allow-scripts` + egress CSP naming the
