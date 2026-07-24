@@ -18,6 +18,8 @@ commits:
   summary: Wave 2a — space model + live directory serving (atomic snapshot, slug/reserved/collision + symlink/traversal rejection, MIME + size limits, SSE reload)
 - hash: 5fc6154
   summary: Wave 2a /llm-review FIX findings (CORS asset leak, connect-src back to 'none', capped reads, watcher retry, snapshot-per-request, entry/manifest caps, title parser)
+- hash: d1de5d360ec4dd754a49da83c7f4d980ac1a9aed
+  summary: Wave 3a deferred /llm-review — CLI-contract + fragment-detector hardening
 ---
 
 # Rewrite Glasspad as an HTML-artifact host
