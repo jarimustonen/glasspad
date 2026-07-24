@@ -25,16 +25,16 @@ line section-DSL (`src/spec/*`, `src/client/dashboard.js`) and the data parsers.
 execution schedule (5 waves), and `plan.md` + `design.md` are the *what* and the
 security model it implements.
 
-**Waves 1 & 2 are DONE and landed on `master` (2026-07-24).** Standing autonomy
-granted (`AGENTS.md`). Suite green: 21 Wave 1 checks + Wave 2a probes + vega/eval.
-**Next job: Wave 3.** Batches:
-- **Batch 1 (parallel):** legacy-route removal (decision D2 — delete `/{id}`
-  renderer + `/api/pads`, coupling audit first) ∥ **3b bridge.js** (client asset,
-  disjoint). Both autonomous, `/llm-review` in brief.
-- **Batch 2 (after legacy-removal lands):** **3a CLI** (`serve`/`create`/`open`,
-  fragment-vs-full-doc detection) — sequenced because it shares `main.rs` with the
-  legacy removal. Coupling: `structured-api-errors` decision becomes largely moot
-  once `/api/pads` is gone; CLI error contract follows `AGENTS-AI-FIRST-CLI.md`.
+**Waves 1, 2, and Wave 3 batch 1 are DONE (2026-07-24).** Standing autonomy
+granted (`AGENTS.md`). On `master`: security gate, space model + live serving,
+base libs (`base.css`/`charts.js`/`bridge.js`/`manifest.json`), legacy v0.1
+surface removed (D2). Suite green: 31 browser checks + Wave 2a probes + vega/eval;
+all cargo tests pass.
+**Next job: Wave 3 batch 2 — 3a CLI** (`serve`/`create`/`open`, fragment-vs-full-
+doc detection), then **Wave 4** (nav chrome) → **Wave 5** (final removals:
+`src/spec/*`, `dashboard.js`, data parsers → `glasspad data`). `structured-api-
+errors` is moot now `/api/pads` is gone; the CLI error contract follows
+`AGENTS-AI-FIRST-CLI.md`.
 
 **Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
 Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
@@ -75,13 +75,24 @@ wave plan's merge policy).
   entry/manifest limits, comment/quote-aware title tokenizer (inserted as text),
   dependency-free 500ms fingerprint-poll watcher → SSE reload. New traversal/
   symlink/hostile-asset probes in `test-security.sh`; 21 Wave 1 checks stay green.
-- [ ] **Phase 3 — CLI.** `serve ./dir`, `create ./file.html`, `open`; fragment
-  vs full-document detection (BOM/whitespace/comment tolerant).
-- [~] **Phase 4 — Base libraries** under `/_gp/v1/`. **4-static DONE** (2026-07-24,
-  `6636493`/`85fe95d`): real `base.css` (`--gp-*`, light/dark/auto), `charts.js`
-  (`gp.chart` over vendored vega/vega-lite/vega-embed), `manifest.json`; fragment
-  chart renders end-to-end in both themes; vega/eval suite green. **4-bridge
-  (`bridge.js`, auto-injected) → Wave 3b** (still open).
+- [ ] **Phase 3 — CLI** (Wave 3 batch 2, in flight). `serve ./dir`,
+  `create ./file.html`, `open`; fragment vs full-document detection
+  (BOM/whitespace/comment tolerant). AI-first: `--json`, strict validation,
+  no interactive prompts, informative errors.
+- [x] **Phase 4 — Base libraries** under `/_gp/v1/`. **4-static DONE**
+  (`6636493`/`85fe95d`): `base.css` (`--gp-*`, light/dark/auto), `charts.js`
+  (`gp.chart` over vendored vega/vega-lite/vega-embed), `manifest.json`. **4-bridge
+  DONE** (Wave 3b, `18a4d39`): `bridge.js` — same-space relative-link nav via the
+  validated postMessage bridge + theme toggle, auto-injected into fragment
+  artifacts (in `<head>` before untrusted bytes); Wave 1 bridge validation
+  strengthened (exact `{type,slug}` schema); frozen CSP untouched. Suite → 31
+  browser checks.
+- [x] **D2 — legacy-route removal DONE** (Wave 3, `bf2fbef`): removed `/{id}` pad
+  renderer + `/api/pads` CRUD + exclusively-dead code (`PadStore`, `renderer.rs`,
+  `security/csp.rs`, `Pad`/`PadMeta`, `uuid` dep); binary reaches shared
+  spec/data/security via the lib crate. DSL/parsers/client-renderer left for Wave 5.
+  Binary clippy warnings dropped 33→5. Added `no_mutating_same_origin_surface_exists`
+  invariant test.
 - [ ] **Phase 5 — Nav + cross-links.** Parent-frame nav chrome; bridge intercepts
   same-space relative links.
 - [ ] **Phase 6 — Removals + migration.** Coupling audit of the "reused" server
