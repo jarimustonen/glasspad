@@ -19,7 +19,18 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   reject transferred `ports` → exact `{type:"navigate", slug:<known>}` schema on
   small typed fields (no `JSON.stringify` of the payload). Inserts artifact text
   as `textContent` (never `innerHTML`). The shell's `frame-src 'self'` also
-  contains a framed artifact's own navigations (see design.md §4).
+  contains a framed artifact's own navigations (see design.md §4). It also owns
+  the **theme toggle** (Wave 3b): on toggle it `postMessage`s the framed artifact
+  `{type:"theme", theme}` and, on the next iframe swap, inlines the theme via
+  `?gp_theme=` so the wrap is FOUC-free.
+- `wrap.rs` (Wave 3b) — **fragment detection + the bridge/theme injection point**.
+  `is_fragment` is BOM/whitespace/comment-tolerant (a full document opens with
+  `<!doctype>`/`<html …>`; anything else is a fragment). A fragment is wrapped
+  into a full document with `data-theme` inlined (no FOUC), `base.css` linked, and
+  `bridge.js` injected — **only here**, so a full document never gets a bridge
+  silently. Full documents are served verbatim. Wrapping runs under the same
+  frozen artifact CSP (`headers::artifact_csp`) and widens nothing; it is NOT
+  sanitization (the sandbox/CSP is the boundary, design.md §7).
 - `guards.rs` — control-plane guards (design.md §5): `host_guard` (DNS-rebinding
   defense, all routes, **fail-closed** on missing/foreign/malformed Host; only
   `127.0.0.1`/`localhost` + our port) + `control_origin_guard` (reject
@@ -29,9 +40,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   artifacts (exfil / escape / eval / postMessage-abuse probes). These are the
   security regression suite and stay forever. `mod.rs` resolves a request against
   the **live snapshot first** (Wave 2a) and falls back to these fixtures only for
-  spaces the snapshot doesn't contain. Also serves the `/_gp/v1/*` base libraries
-  (Wave 2b): the real `base.css` (the `--gp-*` design system), `charts.js`
-  (`gp.chart()` over Vega-Lite), `manifest.json`, and the vendored Vega stack
+  spaces the snapshot doesn't contain. The `demo` space also carries two benign
+  **fragment** artifacts (`nav-a`/`nav-b`) that link to each other — the Wave 3b
+  bridge nav demonstration the adversarial suite drives end-to-end. Also serves
+  the `/_gp/v1/*` base libraries (Wave 2b/3b): the real `base.css` (the `--gp-*`
+  design system), `charts.js` (`gp.chart()` over Vega-Lite), `bridge.js` (the
+  fragment-only parent↔iframe channel), `manifest.json`, and the vendored Vega stack
   (`vega`/`vega-lite`/`vega-embed`, SRI-pinned under `assets/`). The Vega bundles
   are vendored, not CDN-loaded, because the artifact `script-src` names only the
   loopback host — `charts.js` lazily loads them from `/_gp/v1/*`.
@@ -84,7 +98,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   headless-Chromium browser probes (`tests/security/run.mjs`) prove the browser
   *enforces* the contract — per-channel exfil blocked at a network canary, sandbox
   escape fails, direct-open is sandboxed by the response header, postMessage abuse
-  rejected, the Vega `'unsafe-eval'` dependency (**21 checks — keep green**). Phase
+  rejected, the Vega `'unsafe-eval'` dependency, **plus the Wave 3b bridge nav**:
+  a same-space relative-link click swaps the iframe via the validated bridge, an
+  unknown-slug / extra-property / transferred-port navigates are still rejected,
+  external + absolute-path links are not intercepted, and the theme toggle re-themes
+  the artifact (a wrong-source theme message is ignored) (**31 checks — keep green**).
+  Phase
   2 (Wave 2a): live-directory **server-side** probes — path traversal (browsers
   can't help here) and symlink escape are HTTP/exit-code checks against a real
   served space, plus hostile-SVG-asset sandboxing and the SSE-scoped `connect-src`.

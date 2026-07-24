@@ -239,6 +239,143 @@ async function main() {
       pageErrors.length === 0, pageErrors.join(" | ") || "0 errors");
   }
 
+  // ---------------------------------------------------------------------
+  // TEST 7 — Wave 3b bridge: a same-space RELATIVE link click inside a
+  // fragment artifact swaps the iframe via the VALIDATED postMessage bridge
+  // (accepted path), while the Wave-1 rejections still hold for the new
+  // navigate message (unknown slug rejected; external links not intercepted).
+  // Also: the shell's theme toggle re-themes the framed artifact.
+  //
+  // `nav-a` / `nav-b` are benign FRAGMENT fixtures, so the content route wraps
+  // them and injects bridge.js — this drives the real shell↔artifact channel.
+  // ---------------------------------------------------------------------
+  {
+    // Helper: the framed artifact for a given slug (a real content frame). Clicks
+    // are dispatched via `element.click()` inside the frame — the bridge listens
+    // for the click event regardless, and this sidesteps actionability quirks of
+    // driving a null-origin sandboxed frame from the outside.
+    const frameFor = (slug) =>
+      page.frames().find((f) => new RegExp(`/demo/_c/${slug}$`).test(f.url().replace(/[?#].*$/, "")));
+    const waitFrame = async (slug) => {
+      let f = null;
+      for (let i = 0; i < 80 && !(f = frameFor(slug)); i++) await page.waitForTimeout(50);
+      if (f) await f.waitForLoadState?.("load").catch(() => {});
+      return f;
+    };
+
+    // (b) RELATIVE same-space link swaps the iframe via the VALIDATED bridge.
+    await page.goto(`${BASE}/demo/nav-a`, { waitUntil: "load" });
+    const navA = await waitFrame("nav-a");
+    check("bridge-nav: fragment artifact is framed + bridged (nav-a wrapped)", !!navA,
+      navA ? navA.url() : "no artifact frame");
+    if (navA) await navA.waitForSelector("#to-b").catch(() => {});
+
+    const parentUrlBefore = page.url();
+    const acceptedBefore = await page.evaluate(() => window.__bridgeStats.accepted);
+    if (navA) await navA.evaluate(() => document.getElementById("to-b").click());
+    await page
+      .waitForFunction(() => window.__bridgeStats && window.__bridgeStats.accepted >= 1, { timeout: 4000 })
+      .catch(() => {});
+    const navB = await waitFrame("nav-b");
+    const navBText = navB ? await navB.textContent("h1").catch(() => "") : "";
+    const acceptedAfter = await page.evaluate(() => window.__bridgeStats.accepted);
+    check("bridge-nav: relative-link click swapped the iframe to nav-b (navigate ACCEPTED + validated)",
+      /Nav B/.test(navBText) && acceptedAfter === acceptedBefore + 1,
+      `text=${JSON.stringify(navBText)} accepted ${acceptedBefore}->${acceptedAfter}`);
+    check("bridge-nav: no full-page reload — the trusted shell stayed put",
+      page.url() === parentUrlBefore, `url=${page.url()}`);
+
+    // (c) An UNKNOWN-but-well-formed slug from the REAL frame is still rejected
+    //     (resolved against the server's artifact table) — the reject path holds
+    //     for the accepted message shape too, not just the pm-abuse garbage.
+    if (navB) {
+      const schemaBefore = await page.evaluate(() => window.__bridgeStats.rejectedSchema);
+      const accBefore = await page.evaluate(() => window.__bridgeStats.accepted);
+      await navB.evaluate(() => parent.postMessage({ type: "navigate", slug: "no-such-slug" }, "*"));
+      await page.waitForTimeout(150);
+      const schemaAfter = await page.evaluate(() => window.__bridgeStats.rejectedSchema);
+      const accAfter = await page.evaluate(() => window.__bridgeStats.accepted);
+      check("bridge-nav: navigate to an unknown slug is rejected (not in the artifact table)",
+        schemaAfter === schemaBefore + 1 && accAfter === accBefore,
+        `schema ${schemaBefore}->${schemaAfter} accepted ${accBefore}->${accAfter}`);
+
+      // (c2) A KNOWN slug but with an EXTRA property is rejected by the exact
+      //      schema — a hostile frame cannot smuggle a large/extra field through.
+      const s2b = await page.evaluate(() => window.__bridgeStats.rejectedSchema);
+      const a2b = await page.evaluate(() => window.__bridgeStats.accepted);
+      await navB.evaluate(() =>
+        parent.postMessage({ type: "navigate", slug: "index", padding: "A".repeat(50000) }, "*"));
+      await page.waitForTimeout(120);
+      const s2a = await page.evaluate(() => window.__bridgeStats.rejectedSchema);
+      const a2a = await page.evaluate(() => window.__bridgeStats.accepted);
+      check("bridge-nav: navigate with an EXTRA property is rejected (exact schema, not just type/slug)",
+        s2a === s2b + 1 && a2a === a2b, `schema ${s2b}->${s2a} accepted ${a2b}->${a2a}`);
+
+      // (c3) A transferred MessagePort is rejected (no covert back-channel).
+      const s3b = await page.evaluate(() => window.__bridgeStats.rejectedSchema);
+      const a3b = await page.evaluate(() => window.__bridgeStats.accepted);
+      await navB.evaluate(() => {
+        const ch = new MessageChannel();
+        parent.postMessage({ type: "navigate", slug: "index" }, "*", [ch.port2]);
+      });
+      await page.waitForTimeout(120);
+      const s3a = await page.evaluate(() => window.__bridgeStats.rejectedSchema);
+      const a3a = await page.evaluate(() => window.__bridgeStats.accepted);
+      check("bridge-nav: a transferred MessagePort is rejected (one-way bridge, no covert channel)",
+        s3a === s3b + 1 && a3a === a3b, `schema ${s3b}->${s3a} accepted ${a3b}->${a3a}`);
+    }
+
+    // (d) Theme toggle re-themes the framed artifact via the parent→child channel.
+    await page.click("#gp-theme-toggle").catch(() => {});
+    await page.waitForTimeout(250);
+    const themed = navB
+      ? await navB.evaluate(() => document.documentElement.getAttribute("data-theme")).catch(() => null)
+      : null;
+    check("bridge-theme: shell toggle re-themes the artifact (data-theme applied via bridge)",
+      themed === "light", `data-theme=${themed}`);
+
+    // (d2) A theme message NOT from the parent (the artifact posts to itself) is
+    //      ignored — bridge.js only trusts `event.source === window.parent`.
+    if (navB) {
+      await navB.evaluate(() => window.postMessage({ type: "theme", theme: "dark" }, "*"));
+      await page.waitForTimeout(120);
+      const stillLight = await navB
+        .evaluate(() => document.documentElement.getAttribute("data-theme"))
+        .catch(() => null);
+      check("bridge-theme: a self-posted theme (wrong source) is ignored (stayed 'light', not 'dark')",
+        stillLight === "light", `data-theme=${stillLight}`);
+    }
+
+    // (a) EXTERNAL link is NOT intercepted by the bridge — done on a FRESH load so
+    //     the blocked foreign navigation can't contaminate the earlier assertions.
+    //     The proof of non-interception is that `accepted` does NOT change (the
+    //     bridge emitted no navigate); the foreign nav itself is separately
+    //     contained by the shell's `frame-src 'self'` (proven in TEST 1b).
+    await page.goto(`${BASE}/demo/nav-a`, { waitUntil: "load" });
+    const navA2 = await waitFrame("nav-a");
+    if (navA2) await navA2.waitForSelector("#to-ext").catch(() => {});
+    const accBeforeExt = await page.evaluate(() => window.__bridgeStats.accepted);
+    if (navA2) await navA2.evaluate(() => document.getElementById("to-ext").click());
+    await page.waitForTimeout(300);
+    const accAfterExt = await page.evaluate(() => window.__bridgeStats.accepted);
+    check("bridge-nav: EXTERNAL link is not intercepted by the bridge (no navigate emitted)",
+      accAfterExt === accBeforeExt,
+      `accepted ${accBeforeExt}->${accAfterExt}`);
+
+    // (a2) A ROOT-RELATIVE (absolute-path) same-origin link is likewise NOT
+    //      intercepted — only path-relative links are. Fresh load; the browser
+    //      does the same-origin frame nav, the bridge emits no navigate.
+    await page.goto(`${BASE}/demo/nav-a`, { waitUntil: "load" });
+    const navA3 = await waitFrame("nav-a");
+    if (navA3) await navA3.waitForSelector("#to-abs").catch(() => {});
+    const accBeforeAbs = await page.evaluate(() => window.__bridgeStats.accepted);
+    if (navA3) await navA3.evaluate(() => document.getElementById("to-abs").click());
+    await page.waitForTimeout(300);
+    const accAfterAbs = await page.evaluate(() => window.__bridgeStats.accepted);
+    check("bridge-nav: ABSOLUTE-PATH link is not intercepted (only path-relative links are)",
+      accAfterAbs === accBeforeAbs, `accepted ${accBeforeAbs}->${accAfterAbs}`);
+  }
+
   await browser.close();
 }
 

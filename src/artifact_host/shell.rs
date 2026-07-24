@@ -5,9 +5,15 @@
 //!
 //! * validates `event.source === iframe.contentWindow` — **not** `event.origin`,
 //!   which is the useless string `"null"` for every sandboxed frame;
-//! * accepts only a fixed low-authority schema (`navigate` to a *known* slug),
-//!   with the slug resolved against the server-provided artifact table;
-//! * bounds message byte-size and rate, and invalidates state on iframe reload;
+//! * accepts only a fixed low-authority schema — **exactly** `{type, slug}`, no
+//!   extra keys — `navigate` to a *known* slug resolved against the server-
+//!   provided artifact table;
+//! * bounds the slug size and the message *rate*, and invalidates state on iframe
+//!   reload. (A hostile frame's structured-clone/queue cost cannot be bounded
+//!   inside the receiving handler — the clone happens before the listener runs —
+//!   so that DoS residual is accepted, exactly as it was pre-bridge: the artifact
+//!   could always `postMessage` the parent. Rate + exact-schema minimize per-
+//!   message work; they do not claim to bound clone cost.)
 //! * inserts artifact-derived text as **text, never innerHTML** (Trusted Types on).
 //!
 //! The inline script is authorized by a per-response nonce, not `'unsafe-inline'`.
@@ -47,14 +53,18 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
 <title>{esc_title}</title>
 <style>
   html,body {{ margin:0; height:100%; }}
-  header.gp-chrome {{ font:14px system-ui,sans-serif; padding:6px 12px; border-bottom:1px solid #ccc; }}
+  header.gp-chrome {{ font:14px system-ui,sans-serif; padding:6px 12px; border-bottom:1px solid #ccc;
+                      display:flex; align-items:center; gap:12px; }}
+  header.gp-chrome #gp-title {{ flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  header.gp-chrome #gp-theme-toggle {{ flex:0 0 auto; font:inherit; padding:2px 10px; cursor:pointer;
+                      border:1px solid #ccc; border-radius:6px; background:transparent; color:inherit; }}
   iframe#gp-artifact {{ display:block; border:0; width:100%; height:calc(100% - 34px); }}
 </style>
 </head><body>
-<header class="gp-chrome"><span id="gp-title"></span></header>
+<header class="gp-chrome"><span id="gp-title"></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></header>
 <iframe id="gp-artifact"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
-        src="{esc_src}"></iframe>
+        data-src="{esc_src}"></iframe>
 <script nonce="{nonce}">
 (function () {{
   "use strict";
@@ -70,6 +80,46 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
   var KNOWN_SET = new Set(KNOWN);
   // Nav chrome title inserted as TEXT (never innerHTML) — Trusted Types on.
   document.getElementById("gp-title").textContent = TITLE;
+
+  // --- Theme: the trusted shell owns the toggle; a fragment artifact applies it
+  // via bridge.js. The correct theme is ALSO inlined at wrap time (the `?gp_theme=`
+  // on the swapped iframe src below), so an iframe SWAP is FOUC-free; this path
+  // handles live toggles and re-applying the persisted choice after each load.
+  var THEMES = ["auto", "light", "dark"];
+  var THEME_LABEL = {{ auto: "Theme: Auto", light: "Theme: Light", dark: "Theme: Dark" }};
+  var theme = "auto";
+  try {{
+    var saved = window.localStorage.getItem("gp-theme");
+    if (saved === "light" || saved === "dark" || saved === "auto") theme = saved;
+  }} catch (e) {{ /* storage blocked — default to auto */ }}
+
+  var toggle = document.getElementById("gp-theme-toggle");
+  function paintToggle() {{ if (toggle) toggle.textContent = THEME_LABEL[theme]; }}
+  function sendTheme() {{
+    // Post to the framed artifact; bridge.js validates source + schema on receipt.
+    try {{ frame.contentWindow.postMessage({{ type: "theme", theme: theme }}, "*"); }} catch (e) {{}}
+  }}
+  // Query string that inlines the theme at wrap time (auto is the default → omit).
+  function themeQuery() {{ return theme === "auto" ? "" : ("?gp_theme=" + theme); }}
+  paintToggle();
+  // Re-apply the theme once the (possibly just-swapped) artifact has loaded — a
+  // belt-and-braces follow-up to the inlined `?gp_theme` below.
+  frame.addEventListener("load", sendTheme);
+  // FIRST load: the iframe is rendered with `data-src` (no `src`), so it has not
+  // started fetching yet. Set the themed src HERE — before the first request — so
+  // the wrapped fragment inlines the persisted theme with NO FOUC (not even the
+  // brief auto→persisted flash a post-load message would cause).
+  if (!frame.getAttribute("src")) {{
+    frame.src = frame.getAttribute("data-src") + themeQuery();
+  }}
+  if (toggle) {{
+    toggle.addEventListener("click", function () {{
+      theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+      try {{ window.localStorage.setItem("gp-theme", theme); }} catch (e) {{}}
+      paintToggle();
+      sendTheme();
+    }});
+  }}
 
   // Live-reload: the trusted shell holds the EventSource (its connect-src 'self'
   // permits it) and reloads the whole shell on a filesystem change, so new/renamed
@@ -115,6 +165,16 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
       stats.rejectedSchema++;
       return;
     }}
+    // EXACT schema — exactly the two own keys {{type, slug}}. Reject any extra
+    // property so the accepted message is precisely the documented low-authority
+    // shape (a hostile frame cannot smuggle a large/extra field past the schema).
+    var keys = Object.keys(data);
+    if (keys.length !== 2
+        || !Object.prototype.hasOwnProperty.call(data, "type")
+        || !Object.prototype.hasOwnProperty.call(data, "slug")) {{
+      stats.rejectedSchema++;
+      return;
+    }}
     if (data.slug.length > MAX_SLUG) {{ stats.rejectedSize++; return; }}
     if (!validSlug.test(data.slug) || !KNOWN_SET.has(data.slug)) {{
       stats.rejectedSchema++;
@@ -122,7 +182,10 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
     }}
 
     stats.accepted++;
-    frame.src = "/" + SPACE + "/_c/" + data.slug;
+    // Inline the current theme into the swapped artifact so the new fragment
+    // wraps with the right `data-theme` (no FOUC). The `load` handler above also
+    // re-sends the theme as a belt-and-braces follow-up.
+    frame.src = "/" + SPACE + "/_c/" + data.slug + themeQuery();
   }}, false);
 }})();
 </script>
@@ -217,6 +280,26 @@ mod tests {
         // Empty title falls back to "space / slug".
         let fallback = render("demo", "index", "", &["index"], "n");
         assert!(fallback.contains("demo / index"));
+    }
+
+    #[test]
+    fn shell_has_theme_toggle_and_messaging() {
+        let html = render("demo", "index", "", &["index"], "n");
+        // A toggle control exists in the trusted chrome…
+        assert!(html.contains(r#"id="gp-theme-toggle""#));
+        // …and the shell sends a low-authority theme message to the framed artifact.
+        assert!(html.contains(r#"type: "theme""#));
+        // Persisted choice is read from the shell's own storage (default auto).
+        assert!(html.contains(r#"getItem("gp-theme")"#));
+    }
+
+    #[test]
+    fn shell_navigation_carries_theme_query() {
+        // A swapped iframe src inlines the current theme so the new fragment wraps
+        // FOUC-free; `auto` omits the query.
+        let html = render("demo", "index", "", &["index"], "n");
+        assert!(html.contains(r#""/" + SPACE + "/_c/" + data.slug + themeQuery()"#));
+        assert!(html.contains(r#"gp_theme=""#) || html.contains("gp_theme="));
     }
 
     #[test]

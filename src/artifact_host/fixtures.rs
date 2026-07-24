@@ -60,6 +60,14 @@ static FIXTURES: &[Fixture] = &[
         slug: "nav-exfil",
         html: NAV_EXFIL,
     },
+    Fixture {
+        slug: "nav-a",
+        html: NAV_A,
+    },
+    Fixture {
+        slug: "nav-b",
+        html: NAV_B,
+    },
 ];
 
 /// Benign home artifact — links the real `base.css`, loads the real `charts.js`
@@ -273,11 +281,32 @@ const NAV_EXFIL: &str = r#"<!doctype html>
 </body></html>
 "#;
 
+/// Wave 3b bridge demonstration — a pair of benign **fragment** artifacts (no
+/// `<!doctype>`, so the content route wraps them and injects `bridge.js`). Each
+/// links to the other with a same-space **relative** link; clicking it must swap
+/// the iframe via the validated `postMessage` bridge, with no full-page reload.
+/// The adversarial suite drives exactly this to prove the accepted navigate path
+/// works end-to-end (the reject paths live in `pm-abuse`). Also carries an
+/// **external** link, which the bridge must NOT intercept.
+const NAV_A: &str = r#"<h1>Nav A</h1>
+<p>The Wave 3b bridge demo — page A.</p>
+<p><a id="to-b" href="nav-b">Go to B (relative, intercepted)</a></p>
+<p><a id="to-ext" href="http://gp-nav.invalid/x">External (never intercepted)</a></p>
+<p><a id="to-abs" href="/demo/_c/nav-b">Absolute path (never intercepted)</a></p>
+"#;
+
+const NAV_B: &str = r#"<h1>Nav B</h1>
+<p>The Wave 3b bridge demo — page B.</p>
+<p><a id="to-a" href="nav-a.html">Back to A (relative + .html, intercepted)</a></p>
+"#;
+
 /// `/_gp/v1/*` pinned base libraries (Wave 2b).
 ///
 /// The real `base.css` (the `--gp-*` design system), `charts.js` (`gp.chart()`
-/// over Vega-Lite), and `manifest.json`, plus the vendored Vega stack the chart
-/// helper lazily loads from this same host. Every file here is served **inside**
+/// over Vega-Lite), `bridge.js` (the child side of the parent↔iframe channel,
+/// auto-injected into fragment-wrapped artifacts — Wave 3b), and `manifest.json`,
+/// plus the vendored Vega stack the chart helper lazily loads from this same
+/// host. Every file here is served **inside**
 /// the null-origin artifact sandbox; the caller attaches `nosniff` + CORS + the
 /// hardening headers (design.md §4). `probe.js` remains the Wave-1 exfil-probe
 /// stub (the adversarial suite loads it to prove the *allowed* channel works).
@@ -292,6 +321,7 @@ pub fn gp_asset(path: &str) -> Option<(&'static str, &'static str)> {
     match path {
         "base.css" => Some(("text/css; charset=utf-8", GP_BASE_CSS)),
         "charts.js" => Some((JS, GP_CHARTS_JS)),
+        "bridge.js" => Some((JS, GP_BRIDGE_JS)),
         "manifest.json" => Some(("application/json; charset=utf-8", GP_MANIFEST)),
         "vega.min.js" => Some((JS, GP_VEGA)),
         "vega-lite.min.js" => Some((JS, GP_VEGA_LITE)),
@@ -303,6 +333,7 @@ pub fn gp_asset(path: &str) -> Option<(&'static str, &'static str)> {
 
 const GP_BASE_CSS: &str = include_str!("assets/base.css");
 const GP_CHARTS_JS: &str = include_str!("assets/charts.js");
+const GP_BRIDGE_JS: &str = include_str!("assets/bridge.js");
 const GP_MANIFEST: &str = include_str!("assets/manifest.json");
 const GP_VEGA: &str = include_str!("assets/vendor/vega.min.js");
 const GP_VEGA_LITE: &str = include_str!("assets/vendor/vega-lite.min.js");

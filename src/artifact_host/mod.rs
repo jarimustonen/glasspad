@@ -25,6 +25,7 @@ pub mod guards;
 pub mod headers;
 pub mod shell;
 pub mod space;
+pub mod wrap;
 
 use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
@@ -192,6 +193,13 @@ struct ContentQuery {
     /// Honored **only in debug builds**; release builds ignore it entirely so no
     /// query string can alter the frozen production policy.
     csp: Option<String>,
+    /// Theme to inline into a **fragment-wrapped** artifact at serve time so a
+    /// toggled theme survives an iframe swap with no FOUC (design.md §6). The
+    /// value is allowlisted to `light`/`dark`/`auto` (`wrap::Theme::from_query`),
+    /// so it can only pick one of three attribute values, never inject markup. It
+    /// is inert for full-document artifacts (served verbatim).
+    #[serde(rename = "gp_theme")]
+    gp_theme: Option<String>,
 }
 
 /// Raw artifact document. Carries the sandbox CSP so a direct-open is sandboxed
@@ -220,7 +228,12 @@ async fn artifact_content(
     for (name, value) in headers::hardening_headers() {
         hmap.insert(name, value);
     }
-    (hmap, Html(hit.html)).into_response()
+    // Fragment artifacts are wrapped (theme inlined for no-FOUC, base.css linked,
+    // bridge.js injected); full documents are served verbatim. Wrapping runs under
+    // the same frozen artifact CSP — it widens nothing (design.md §4/§6).
+    let theme = wrap::Theme::from_query(q.gp_theme.as_deref());
+    let body = wrap::render_artifact(&hit.html, theme);
+    (hmap, Html(body)).into_response()
 }
 
 /// Trusted shell framing the artifact.
@@ -503,6 +516,54 @@ mod tests {
         assert_eq!(header(&resp, "access-control-allow-origin"), "*");
         assert_eq!(header(&resp, "x-content-type-options"), "nosniff");
         assert!(header(&resp, "content-type").contains("javascript"));
+    }
+
+    #[tokio::test]
+    async fn bridge_js_served_with_cors_and_nosniff() {
+        let resp = get("/_gp/v1/bridge.js").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(header(&resp, "access-control-allow-origin"), "*");
+        assert_eq!(header(&resp, "x-content-type-options"), "nosniff");
+        assert!(header(&resp, "content-type").contains("javascript"));
+        assert!(body_string(resp).await.contains("navigate"));
+    }
+
+    // --- Wave 3b: fragment wrapping + bridge injection on the content route ----
+
+    #[tokio::test]
+    async fn fragment_artifact_is_wrapped_with_bridge() {
+        // `nav-a` is a benign fragment fixture (no <!doctype>) → wrapped + bridged.
+        let resp = get("/demo/_c/nav-a").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Still under the frozen artifact CSP — wrapping widens nothing.
+        let csp = header(&resp, "content-security-policy");
+        assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+        assert!(csp.contains("connect-src 'none'"));
+        let body = body_string(resp).await;
+        assert!(body.starts_with("<!doctype html>"), "not wrapped: {}", &body[..40.min(body.len())]);
+        assert!(body.contains(r#"<script src="/_gp/v1/bridge.js" defer></script>"#));
+        assert!(body.contains(r#"<link rel="stylesheet" href="/_gp/v1/base.css">"#));
+        assert!(body.contains("Nav A")); // fragment body preserved
+        assert!(body.contains(r#"data-theme="auto""#)); // default theme, no FOUC
+    }
+
+    #[tokio::test]
+    async fn full_document_artifact_is_served_verbatim() {
+        // `index` (HELLO) is a full document → NOT wrapped, no injected bridge.
+        let resp = get("/demo/_c/index").await;
+        let body = body_string(resp).await;
+        assert!(!body.contains("/_gp/v1/bridge.js"), "full doc must not get a bridge");
+    }
+
+    #[tokio::test]
+    async fn fragment_theme_query_is_inlined_and_allowlisted() {
+        let resp = get("/demo/_c/nav-a?gp_theme=dark").await;
+        assert!(body_string(resp).await.contains(r#"data-theme="dark""#));
+        // A hostile theme value collapses to the safe default; no markup escapes.
+        let resp = get("/demo/_c/nav-a?gp_theme=%22%3E%3Cscript%3E").await;
+        let body = body_string(resp).await;
+        assert!(body.contains(r#"data-theme="auto""#));
+        assert!(!body.contains("<script>alert"));
     }
 
     #[tokio::test]
