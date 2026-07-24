@@ -75,10 +75,14 @@ wave plan's merge policy).
   entry/manifest limits, comment/quote-aware title tokenizer (inserted as text),
   dependency-free 500ms fingerprint-poll watcher → SSE reload. New traversal/
   symlink/hostile-asset probes in `test-security.sh`; 21 Wave 1 checks stay green.
-- [ ] **Phase 3 — CLI** (Wave 3 batch 2, in flight). `serve ./dir`,
-  `create ./file.html`, `open`; fragment vs full-document detection
-  (BOM/whitespace/comment tolerant). AI-first: `--json`, strict validation,
-  no interactive prompts, informative errors.
+- [x] **Phase 3 — CLI** DONE (Wave 3 batch 2, `29ac6bf`). `serve ./dir`,
+  `create ./file.html`, `open` + fragment-vs-full-document detection; AI-first
+  `--json` + strict validation. Removed `src/docs.rs`. **Landed by SALVAGE:** the
+  worker's Claude process hung mid-run (confirmed by user), dying after commit but
+  before its merge/review. Branch was green (build/clippy/test/31-check suite all
+  pass, CLI tests 73→78), fast-forwarded onto `master`, dead worktree/branch
+  cleaned up. **Deferred `/llm-review` now running** (run `01kya0jf8x`) to close
+  the review gate the hang skipped.
 - [x] **Phase 4 — Base libraries** under `/_gp/v1/`. **4-static DONE**
   (`6636493`/`85fe95d`): `base.css` (`--gp-*`, light/dark/auto), `charts.js`
   (`gp.chart` over vendored vega/vega-lite/vega-embed), `manifest.json`. **4-bridge
