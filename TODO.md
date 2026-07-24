@@ -25,13 +25,16 @@ line section-DSL (`src/spec/*`, `src/client/dashboard.js`) and the data parsers.
 execution schedule (5 waves), and `plan.md` + `design.md` are the *what* and the
 security model it implements.
 
-**Wave 1 is DONE and landed on `master` (2026-07-24).** Standing autonomy is
-now granted (`AGENTS.md`): the orchestrator launches waves / merges / deploys
-without asking and prefers spinoffs. **Next job: Wave 2 — 2a (space model +
-live serving) ∥ 2b (static base assets under `/_gp/v1/`).** Both autonomous
-`/worktree-spinoff --headless`, self-merging, `/llm-review` in the brief.
-Revisit gate confirmed: `/_gp/v1/{*path}` is a stub route 2b populates without
-touching 2a's space-model router lines. Sequence the two merges (2a first).
+**Waves 1 & 2 are DONE and landed on `master` (2026-07-24).** Standing autonomy
+granted (`AGENTS.md`). Suite green: 21 Wave 1 checks + Wave 2a probes + vega/eval.
+**Next job: Wave 3.** Batches:
+- **Batch 1 (parallel):** legacy-route removal (decision D2 — delete `/{id}`
+  renderer + `/api/pads`, coupling audit first) ∥ **3b bridge.js** (client asset,
+  disjoint). Both autonomous, `/llm-review` in brief.
+- **Batch 2 (after legacy-removal lands):** **3a CLI** (`serve`/`create`/`open`,
+  fragment-vs-full-doc detection) — sequenced because it shares `main.rs` with the
+  legacy removal. Coupling: `structured-api-errors` decision becomes largely moot
+  once `/api/pads` is gone; CLI error contract follows `AGENTS-AI-FIRST-CLI.md`.
 
 **Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
 Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
@@ -64,13 +67,21 @@ wave plan's merge policy).
      with 2a); folded into / pulled ahead of Wave 5 removals.
   3. Artifact CSP names whole loopback host → **DEFER to Wave 2a** (weigh a
      separate asset origin).
-- [ ] **Phase 2 — Space model + live directory serving.** Snapshot scanner,
-  slug grammar + collision/reserved-name rejection, asset routing + MIME + size
-  limits, atomic rescan, filesystem watch + SSE reload.
+- [x] **Phase 2 — Space model + live directory serving.** DONE (2026-07-24,
+  `af7f614`/`25b4d5a`/`311575d`). Directory scanner (artifacts + `assets/`),
+  atomic all-or-nothing Snapshot swap (torn-read-free), slug grammar +
+  reserved-name/collision hard errors, symlink rejection + canonical containment,
+  MIME allowlist + nosniff + `CSP:sandbox`, no wildcard CORS, per-file/space/
+  entry/manifest limits, comment/quote-aware title tokenizer (inserted as text),
+  dependency-free 500ms fingerprint-poll watcher → SSE reload. New traversal/
+  symlink/hostile-asset probes in `test-security.sh`; 21 Wave 1 checks stay green.
 - [ ] **Phase 3 — CLI.** `serve ./dir`, `create ./file.html`, `open`; fragment
   vs full-document detection (BOM/whitespace/comment tolerant).
-- [ ] **Phase 4 — Base libraries** under `/_gp/v1/`: `base.css` (existing design
-  system), `charts.js` (`gp.chart`), `bridge.js` (auto-injected), `manifest.json`.
+- [~] **Phase 4 — Base libraries** under `/_gp/v1/`. **4-static DONE** (2026-07-24,
+  `6636493`/`85fe95d`): real `base.css` (`--gp-*`, light/dark/auto), `charts.js`
+  (`gp.chart` over vendored vega/vega-lite/vega-embed), `manifest.json`; fragment
+  chart renders end-to-end in both themes; vega/eval suite green. **4-bridge
+  (`bridge.js`, auto-injected) → Wave 3b** (still open).
 - [ ] **Phase 5 — Nav + cross-links.** Parent-frame nav chrome; bridge intercepts
   same-space relative links.
 - [ ] **Phase 6 — Removals + migration.** Coupling audit of the "reused" server
