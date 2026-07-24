@@ -1,11 +1,12 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-07-24
 type: epic
 owner: jari
-status: open
+status: obsolete
 priority: normal
 slug: mcp-integration
+closed: 2026-07-24
 ---
 
 # MCP integration
