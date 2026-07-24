@@ -27,6 +27,9 @@ enum Commands {
     Serve {
         #[arg(short, long, default_value = "3000")]
         port: u16,
+        /// Directory to serve live as a space (Wave 2a). Omit to serve only the
+        /// built-in fixtures; Wave 3a formalizes the full `serve ./dir` contract.
+        dir: Option<PathBuf>,
     },
     /// Create a new pad from a file or stdin
     Create {
@@ -64,7 +67,7 @@ async fn main() {
     let args = Cli::parse();
 
     match args.command {
-        Commands::Serve { port } => server::run(port).await,
+        Commands::Serve { port, dir } => server::run_dir(port, dir).await,
         Commands::Create { file, data } => cli::create(file, data, None).await,
         Commands::List => cli::list(None).await,
         Commands::Open { id } => cli::open(id, None).await,

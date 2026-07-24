@@ -26,34 +26,65 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   `Origin: null`/foreign on the `/api` control surface). Exercised end-to-end by
   the `server::tests` integration tests against `build_app()`.
 - `fixtures.rs` — Wave-1 built-in `demo` space of **deliberately hostile**
-  artifacts (exfil / escape / eval / postMessage-abuse probes). Wave 2a replaces
-  this static registry with a live directory scanner; the probes stay as the
-  regression suite. Also serves the `/_gp/v1/*` base libraries (Wave 2b): the
-  real `base.css` (the `--gp-*` design system), `charts.js` (`gp.chart()` over
-  Vega-Lite), `manifest.json`, and the vendored Vega stack (`vega`/`vega-lite`/
-  `vega-embed`, pinned to the SRI-matched builds under `assets/`). The Vega
-  bundles are vendored, not CDN-loaded, because the artifact `script-src` names
-  only the loopback host — `charts.js` lazily loads them from `/_gp/v1/*`.
+  artifacts (exfil / escape / eval / postMessage-abuse probes). These are the
+  security regression suite and stay forever. `mod.rs` resolves a request against
+  the **live snapshot first** (Wave 2a) and falls back to these fixtures only for
+  spaces the snapshot doesn't contain. Also serves the `/_gp/v1/*` base libraries
+  (Wave 2b): the real `base.css` (the `--gp-*` design system), `charts.js`
+  (`gp.chart()` over Vega-Lite), `manifest.json`, and the vendored Vega stack
+  (`vega`/`vega-lite`/`vega-embed`, SRI-pinned under `assets/`). The Vega bundles
+  are vendored, not CDN-loaded, because the artifact `script-src` names only the
+  loopback host — `charts.js` lazily loads them from `/_gp/v1/*`.
+- `space.rs` (Wave 2a) — the **space model + directory scanner** (security-
+  sensitive). `scan_dir` reads a directory into an immutable `Space` (artifacts +
+  `assets/`), all-or-nothing: slug grammar, **reserved-name / collision** hard
+  errors, **symlink rejection** (`lstat` every entry) + canonical-path containment,
+  per-file / per-space **size limits**, extension→**MIME** allowlist, and **title
+  resolution** (a small tag tokenizer, *not* a regex — entity-decoded, length-
+  bounded). `Snapshot` is swapped atomically by `ArtifactHost` so a half-written
+  file is never served. `asset_key_for_request` grammar-checks a request sub-path
+  into a key that must exact-match the pre-scanned asset map (traversal is
+  structurally impossible — you can only fetch a key that already exists).
 - `mod.rs` — routes (`/{space}/`, `/{space}/{slug}`, `/{space}/_c/{slug}`,
-  `/_gp/v1/*`), slug/space grammar + reserved-name rejection, and header wiring.
+  `/{space}/assets/{*path}`, `/_gp/reload`, `/_gp/v1/*`), slug/space grammar +
+  reserved-name rejection, header wiring, the live-snapshot + fixtures resolution,
+  and the `ArtifactHost` state (atomic snapshot swap + SSE reload broadcast).
+  Space **asset** responses carry `nosniff` + `Content-Security-Policy: sandbox`
+  so a hostile top-level SVG/HTML asset runs script-less in a null origin (the
+  `sandbox` directive is ignored for subresource loads, so JS/CSS/img/fonts still
+  load into an artifact) + `Access-Control-Allow-Origin: *` for module/font reads.
+- The directory watch is a **dependency-free 500 ms poll** (`server.rs`
+  `spawn_watcher`/`fingerprint`) that rescans + atomically swaps + fires the SSE
+  reload on change; a rescan that fails (e.g. a fresh collision) keeps the
+  last-good snapshot serving.
 
 ## Frozen decisions (do not silently relax)
 
 - **`script-src` includes `'unsafe-eval'`** — Vega-Lite needs it; verified
   empirically (design.md §4). Acceptable only *because* egress + null-origin
   isolation are untouched. Do not add `allow-same-origin` to the artifact iframe.
-- **`connect-src 'none'`** is the exfil boundary. Wave 2a may widen it to the
-  **named host only** (for SSE) — never to a foreign host.
+- **`connect-src` is the exfil boundary.** Wave 1 set it to `'none'`; Wave 2a
+  widened it to name **exactly the loopback SSE-reload path** on both origins
+  (`http://127.0.0.1:PORT/_gp/reload http://localhost:PORT/_gp/reload`) — a CSP
+  path-source, so `/api/*`, any other path, foreign hosts, and canaries all still
+  violate. Do **not** relax it to a bare origin (that re-opens `/api/*`) or a
+  foreign host. The security suite proves a self-host `/api` fetch still blocks.
 - The artifact iframe is `sandbox="allow-scripts allow-top-navigation-by-user-activation"`.
   No `allow-same-origin`.
 
 ## Testing
 
-- `cargo test artifact_host` — header-contract + grammar + guard unit/HTTP tests.
-- `./test-security.sh` (repo root) — the **adversarial browser suite** (headless
-  Chromium via Playwright, `tests/security/run.mjs`): proves the browser
-  *enforces* the contract — per-channel exfil blocked at a network canary,
-  sandbox escape fails, direct-open is sandboxed by the response header,
-  postMessage abuse rejected, and the Vega `'unsafe-eval'` dependency. This is
-  the gate; keep it green and **extend it** when later waves add attack surface
-  (traversal/symlink probes in 2a, injection probes in Wave 4).
+- `cargo test artifact_host` — header-contract + grammar + guard unit/HTTP tests,
+  plus the Wave 2a scanner tests (`space::fs_tests`: reserved/collision/oversize/
+  non-UTF-8/**symlink**/manifest) and the `atomic_swap_never_serves_a_partial_snapshot`
+  concurrency test.
+- `./test-security.sh` (repo root) — the **adversarial suite**. Phase 1: the
+  headless-Chromium browser probes (`tests/security/run.mjs`) prove the browser
+  *enforces* the contract — per-channel exfil blocked at a network canary, sandbox
+  escape fails, direct-open is sandboxed by the response header, postMessage abuse
+  rejected, the Vega `'unsafe-eval'` dependency (**21 checks — keep green**). Phase
+  2 (Wave 2a): live-directory **server-side** probes — path traversal (browsers
+  can't help here) and symlink escape are HTTP/exit-code checks against a real
+  served space, plus hostile-SVG-asset sandboxing and the SSE-scoped `connect-src`.
+  Keep it green and **extend it** when later waves add attack surface (injection
+  probes in Wave 4).

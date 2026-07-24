@@ -15,20 +15,29 @@
 use serde_json::json;
 
 /// Render the shell document for `space`/`slug`. `known_slugs` is the artifact
-/// table the bridge resolves navigation against. `nonce` matches the CSP.
-pub fn render(space: &str, slug: &str, known_slugs: &[&str], nonce: &str) -> String {
+/// table the bridge resolves navigation against. `title` is the artifact's
+/// resolved display title (empty → fall back to `space / slug`); it is inserted
+/// as **text** on both the client (`textContent`) and server side (escaped).
+/// `nonce` matches the CSP.
+pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce: &str) -> String {
     // All dynamic values are serialized as JSON, so they land in the script as
     // data literals — never as HTML that could break out of context. `json` also
     // neutralizes `</script>` / U+2028 / U+2029 so a hostile value cannot close
     // the script element.
+    let display_title = if title.is_empty() {
+        format!("{space} / {slug}")
+    } else {
+        title.to_string()
+    };
     let space_json = json_for_script(&json!(space));
     let slug_json = json_for_script(&json!(slug));
     let slugs_json = json_for_script(&json!(known_slugs));
+    let title_json = json_for_script(&json!(display_title));
 
     // Content path for the iframe src. space/slug are path-validated upstream.
     let content_src = format!("/{space}/_c/{slug}");
     let esc_src = html_attr_escape(&content_src);
-    let esc_title = html_text_escape(&format!("{space} / {slug}"));
+    let esc_title = html_text_escape(&display_title);
 
     format!(
         r#"<!doctype html>
@@ -52,6 +61,7 @@ pub fn render(space: &str, slug: &str, known_slugs: &[&str], nonce: &str) -> Str
   var SPACE = {space_json};
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
+  var TITLE = {title_json};
   var MAX_SLUG = 64;       // matches the server-side slug grammar
   var RATE_MAX = 20;       // messages...
   var RATE_WINDOW = 1000;  // ...per this many ms
@@ -59,7 +69,15 @@ pub fn render(space: &str, slug: &str, known_slugs: &[&str], nonce: &str) -> Str
   var frame = document.getElementById("gp-artifact");
   var KNOWN_SET = new Set(KNOWN);
   // Nav chrome title inserted as TEXT (never innerHTML) — Trusted Types on.
-  document.getElementById("gp-title").textContent = SPACE + " / " + SLUG;
+  document.getElementById("gp-title").textContent = TITLE;
+
+  // Live-reload: the trusted shell holds the EventSource (its connect-src 'self'
+  // permits it) and reloads the whole shell on a filesystem change, so new/renamed
+  // artifacts and titles are picked up, not just the current artifact's body.
+  try {{
+    var es = new EventSource("/_gp/reload");
+    es.addEventListener("reload", function () {{ location.reload(); }});
+  }} catch (e) {{ /* SSE unsupported — live reload simply inactive */ }}
 
   var stats = {{ accepted: 0, rejectedSource: 0, rejectedSize: 0, rejectedRate: 0, rejectedSchema: 0 }};
   window.__bridgeStats = stats;
@@ -146,39 +164,68 @@ mod tests {
 
     #[test]
     fn shell_has_null_origin_sandbox() {
-        let html = render("demo", "index", &["index"], "n0nce");
+        let html = render("demo", "index", "", &["index"], "n0nce");
         assert!(html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#));
         assert!(!html.contains("allow-same-origin"));
     }
 
     #[test]
     fn shell_frames_content_route() {
-        let html = render("demo", "eval", &["eval"], "n0nce");
+        let html = render("demo", "eval", "", &["eval"], "n0nce");
         assert!(html.contains(r#"src="/demo/_c/eval""#));
     }
 
     #[test]
     fn shell_validates_event_source() {
-        let html = render("demo", "index", &["index"], "n0nce");
+        let html = render("demo", "index", "", &["index"], "n0nce");
         assert!(html.contains("event.source !== frame.contentWindow"));
     }
 
     #[test]
     fn shell_script_is_nonce_gated() {
-        let html = render("demo", "index", &["index"], "abc123");
+        let html = render("demo", "index", "", &["index"], "abc123");
         assert!(html.contains(r#"<script nonce="abc123">"#));
     }
 
     #[test]
     fn shell_embeds_slugs_as_json_data() {
-        let html = render("demo", "index", &["index", "eval"], "n");
+        let html = render("demo", "index", "", &["index", "eval"], "n");
         assert!(html.contains(r#"["index","eval"]"#));
+    }
+
+    #[test]
+    fn shell_opens_reload_event_source() {
+        let html = render("demo", "index", "", &["index"], "n");
+        assert!(html.contains(r#"new EventSource("/_gp/reload")"#));
+    }
+
+    #[test]
+    fn shell_uses_resolved_title_as_text() {
+        // A provided title lands in the chrome as a JSON string literal + escaped
+        // <title>, never as live markup.
+        let html = render("demo", "index", "Sales & Q3", &["index"], "n");
+        assert!(html.contains("Sales &amp; Q3")); // server-side <title>, escaped
+        // client textContent literal: `&` is JSON-for-script-encoded so it can't
+        // close the <script> element — assert the encoded form is present and the
+        // bare ampersand is NOT.
+        let title_line = html.lines().find(|l| l.contains("var TITLE =")).unwrap();
+        assert!(title_line.contains("Sales") && title_line.contains("Q3"));
+        // The `&`/`<`/`>` are json_for_script-encoded (to \uXXXX) so the value can
+        // never close the <script> element: the bare punctuation is absent.
+        assert!(!title_line.contains('&'));
+        assert!(!title_line.contains("Sales & Q3"));
+        // Empty title falls back to "space / slug".
+        let fallback = render("demo", "index", "", &["index"], "n");
+        assert!(fallback.contains("demo / index"));
     }
 
     #[test]
     fn shell_escapes_injection_in_title_context() {
         // A hostile slug must not break out of the HTML title/attr context.
-        let html = render("demo", "a\"><script>x", &["a"], "n");
+        let html = render("demo", "a\"><script>x", "", &["a"], "n");
         assert!(!html.contains("<script>x"));
+        // A hostile *title* likewise cannot break out (escaped + JSON-encoded).
+        let html2 = render("demo", "index", "</title><script>evil()</script>", &["index"], "n");
+        assert!(!html2.contains("<script>evil()"));
     }
 }
