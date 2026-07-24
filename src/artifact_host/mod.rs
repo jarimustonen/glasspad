@@ -160,14 +160,33 @@ fn find_artifact(snap: &Snapshot, space: &str, slug: &str) -> Option<Hit> {
     })
 }
 
-/// Ordered slugs for a space's nav (live nav order, else the fixtures order).
-fn space_slugs(snap: &Snapshot, space: &str) -> Vec<String> {
+/// Ordered `(slug, title)` nav table for a space (live nav order + resolved
+/// titles, else the fixtures order with titles parsed from the fixture HTML). The
+/// titles are artifact-derived text the trusted shell inserts via `textContent`
+/// (never `innerHTML`); a fixture with no resolvable `<title>`/`<h1>` falls back
+/// to its slug so the nav always has a label.
+fn space_nav(snap: &Snapshot, space: &str) -> Vec<(String, String)> {
     if let Some(sp) = snap.space(space) {
-        return sp.slugs();
+        return sp
+            .nav
+            .iter()
+            .map(|slug| {
+                let title = sp
+                    .artifact(slug)
+                    .map(|a| a.title.clone())
+                    .unwrap_or_else(|| slug.clone());
+                (slug.clone(), title)
+            })
+            .collect();
     }
     fixtures::slugs(space)
         .into_iter()
-        .map(|s| s.to_string())
+        .map(|slug| {
+            let title = fixtures::get(space, slug)
+                .and_then(|f| space::resolve_title(f.html))
+                .unwrap_or_else(|| slug.to_string());
+            (slug.to_string(), title)
+        })
         .collect()
 }
 
@@ -273,9 +292,9 @@ async fn space_entry(
 
 fn render_shell(snap: &Snapshot, space: &str, slug: &str, title: Option<&str>) -> Response {
     let nonce = token::generate_token();
-    let slugs = space_slugs(snap, space);
-    let refs: Vec<&str> = slugs.iter().map(|s| s.as_str()).collect();
-    let body = shell::render(space, slug, title.unwrap_or(""), &refs, &nonce);
+    let nav = space_nav(snap, space);
+    let nav_refs: Vec<(&str, &str)> = nav.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect();
+    let body = shell::render(space, slug, title.unwrap_or(""), &nav_refs, &nonce);
     let csp = headers::shell_csp(&nonce);
 
     let mut hmap = base_html_headers();

@@ -22,7 +22,16 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   contains a framed artifact's own navigations (see design.md §4). It also owns
   the **theme toggle** (Wave 3b): on toggle it `postMessage`s the framed artifact
   `{type:"theme", theme}` and, on the next iframe swap, inlines the theme via
-  `?gp_theme=` so the wrap is FOUC-free.
+  `?gp_theme=` so the wrap is FOUC-free. **Wave 4 — nav chrome:** renders a
+  `<nav>` listing the space's artifacts from the server-resolved `(slug, title)`
+  table, built **entirely client-side with `createElement` + `textContent`** (the
+  artifact-derived title never touches an HTML sink; Trusted Types would throw on
+  one). A single validated `navigateTo(slug)` path — grammar + `KNOWN_SET`
+  allowlist, same one the postMessage bridge uses — swaps the framed artifact in
+  place (no full reload) and updates the active entry + document title. A
+  full-document artifact's own links still fall back to `target="_top"` (the D1
+  top-nav path, author-controlled via `bridge.js`); the parent chrome never needs
+  it because the parent is not sandboxed.
 - `wrap.rs` (Wave 3b) — **fragment detection + the bridge/theme injection point**.
   `is_fragment` is BOM/whitespace/comment-tolerant (a full document opens with
   `<!doctype>`/`<html …>`; anything else is a fragment). A fragment is wrapped
@@ -42,7 +51,10 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   the **live snapshot first** (Wave 2a) and falls back to these fixtures only for
   spaces the snapshot doesn't contain. The `demo` space also carries two benign
   **fragment** artifacts (`nav-a`/`nav-b`) that link to each other — the Wave 3b
-  bridge nav demonstration the adversarial suite drives end-to-end. Also serves
+  bridge nav demonstration the adversarial suite drives end-to-end — plus (Wave 4)
+  `nav-full` (a **full document** whose same-space link uses `target="_top"`, the
+  D1 top-nav path) and `inject` (an artifact whose `<title>` decodes to raw hostile
+  markup — the trusted-parent nav-injection probe target). Also serves
   the `/_gp/v1/*` base libraries (Wave 2b/3b): the real `base.css` (the `--gp-*`
   design system), `charts.js` (`gp.chart()` over Vega-Lite), `bridge.js` (the
   fragment-only parent↔iframe channel), `manifest.json`, and the vendored Vega stack
@@ -98,14 +110,22 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   headless-Chromium browser probes (`tests/security/run.mjs`) prove the browser
   *enforces* the contract — per-channel exfil blocked at a network canary, sandbox
   escape fails, direct-open is sandboxed by the response header, postMessage abuse
-  rejected, the Vega `'unsafe-eval'` dependency, **plus the Wave 3b bridge nav**:
-  a same-space relative-link click swaps the iframe via the validated bridge, an
+  rejected, the Vega `'unsafe-eval'` dependency, the **Wave 3b bridge nav**
+  (a same-space relative-link click swaps the iframe via the validated bridge, an
   unknown-slug / extra-property / transferred-port navigates are still rejected,
   external + absolute-path links are not intercepted, and the theme toggle re-themes
-  the artifact (a wrong-source theme message is ignored) (**31 checks — keep green**).
+  the artifact — a wrong-source theme message is ignored), **plus the Wave 4 nav
+  chrome**: the trusted parent lists the space's artifacts and swaps the iframe in
+  place on click (no reload, active entry marked), the **nav-injection probe** (a
+  hostile artifact title renders as inert `textContent` — no execution, no element
+  nodes, no layout break), and full-document `target="_top"` cross-nav
+  (**40 checks — keep green**).
   Phase
   2 (Wave 2a): live-directory **server-side** probes — path traversal (browsers
   can't help here) and symlink escape are HTTP/exit-code checks against a real
-  served space, plus hostile-SVG-asset sandboxing and the SSE-scoped `connect-src`.
+  served space, plus hostile-SVG-asset sandboxing, the SSE-scoped `connect-src`,
+  and (Wave 4) a **server-side nav-injection check** (a hostile artifact title is
+  emitted only `<`-encoded in the nav data literal, never as raw markup) +
+  the shell Trusted-Types header.
   Keep it green and **extend it** when later waves add attack surface (injection
   probes in Wave 4).

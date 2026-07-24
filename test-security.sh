@@ -64,6 +64,12 @@ trap 'cleanup; cleanup_space' EXIT
 printf 'SECRET-OUTSIDE-THE-SPACE' > "$WORK/secret.txt"
 mkdir -p "$WORK/myspace/assets/sub"
 printf '<!doctype html><title>Home</title><h1>hi</h1>' > "$WORK/myspace/index.html"
+printf '<!doctype html><title>Sales Q3</title><h1>sales</h1>' > "$WORK/myspace/sales.html"
+# Wave 4 nav-injection probe (server side): a hostile artifact TITLE that the
+# resolver DECODES to raw markup as text. The trusted parent nav must never emit
+# it as executable markup — it lives in the nav data literal JSON-for-script
+# encoded, and is inserted client-side via textContent.
+printf '<!doctype html><title>&quot;&gt;&lt;img src=x onerror=alert(1)&gt;&lt;script&gt;alert(2)&lt;/script&gt;</title><h1>inj</h1>' > "$WORK/myspace/inject.html"
 printf 'console.log(1)' > "$WORK/myspace/assets/app.js"
 # A hostile SVG asset: must be neutralized (served with `Content-Security-Policy: sandbox`).
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$WORK/myspace/assets/logo.svg"
@@ -108,6 +114,19 @@ for p in \
 done
 # The secret is never reachable by any name.
 ! curl -s "$SB/myspace/assets/../../secret.txt" | grep -q SECRET-OUTSIDE; scheck $? "secret file never served via traversal"
+
+# Wave 4 nav chrome: the trusted shell lists the space's artifacts, and an
+# artifact-derived title can NEVER become live markup in the parent.
+SHELL_HTML="$(curl -s "$SB/myspace/inject")"
+echo "$SHELL_HTML" | grep -q 'id="gp-nav"'; scheck $? "shell renders the nav chrome container"
+echo "$SHELL_HTML" | grep -q '"slug":"sales"'; scheck $? "nav table lists the space's sibling artifacts"
+# The hostile title must NOT appear as raw executable markup anywhere in the shell.
+! echo "$SHELL_HTML" | grep -qi '<img src=x onerror'; scheck $? "hostile title is not emitted as raw <img onerror> markup"
+! echo "$SHELL_HTML" | grep -qi '<script>alert(2)'; scheck $? "hostile title is not emitted as a raw <script> element"
+# It IS present, but JSON-for-script encoded (<…) in the nav data literal.
+echo "$SHELL_HTML" | grep -q '\\u003cimg src=x onerror'; scheck $? "hostile title survives only as \\u003c-encoded text in the nav data"
+# The trusted shell enforces Trusted Types (any accidental innerHTML sink throws).
+echo "$(hdr "$SB/myspace/inject" content-security-policy)" | grep -q "require-trusted-types-for 'script'"; scheck $? "shell CSP enforces Trusted Types"
 
 # Egress boundary held: the artifact CSP keeps `connect-src 'none'` — live reload
 # is shell-side (its own connect-src 'self'), so the artifact stays fully closed.

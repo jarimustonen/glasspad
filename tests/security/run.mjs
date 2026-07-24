@@ -376,6 +376,83 @@ async function main() {
       accAfterAbs === accBeforeAbs, `accepted ${accBeforeAbs}->${accAfterAbs}`);
   }
 
+  // ---------------------------------------------------------------------
+  // TEST 8 — Wave 4 nav chrome, rendered in the TRUSTED parent. The parent
+  // lists the space's artifacts and swaps the iframe in place (no full reload)
+  // via the same validated navigate path. The critical trust-boundary assertion
+  // is the INJECTION PROBE: the `inject` fixture carries a title that resolves to
+  // raw hostile markup (`"><img onerror=…><script>…`), and the parent must render
+  // it as inert TEXT — never executing, never breaking layout.
+  // ---------------------------------------------------------------------
+  {
+    await page.goto(`${BASE}/demo/`, { waitUntil: "load" });
+    await page.waitForSelector("#gp-nav a[data-slug]");
+
+    // The nav lists the space's artifacts, each an <a data-slug>.
+    const navSlugs = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("#gp-nav a[data-slug]")).map((a) => a.getAttribute("data-slug")));
+    check("nav-chrome: parent renders a nav listing the space's artifacts",
+      navSlugs.length >= 2 && navSlugs.includes("index") && navSlugs.includes("inject"),
+      `slugs=${JSON.stringify(navSlugs).slice(0, 160)}`);
+
+    // Injection: the hostile-titled artifact is rendered as inert text.
+    const inj = await page.evaluate(() => {
+      const a = document.querySelector('#gp-nav a[data-slug="inject"]');
+      return {
+        fired: window.__navInjectionFired === true,
+        hasImg: !!(a && a.querySelector && a.querySelector("img,script")),
+        // textContent carries the raw hostile string verbatim (proof it's TEXT,
+        // not parsed markup): the `<img …>` survives only as characters.
+        textHasRawMarkup: !!(a && /<img /i.test(a.textContent) && /onerror=/i.test(a.textContent)),
+        childElementCount: a ? a.childElementCount : -1,
+      };
+    });
+    check("nav-injection: hostile artifact title did NOT execute in the trusted parent",
+      inj.fired === false, `__navInjectionFired=${inj.fired}`);
+    check("nav-injection: hostile title produced no element nodes in the nav (textContent, not innerHTML)",
+      inj.hasImg === false && inj.childElementCount === 0,
+      `hasImg=${inj.hasImg} childElementCount=${inj.childElementCount}`);
+    check("nav-injection: the hostile markup survives only as inert TEXT in the nav label",
+      inj.textHasRawMarkup === true, "textContent should contain the raw <img …> as characters");
+
+    // Clicking a parent-nav entry swaps the iframe in place — no full reload.
+    const frameHas = (slug) =>
+      page.frames().some((f) => new RegExp(`/demo/_c/${slug}(\\?|$)`).test(f.url()));
+    const parentUrlBefore = page.url();
+    await page.click('#gp-nav a[data-slug="eval"]');
+    await page.waitForFunction(
+      () => document.getElementById("gp-artifact").getAttribute("src") &&
+            /\/demo\/_c\/eval(\?|$)/.test(document.getElementById("gp-artifact").getAttribute("src")),
+      { timeout: 4000 }).catch(() => {});
+    check("nav-chrome: clicking a nav entry swapped the framed artifact in place",
+      frameHas("eval"), "iframe src should be /demo/_c/eval");
+    check("nav-chrome: parent nav navigation did NOT reload the trusted shell",
+      page.url() === parentUrlBefore, `url=${page.url()}`);
+    check("nav-chrome: the active nav entry is marked aria-current",
+      await page.evaluate(() =>
+        document.querySelector('#gp-nav a[data-slug="eval"]').getAttribute("aria-current") === "page"));
+  }
+
+  // ---------------------------------------------------------------------
+  // TEST 9 — full-document cross-nav uses `target="_top"` (D1). A full document
+  // gets no injected bridge; its author-written same-space link opts into a
+  // user-activated TOP navigation. Clicking it must navigate the whole tab to the
+  // sibling artifact's shell — the sanctioned top-nav path, not an iframe swap.
+  // ---------------------------------------------------------------------
+  {
+    await page.goto(`${BASE}/demo/nav-full`, { waitUntil: "load" });
+    const full = page.frames().find((f) => /\/demo\/_c\/nav-full(\?|$)/.test(f.url()));
+    check("full-nav: full-document artifact is framed (served verbatim, no bridge)", !!full,
+      full ? full.url() : "no nav-full frame");
+    if (full) await full.waitForSelector("#to-a-top").catch(() => {});
+    // A real user click (trusted activation) so allow-top-navigation-by-user-activation applies.
+    const beforeUrl = page.url();
+    if (full) await full.click("#to-a-top").catch(() => {});
+    await page.waitForURL(/\/demo\/nav-a(\?|$)/, { timeout: 4000 }).catch(() => {});
+    check("full-nav: target=_top link navigated the whole tab to the sibling's shell",
+      /\/demo\/nav-a(\?|$)/.test(page.url()) && page.url() !== beforeUrl, `url=${page.url()}`);
+  }
+
   await browser.close();
 }
 

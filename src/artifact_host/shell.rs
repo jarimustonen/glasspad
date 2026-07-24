@@ -16,16 +16,30 @@
 //!   message work; they do not claim to bound clone cost.)
 //! * inserts artifact-derived text as **text, never innerHTML** (Trusted Types on).
 //!
+//! **Wave 4 — nav chrome.** The trusted parent now renders a **navigation list**
+//! of the space's artifacts (`nav`, an ordered `(slug, title)` table the server
+//! resolves and hands down). Every list item is built **client-side with
+//! `createElement` + `textContent`** — the artifact-derived title never touches an
+//! HTML sink, so it can never break out of text context (Trusted Types would throw
+//! on any accidental `innerHTML` too). Clicking a list entry swaps the framed
+//! artifact **in place via the same validated navigate path** (no full reload); the
+//! shell never leaves the trusted parent, so its `frame-src 'self'` keeps
+//! containing whatever is framed. A full-document artifact's *own* internal links
+//! still fall back to `target="_top"` (author-controlled, via `bridge.js` — the
+//! D1-sanctioned top-nav path); the parent chrome itself never needs it because the
+//! parent is not sandboxed.
+//!
 //! The inline script is authorized by a per-response nonce, not `'unsafe-inline'`.
 
 use serde_json::json;
 
-/// Render the shell document for `space`/`slug`. `known_slugs` is the artifact
-/// table the bridge resolves navigation against. `title` is the artifact's
-/// resolved display title (empty → fall back to `space / slug`); it is inserted
-/// as **text** on both the client (`textContent`) and server side (escaped).
+/// Render the shell document for `space`/`slug`. `nav` is the ordered artifact
+/// table `(slug, title)` the chrome lists and the bridge resolves navigation
+/// against — its slugs are the low-authority allowlist, its titles are inserted
+/// as **text** (client `textContent`, server-side escaped). `title` is the current
+/// artifact's resolved display title (empty → fall back to `space / slug`).
 /// `nonce` matches the CSP.
-pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce: &str) -> String {
+pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce: &str) -> String {
     // All dynamic values are serialized as JSON, so they land in the script as
     // data literals — never as HTML that could break out of context. `json` also
     // neutralizes `</script>` / U+2028 / U+2029 so a hostile value cannot close
@@ -35,10 +49,20 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
     } else {
         title.to_string()
     };
+    // Nav as an array of {slug, title} objects, in server-resolved order. Titles
+    // are artifact-derived; the JSON-for-script encoding below neutralizes any
+    // markup, and the client inserts each one via textContent (never innerHTML).
+    let nav_json_value = json!(nav
+        .iter()
+        .map(|(s, t)| json!({ "slug": s, "title": t }))
+        .collect::<Vec<_>>());
+    let known: Vec<&str> = nav.iter().map(|(s, _)| *s).collect();
+
     let space_json = json_for_script(&json!(space));
     let slug_json = json_for_script(&json!(slug));
-    let slugs_json = json_for_script(&json!(known_slugs));
+    let slugs_json = json_for_script(&json!(known));
     let title_json = json_for_script(&json!(display_title));
+    let nav_json = json_for_script(&nav_json_value);
 
     // Content path for the iframe src. space/slug are path-validated upstream.
     let content_src = format!("/{space}/_c/{slug}");
@@ -53,15 +77,28 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
 <title>{esc_title}</title>
 <style>
   html,body {{ margin:0; height:100%; }}
-  header.gp-chrome {{ font:14px system-ui,sans-serif; padding:6px 12px; border-bottom:1px solid #ccc;
-                      display:flex; align-items:center; gap:12px; }}
-  header.gp-chrome #gp-title {{ flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  body {{ display:flex; flex-direction:column; }}
+  header.gp-chrome {{ font:14px system-ui,sans-serif; flex:0 0 auto;
+                      border-bottom:1px solid #ccc; }}
+  header.gp-chrome .gp-bar {{ display:flex; align-items:center; gap:12px; padding:6px 12px; }}
+  header.gp-chrome #gp-title {{ flex:1 1 auto; overflow:hidden; text-overflow:ellipsis;
+                      white-space:nowrap; font-weight:600; }}
   header.gp-chrome #gp-theme-toggle {{ flex:0 0 auto; font:inherit; padding:2px 10px; cursor:pointer;
                       border:1px solid #ccc; border-radius:6px; background:transparent; color:inherit; }}
-  iframe#gp-artifact {{ display:block; border:0; width:100%; height:calc(100% - 34px); }}
+  nav.gp-nav {{ display:flex; gap:4px; padding:0 8px 6px; overflow-x:auto; white-space:nowrap; }}
+  nav.gp-nav a {{ font:inherit; color:inherit; text-decoration:none; padding:3px 10px;
+                  border:1px solid transparent; border-radius:6px; cursor:pointer;
+                  max-width:22ch; overflow:hidden; text-overflow:ellipsis; }}
+  nav.gp-nav a:hover {{ background:rgba(127,127,127,0.14); }}
+  nav.gp-nav a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
+  nav.gp-nav:empty {{ display:none; }}
+  iframe#gp-artifact {{ display:block; border:0; flex:1 1 auto; width:100%; }}
 </style>
 </head><body>
-<header class="gp-chrome"><span id="gp-title"></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></header>
+<header class="gp-chrome">
+  <div class="gp-bar"><span id="gp-title"></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
+  <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
+</header>
 <iframe id="gp-artifact"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
         data-src="{esc_src}"></iframe>
@@ -72,14 +109,47 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
   var TITLE = {title_json};
+  var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
   var MAX_SLUG = 64;       // matches the server-side slug grammar
   var RATE_MAX = 20;       // messages...
   var RATE_WINDOW = 1000;  // ...per this many ms
 
   var frame = document.getElementById("gp-artifact");
   var KNOWN_SET = new Set(KNOWN);
+  var TITLE_BY_SLUG = Object.create(null);
+  for (var n = 0; n < NAV.length; n++) {{
+    if (NAV[n] && typeof NAV[n].slug === "string") TITLE_BY_SLUG[NAV[n].slug] = NAV[n].title;
+  }}
+  var current = SLUG;
+
   // Nav chrome title inserted as TEXT (never innerHTML) — Trusted Types on.
-  document.getElementById("gp-title").textContent = TITLE;
+  var titleEl = document.getElementById("gp-title");
+  titleEl.textContent = TITLE;
+
+  // --- Nav list: built entirely with createElement + textContent, so an
+  // artifact-derived title can NEVER become live markup (no innerHTML sink; the
+  // shell CSP's Trusted Types would throw on one anyway). Each entry is an <a>
+  // whose href is the real shell URL (a working no-JS fallback / open-in-new-tab
+  // target); a primary click is intercepted and swaps the iframe in place.
+  var navEl = document.getElementById("gp-nav");
+  var linkBySlug = Object.create(null);
+  for (var k = 0; k < NAV.length; k++) {{
+    var item = NAV[k];
+    if (!item || typeof item.slug !== "string") continue;
+    var a = document.createElement("a");
+    a.setAttribute("href", "/" + SPACE + "/" + item.slug);
+    a.setAttribute("data-slug", item.slug);
+    a.textContent = (typeof item.title === "string" && item.title !== "") ? item.title : item.slug;
+    navEl.appendChild(a);
+    linkBySlug[item.slug] = a;
+  }}
+  function paintActive() {{
+    for (var s in linkBySlug) {{
+      if (s === current) linkBySlug[s].setAttribute("aria-current", "page");
+      else linkBySlug[s].removeAttribute("aria-current");
+    }}
+  }}
+  paintActive();
 
   // --- Theme: the trusted shell owns the toggle; a fragment artifact applies it
   // via bridge.js. The correct theme is ALSO inlined at wrap time (the `?gp_theme=`
@@ -102,6 +172,41 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
   // Query string that inlines the theme at wrap time (auto is the default → omit).
   function themeQuery() {{ return theme === "auto" ? "" : ("?gp_theme=" + theme); }}
   paintToggle();
+
+  // --- The single validated navigation path. Used by BOTH the nav-chrome clicks
+  // and the postMessage bridge, so every swap goes through the same allowlist +
+  // grammar check and updates the chrome consistently. It only ever sets the
+  // iframe src to a same-space content URL for a KNOWN slug — no full reload, and
+  // the shell never leaves the trusted parent.
+  var validSlug = /^[a-z0-9][a-z0-9-]{{0,63}}$/;
+  function navigateTo(slug) {{
+    if (typeof slug !== "string" || slug.length > MAX_SLUG) return false;
+    if (!validSlug.test(slug) || !KNOWN_SET.has(slug)) return false;
+    current = slug;
+    // Inline the current theme into the swapped artifact so the new fragment wraps
+    // with the right `data-theme` (no FOUC). The `load` handler re-sends it too.
+    frame.src = "/" + SPACE + "/_c/" + slug + themeQuery();
+    var t = TITLE_BY_SLUG[slug];
+    var shown = (typeof t === "string" && t !== "") ? t : (SPACE + " / " + slug);
+    titleEl.textContent = shown;   // textContent — never innerHTML
+    document.title = shown;
+    paintActive();
+    return true;
+  }}
+
+  // Nav-chrome clicks: a primary, unmodified click on a known entry swaps the
+  // iframe in place. Modified / non-primary clicks keep native behavior (the href
+  // opens the shell for that artifact in a new tab), and any unknown slug is left
+  // to the browser too.
+  navEl.addEventListener("click", function (event) {{
+    if (event.defaultPrevented) return;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var a = event.target && event.target.closest ? event.target.closest("a[data-slug]") : null;
+    if (!a) return;
+    var slug = a.getAttribute("data-slug");
+    if (navigateTo(slug)) event.preventDefault();
+  }}, false);
+
   // Re-apply the theme once the (possibly just-swapped) artifact has loaded — a
   // belt-and-braces follow-up to the inlined `?gp_theme` below.
   frame.addEventListener("load", sendTheme);
@@ -141,8 +246,6 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
     return true;
   }}
 
-  var validSlug = /^[a-z0-9][a-z0-9-]{{0,63}}$/;
-
   window.addEventListener("message", function (event) {{
     // 1. Source check — the ONLY trustworthy identity for a sandboxed frame
     //    (event.origin is the string "null" for every sandboxed frame).
@@ -176,16 +279,11 @@ pub fn render(space: &str, slug: &str, title: &str, known_slugs: &[&str], nonce:
       return;
     }}
     if (data.slug.length > MAX_SLUG) {{ stats.rejectedSize++; return; }}
-    if (!validSlug.test(data.slug) || !KNOWN_SET.has(data.slug)) {{
-      stats.rejectedSchema++;
-      return;
-    }}
-
+    // Route through the same validated navigation path as the nav chrome. It
+    // re-checks grammar + the KNOWN_SET allowlist, so a slug not in the artifact
+    // table is rejected here too.
+    if (!navigateTo(data.slug)) {{ stats.rejectedSchema++; return; }}
     stats.accepted++;
-    // Inline the current theme into the swapped artifact so the new fragment
-    // wraps with the right `data-theme` (no FOUC). The `load` handler above also
-    // re-sends the theme as a belt-and-braces follow-up.
-    frame.src = "/" + SPACE + "/_c/" + data.slug + themeQuery();
   }}, false);
 }})();
 </script>
@@ -225,40 +323,46 @@ fn html_attr_escape(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Build a nav table from bare slugs (title == slug) for the tests that don't
+    /// care about titles.
+    fn nav_of<'a>(slugs: &'a [&'a str]) -> Vec<(&'a str, &'a str)> {
+        slugs.iter().map(|s| (*s, *s)).collect()
+    }
+
     #[test]
     fn shell_has_null_origin_sandbox() {
-        let html = render("demo", "index", "", &["index"], "n0nce");
+        let html = render("demo", "index", "", &nav_of(&["index"]), "n0nce");
         assert!(html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#));
         assert!(!html.contains("allow-same-origin"));
     }
 
     #[test]
     fn shell_frames_content_route() {
-        let html = render("demo", "eval", "", &["eval"], "n0nce");
-        assert!(html.contains(r#"src="/demo/_c/eval""#));
+        let html = render("demo", "eval", "", &nav_of(&["eval"]), "n0nce");
+        assert!(html.contains(r#"data-src="/demo/_c/eval""#));
     }
 
     #[test]
     fn shell_validates_event_source() {
-        let html = render("demo", "index", "", &["index"], "n0nce");
+        let html = render("demo", "index", "", &nav_of(&["index"]), "n0nce");
         assert!(html.contains("event.source !== frame.contentWindow"));
     }
 
     #[test]
     fn shell_script_is_nonce_gated() {
-        let html = render("demo", "index", "", &["index"], "abc123");
+        let html = render("demo", "index", "", &nav_of(&["index"]), "abc123");
         assert!(html.contains(r#"<script nonce="abc123">"#));
     }
 
     #[test]
     fn shell_embeds_slugs_as_json_data() {
-        let html = render("demo", "index", "", &["index", "eval"], "n");
+        let html = render("demo", "index", "", &nav_of(&["index", "eval"]), "n");
         assert!(html.contains(r#"["index","eval"]"#));
     }
 
     #[test]
     fn shell_opens_reload_event_source() {
-        let html = render("demo", "index", "", &["index"], "n");
+        let html = render("demo", "index", "", &nav_of(&["index"]), "n");
         assert!(html.contains(r#"new EventSource("/_gp/reload")"#));
     }
 
@@ -266,7 +370,7 @@ mod tests {
     fn shell_uses_resolved_title_as_text() {
         // A provided title lands in the chrome as a JSON string literal + escaped
         // <title>, never as live markup.
-        let html = render("demo", "index", "Sales & Q3", &["index"], "n");
+        let html = render("demo", "index", "Sales & Q3", &nav_of(&["index"]), "n");
         assert!(html.contains("Sales &amp; Q3")); // server-side <title>, escaped
         // client textContent literal: `&` is JSON-for-script-encoded so it can't
         // close the <script> element — assert the encoded form is present and the
@@ -278,13 +382,13 @@ mod tests {
         assert!(!title_line.contains('&'));
         assert!(!title_line.contains("Sales & Q3"));
         // Empty title falls back to "space / slug".
-        let fallback = render("demo", "index", "", &["index"], "n");
+        let fallback = render("demo", "index", "", &nav_of(&["index"]), "n");
         assert!(fallback.contains("demo / index"));
     }
 
     #[test]
     fn shell_has_theme_toggle_and_messaging() {
-        let html = render("demo", "index", "", &["index"], "n");
+        let html = render("demo", "index", "", &nav_of(&["index"]), "n");
         // A toggle control exists in the trusted chrome…
         assert!(html.contains(r#"id="gp-theme-toggle""#));
         // …and the shell sends a low-authority theme message to the framed artifact.
@@ -297,18 +401,60 @@ mod tests {
     fn shell_navigation_carries_theme_query() {
         // A swapped iframe src inlines the current theme so the new fragment wraps
         // FOUC-free; `auto` omits the query.
-        let html = render("demo", "index", "", &["index"], "n");
-        assert!(html.contains(r#""/" + SPACE + "/_c/" + data.slug + themeQuery()"#));
-        assert!(html.contains(r#"gp_theme=""#) || html.contains("gp_theme="));
+        let html = render("demo", "index", "", &nav_of(&["index"]), "n");
+        assert!(html.contains(r#""/" + SPACE + "/_c/" + slug + themeQuery()"#));
+        assert!(html.contains("gp_theme="));
     }
 
     #[test]
     fn shell_escapes_injection_in_title_context() {
         // A hostile slug must not break out of the HTML title/attr context.
-        let html = render("demo", "a\"><script>x", "", &["a"], "n");
+        let html = render("demo", "a\"><script>x", "", &nav_of(&["a"]), "n");
         assert!(!html.contains("<script>x"));
         // A hostile *title* likewise cannot break out (escaped + JSON-encoded).
-        let html2 = render("demo", "index", "</title><script>evil()</script>", &["index"], "n");
+        let html2 = render("demo", "index", "</title><script>evil()</script>", &nav_of(&["index"]), "n");
         assert!(!html2.contains("<script>evil()"));
+    }
+
+    // --- Wave 4: nav chrome -------------------------------------------------
+
+    #[test]
+    fn shell_renders_nav_container_and_navigate_path() {
+        let html = render("demo", "index", "Home", &nav_of(&["index", "sales"]), "n");
+        // The nav container exists and is built client-side (no server-rendered
+        // artifact-title markup — the list is populated via createElement/textContent).
+        assert!(html.contains(r#"<nav class="gp-nav" id="gp-nav""#));
+        assert!(html.contains("createElement(\"a\")"));
+        assert!(html.contains(".textContent ="));
+        // The shared validated navigate path exists and both the nav click handler
+        // and the bridge use it.
+        assert!(html.contains("function navigateTo(slug)"));
+        assert!(html.contains("navEl.addEventListener(\"click\""));
+        assert!(html.contains("if (!navigateTo(data.slug))"));
+    }
+
+    #[test]
+    fn shell_nav_carries_titles_as_json_data_not_markup() {
+        // A hostile artifact TITLE in the nav table must be JSON-for-script encoded
+        // (so it can't close the <script>) and must NOT appear as raw markup
+        // anywhere in the document — the client inserts it via textContent.
+        let hostile = r#"<img src=x onerror=alert(1)>"#;
+        let html = render("demo", "index", "Home", &[("index", "Home"), ("evil", hostile)], "n");
+        // Raw, executable markup for the title is absent everywhere in the document.
+        assert!(!html.contains("<img src=x onerror"));
+        // The encoded form is present in the NAV data literal.
+        let nav_line = html.lines().find(|l| l.contains("var NAV =")).unwrap();
+        assert!(nav_line.contains("\\u003cimg"));
+        assert!(!nav_line.contains('<'));
+        assert!(!nav_line.contains('>'));
+    }
+
+    #[test]
+    fn shell_nav_navigate_is_allowlist_bounded() {
+        // navigateTo only ever swaps to a KNOWN slug via the content route; the
+        // grammar + KNOWN_SET checks are present.
+        let html = render("demo", "index", "", &nav_of(&["index", "sales"]), "n");
+        assert!(html.contains("!KNOWN_SET.has(slug)"));
+        assert!(html.contains(r#""/" + SPACE + "/_c/" + slug"#));
     }
 }

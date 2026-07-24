@@ -68,6 +68,14 @@ static FIXTURES: &[Fixture] = &[
         slug: "nav-b",
         html: NAV_B,
     },
+    Fixture {
+        slug: "nav-full",
+        html: NAV_FULL,
+    },
+    Fixture {
+        slug: "inject",
+        html: INJECT,
+    },
 ];
 
 /// Benign home artifact — links the real `base.css`, loads the real `charts.js`
@@ -298,6 +306,36 @@ const NAV_A: &str = r#"<h1>Nav A</h1>
 const NAV_B: &str = r#"<h1>Nav B</h1>
 <p>The Wave 3b bridge demo — page B.</p>
 <p><a id="to-a" href="nav-a.html">Back to A (relative + .html, intercepted)</a></p>
+"#;
+
+/// Wave 4 full-document cross-nav demo. A **full document** gets **no** injected
+/// `bridge.js` (the author owns the whole page), so its same-space link opts into
+/// the D1-sanctioned `target="_top"` top-navigation path instead of the iframe-swap
+/// bridge: a user-activated click navigates the whole tab to the sibling artifact's
+/// shell (`allow-top-navigation-by-user-activation`). The adversarial suite clicks
+/// `#to-a-top` and asserts the top window actually navigated to `/demo/nav-a`.
+const NAV_FULL: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>Nav Full (target=_top)</title></head><body>
+<h1>Nav Full</h1>
+<p>A full-document artifact — its cross-nav uses <code>target="_top"</code>.</p>
+<p><a id="to-a-top" href="/demo/nav-a" target="_top">Go to Nav A (full-document top-nav)</a></p>
+</body></html>
+"#;
+
+/// Wave 4 nav-injection probe target. Its `<title>` is entity-encoded so the
+/// server-side title resolver **decodes it to raw markup as TEXT** — the worst
+/// case for the trusted-parent nav: after resolution the title string literally
+/// contains `"><img src=x onerror=…>`. The parent must list it in the nav via
+/// `textContent` (never `innerHTML`), so it can neither execute nor break layout.
+/// The `onerror` sets a canary on whatever window parses it; the suite asserts the
+/// canary never fires in the trusted shell and no stray `<img>` appears in the nav.
+const INJECT: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8">
+<title>&quot;&gt;&lt;img src=x onerror=window.__navInjectionFired=true&gt;&lt;script&gt;window.__navInjectionFired=true&lt;/script&gt;</title>
+</head><body>
+<h1>Injection probe target</h1>
+<p>The hostile string lives in this artifact's title; the trusted nav must render it inert.</p>
+</body></html>
 "#;
 
 /// `/_gp/v1/*` pinned base libraries (Wave 2b).
