@@ -7,11 +7,13 @@
 //! and no interactive prompts. Paths are plain positional args — no hidden global
 //! state, so the commands compose.
 //!
-//! The three commands are two entry points into one server plus a browser opener:
+//! The commands are two server entry points, a browser opener, and a standalone
+//! data helper:
 //! * `serve <dir>` drives Phase 2 live directory serving (scan + watch + SSE).
 //! * `create <file>` builds a one-artifact space from a single file and serves it
 //!   live (its own single-file watch).
 //! * `open <space>` opens a served space's URL in the browser.
+//! * `data <file>` parses a legacy CSV/JSON/mbox file to JSON rows (no server).
 //!
 //! Fragment-vs-full-document detection is **not** re-implemented here: the content
 //! route classifies each artifact at serve time (`artifact_host::wrap`), so a
@@ -543,18 +545,24 @@ pub fn data(file: PathBuf, format: Option<String>, meta: bool, json: bool) {
         },
     };
 
-    // Read the file, bounded to the largest legacy limit (CSV = 50 MB). Each
-    // parser then enforces its own row/column/size caps.
+    // Read the file, bounded to a 50 MB safety cap. The parsers do not bound by
+    // byte count — csv/json/mbox each cap by rows and columns — so this read cap
+    // is the only byte bound; the errors below carry the parser's own message.
     let bytes = read_data_file(&file, json);
-    let parsed: Result<Dataset, String> = match fmt.as_str() {
+    // Errors carry a stable `(code, message)` so a UTF-8 failure keeps its own
+    // `not_utf8` code instead of collapsing into the generic `parse_failed`.
+    let parsed: Result<Dataset, (&'static str, String)> = match fmt.as_str() {
         "csv" => glasspad::data::csv::parse_csv(std::io::Cursor::new(&bytes), limits::MAX_CSV_BYTES)
-            .map_err(|e| e.to_string()),
-        "mbox" => glasspad::data::mbox::parse_mbox_bytes(&bytes).map_err(|e| e.to_string()),
+            .map_err(|e| ("parse_failed", e.to_string())),
+        "mbox" => {
+            glasspad::data::mbox::parse_mbox_bytes(&bytes).map_err(|e| ("parse_failed", e.to_string()))
+        }
         "json" => match std::str::from_utf8(&bytes) {
-            Ok(s) => glasspad::data::json::parse_json_str(s).map_err(|e| e.to_string()),
-            Err(_) => Err(format!(
-                "{} is not valid UTF-8 (JSON must be UTF-8)",
-                file.display()
+            Ok(s) => glasspad::data::json::parse_json_str(s)
+                .map_err(|e| ("parse_failed", e.to_string())),
+            Err(_) => Err((
+                "not_utf8",
+                format!("{} is not valid UTF-8 (JSON must be UTF-8)", file.display()),
             )),
         },
         // `--format` is a fixed enum and `detect_data_format` only yields these
@@ -563,7 +571,7 @@ pub fn data(file: PathBuf, format: Option<String>, meta: bool, json: bool) {
     };
     let rows = match parsed {
         Ok(r) => r,
-        Err(msg) => exit_error(json, 1, "parse_failed", &msg, None, None),
+        Err((code, msg)) => exit_error(json, 1, code, &msg, None, None),
     };
 
     let meta_val = if meta {
@@ -573,12 +581,15 @@ pub fn data(file: PathBuf, format: Option<String>, meta: bool, json: bool) {
     };
 
     if json {
+        // `warnings: []` matches the serve/create/open envelopes so a consumer can
+        // read the field unconditionally across commands.
         let mut payload = json!({
             "schema_version": SCHEMA_VERSION,
             "format": fmt,
             "path": file.display().to_string(),
             "row_count": rows.len(),
             "rows": rows,
+            "warnings": [],
         });
         if let Some(m) = &meta_val {
             // The envelope is a JSON object literal above, so this always succeeds.
@@ -592,7 +603,19 @@ pub fn data(file: PathBuf, format: Option<String>, meta: bool, json: bool) {
         emit_json_line(&payload);
     } else {
         // Bare rows on stdout (composable); human summary + optional meta on stderr.
-        let out = serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".to_string());
+        // A serialization failure is a system error, not empty/`[]` output — never
+        // pass off a truncated array as the real data.
+        let out = match serde_json::to_string_pretty(&rows) {
+            Ok(s) => s,
+            Err(e) => exit_error(
+                json,
+                2,
+                "serialization_failed",
+                &format!("cannot serialize parsed rows: {e}"),
+                None,
+                None,
+            ),
+        };
         println!("{out}");
         eprintln!(
             "parsed {} row{} from {} ({fmt})",
@@ -629,9 +652,9 @@ fn detect_data_format(file: &Path) -> Option<&'static str> {
     }
 }
 
-/// Read a data file into memory, bounded to the largest legacy limit (50 MB).
-/// Strict like `create`: a missing path, a directory, or an oversize file each
-/// exits with an informative envelope rather than a silent truncation.
+/// Read a data file into memory, bounded to a 50 MB safety cap. Strict like
+/// `create`: a missing path, a directory, a non-regular file, or an oversize
+/// file each exits with an informative envelope rather than a silent truncation.
 fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
     let meta = match std::fs::metadata(file) {
         Ok(m) => m,
@@ -659,6 +682,22 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
             "not_a_file",
             &format!(
                 "{} is a directory; `data` takes a single file",
+                file.display()
+            ),
+            Some(&file.display().to_string()),
+            None,
+        );
+    }
+    // Reject FIFOs / sockets / devices: like `create`, a named pipe reports a
+    // zero length (passing the size check) but would then block `open`/read
+    // forever. Only a regular file is servable.
+    if !meta.is_file() {
+        exit_error(
+            json,
+            1,
+            "not_a_file",
+            &format!(
+                "{} is not a regular file (FIFOs, sockets, and devices are not supported)",
                 file.display()
             ),
             Some(&file.display().to_string()),

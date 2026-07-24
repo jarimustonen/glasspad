@@ -24,6 +24,8 @@ commits:
   summary: Wave 4 nav chrome + same-space cross-nav (trusted parent), injection probe
 - hash: cc3ff85
   summary: Wave 4 /llm-review fixes — injection-probe broadening, shell script-src nonce-only, same-slug no-op, bidi strip, a11y
+- hash: 1b21d34a26e844ab3d4384315a49c4f6dd926680
+  summary: Wave 5 — remove section-DSL path, add glasspad data helper
 ---
 
 # Rewrite Glasspad as an HTML-artifact host

@@ -58,10 +58,10 @@ enum Commands {
     },
     /// Parse a legacy tabular file (CSV / JSON / mbox) to JSON rows on stdout.
     ///
-    /// A standalone helper for the old data formats: it parses the file with the
-    /// same limits the pre-rewrite server used and prints the rows as JSON (the
-    /// data channel), so a caller can reuse those inputs when authoring an
-    /// HTML artifact. It never starts a server.
+    /// A standalone helper for the old data formats: it parses the file (bounded
+    /// by a 50 MB read cap plus the parsers' own row/column limits) and prints the
+    /// rows as JSON (the data channel), so a caller can reuse those inputs when
+    /// authoring an HTML artifact. It never starts a server.
     Data {
         /// The data file to parse. Format is inferred from the extension
         /// (.csv / .json / .mbox|.eml) unless `--format` overrides it.
