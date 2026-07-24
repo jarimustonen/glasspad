@@ -52,17 +52,17 @@ pub fn render(space: &str, slug: &str, known_slugs: &[&str], nonce: &str) -> Str
   var SPACE = {space_json};
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
-  var MAX_BYTES = 4096;
+  var MAX_SLUG = 64;       // matches the server-side slug grammar
   var RATE_MAX = 20;       // messages...
   var RATE_WINDOW = 1000;  // ...per this many ms
 
   var frame = document.getElementById("gp-artifact");
+  var KNOWN_SET = new Set(KNOWN);
   // Nav chrome title inserted as TEXT (never innerHTML) — Trusted Types on.
   document.getElementById("gp-title").textContent = SPACE + " / " + SLUG;
 
   var stats = {{ accepted: 0, rejectedSource: 0, rejectedSize: 0, rejectedRate: 0, rejectedSchema: 0 }};
   window.__bridgeStats = stats;
-  window.__shellSecret = "SHELL-SECRET-" + Math.random().toString(36).slice(2);
 
   var recent = [];
   function rateOk() {{
@@ -73,29 +73,32 @@ pub fn render(space: &str, slug: &str, known_slugs: &[&str], nonce: &str) -> Str
     return true;
   }}
 
-  // Bridge state invalidated whenever the iframe navigates.
-  frame.addEventListener("load", function () {{ recent = []; }});
-
   var validSlug = /^[a-z0-9][a-z0-9-]{{0,63}}$/;
 
   window.addEventListener("message", function (event) {{
-    // 1. Source check — the ONLY trustworthy identity for a sandboxed frame.
+    // 1. Source check — the ONLY trustworthy identity for a sandboxed frame
+    //    (event.origin is the string "null" for every sandboxed frame).
     if (event.source !== frame.contentWindow) {{ stats.rejectedSource++; return; }}
 
-    // 2. Byte-size cap.
-    var raw;
-    try {{ raw = typeof event.data === "string" ? event.data : JSON.stringify(event.data); }}
-    catch (e) {{ stats.rejectedSchema++; return; }}
-    if (!raw || raw.length > MAX_BYTES) {{ stats.rejectedSize++; return; }}
-
-    // 3. Rate cap.
+    // 2. Rate cap FIRST — before any per-message work, so a flood cannot make us
+    //    do unbounded parsing/serialization on the shell's main thread.
     if (!rateOk()) {{ stats.rejectedRate++; return; }}
 
-    // 4. Fixed low-authority schema: {{type:"navigate", slug:<known>}}.
+    // 3. Reject transferred ports outright — the bridge is one-way, port
+    //    transfer would open a covert channel.
+    if (event.ports && event.ports.length) {{ stats.rejectedSchema++; return; }}
+
+    // 4. Fixed low-authority schema: exactly {{type:"navigate", slug:<known>}}.
+    //    No JSON.stringify (a hostile frame could send a huge structured-clone
+    //    graph); we only ever read two small, typed fields.
     var data = event.data;
-    if (!data || typeof data !== "object" || data.type !== "navigate"
-        || typeof data.slug !== "string" || !validSlug.test(data.slug)
-        || KNOWN.indexOf(data.slug) === -1) {{
+    if (data === null || typeof data !== "object" || Array.isArray(data)
+        || data.type !== "navigate" || typeof data.slug !== "string") {{
+      stats.rejectedSchema++;
+      return;
+    }}
+    if (data.slug.length > MAX_SLUG) {{ stats.rejectedSize++; return; }}
+    if (!validSlug.test(data.slug) || !KNOWN_SET.has(data.slug)) {{
       stats.rejectedSchema++;
       return;
     }}

@@ -85,6 +85,8 @@ struct ContentQuery {
     /// Diagnostic knob for the adversarial suite. `csp=noeval` serves the CSP
     /// **without** `'unsafe-eval'` — strictly tighter, never looser — so the
     /// suite can prove Vega-Lite's `new Function` truly needs it (design.md §4).
+    /// Honored **only in debug builds**; release builds ignore it entirely so no
+    /// query string can alter the frozen production policy.
     csp: Option<String>,
 }
 
@@ -101,7 +103,9 @@ async fn artifact_content(
     let Some(fixture) = fixtures::get(&space, &slug) else {
         return not_found();
     };
-    let allow_eval = q.csp.as_deref() != Some("noeval");
+    // The noeval knob only *tightens* the policy, and only in debug builds; the
+    // `&& cfg!(...)` keeps `q` referenced in every profile (no unused warning).
+    let allow_eval = !(cfg!(debug_assertions) && q.csp.as_deref() == Some("noeval"));
     let csp = headers::artifact_csp(host.port, allow_eval);
 
     let mut hmap = base_html_headers();
@@ -172,8 +176,15 @@ fn render_shell(host: &ArtifactHost, space: &str, slug: &str) -> Response {
 /// / `<link>` don't need CORS, but the requests that are CORS-gated get
 /// `Access-Control-Allow-Origin: *` (no credentials) per design.md §4.
 async fn gp_asset(Path(path): Path<String>) -> Response {
-    // Path-traversal guard: the wildcard is a single flat filename here.
-    if path.contains("..") || path.contains('/') {
+    // Positive-filter path guard: a pinned asset is a single flat filename of
+    // `[a-z0-9._-]`. Rejecting everything else (rather than blocklisting `..`/`/`)
+    // closes encoded-traversal and any future normalization surprise up front;
+    // the exact-match `gp_asset` lookup below is the real allowlist.
+    if path.is_empty()
+        || !path
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'_'))
+    {
         return not_found();
     }
     let Some((content_type, body)) = fixtures::gp_asset(&path) else {
@@ -201,6 +212,13 @@ fn base_html_headers() -> HeaderMap {
     h.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    // Dynamic, security-sensitive documents (per-response nonce, live artifact
+    // content): never cache, so a stale CSP/nonce or a `?csp` variant can't be
+    // replayed for a later request.
+    h.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
     );
     h
 }

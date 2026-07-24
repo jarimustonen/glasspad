@@ -26,11 +26,16 @@ local-fonts=(), magnetometer=(), microphone=(), midi=(), payment=(), \
 picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), \
 serial=(), usb=(), web-share=(), xr-spatial-tracking=()";
 
-/// The origin string the artifact CSP is allowed to name. Loopback only.
-/// Both `127.0.0.1` and `localhost` resolve to the same server, but the CSP
-/// names the numeric host the shell frames against, matching the iframe `src`.
-pub fn self_origin(port: u16) -> String {
-    format!("http://127.0.0.1:{port}")
+/// The loopback origins the artifact CSP names. The shell is reachable at both
+/// `http://127.0.0.1:PORT` and `http://localhost:PORT` (browsers treat them as
+/// distinct origins), and the iframe `src` is relative, so it inherits whichever
+/// one the user opened. The CSP therefore names **both** — otherwise opening the
+/// shell over `localhost` would leave `frame-ancestors`/`script-src` naming only
+/// `127.0.0.1`, and the browser would refuse to frame or run the artifact. Both
+/// resolve to the same loopback server, so this widens nothing externally.
+/// (`server::run` binds `127.0.0.1` only; `[::1]` is never actually served.)
+pub fn self_origins(port: u16) -> String {
+    format!("http://127.0.0.1:{port} http://localhost:{port}")
 }
 
 /// Build the artifact-content `Content-Security-Policy`.
@@ -55,22 +60,22 @@ pub fn self_origin(port: u16) -> String {
 /// can empirically demonstrate that Vega-Lite-style `new Function(...)` requires
 /// `'unsafe-eval'` (design.md §4). Production always serves `allow_eval = true`.
 pub fn artifact_csp(port: u16, allow_eval: bool) -> String {
-    let host = self_origin(port);
+    let hosts = self_origins(port);
     let eval = if allow_eval { " 'unsafe-eval'" } else { "" };
     format!(
         "sandbox allow-scripts allow-top-navigation-by-user-activation; \
          default-src 'none'; \
-         script-src 'unsafe-inline'{eval} {host}; \
-         style-src 'unsafe-inline' {host}; \
-         img-src {host} data:; \
-         font-src {host}; \
+         script-src 'unsafe-inline'{eval} {hosts}; \
+         style-src 'unsafe-inline' {hosts}; \
+         img-src {hosts} data:; \
+         font-src {hosts}; \
          connect-src 'none'; \
          object-src 'none'; \
          frame-src 'none'; \
          worker-src 'none'; \
          base-uri 'none'; \
          form-action 'none'; \
-         frame-ancestors {host}"
+         frame-ancestors {hosts}"
     )
 }
 
@@ -127,11 +132,15 @@ mod tests {
     }
 
     #[test]
-    fn artifact_csp_names_explicit_host_not_self() {
+    fn artifact_csp_names_explicit_hosts_not_self() {
         let csp = artifact_csp(3000, true);
+        // 'self' is useless under a null origin; script/img/style must name the
+        // explicit loopback origins — BOTH spellings the shell is reachable at.
         assert!(csp.contains("http://127.0.0.1:3000"));
-        // 'self' is useless under a null origin; script/img/style must name host.
-        assert!(csp.contains("script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:3000"));
+        assert!(csp.contains("http://localhost:3000"));
+        assert!(csp.contains("script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:3000 http://localhost:3000"));
+        assert!(csp.contains("frame-ancestors http://127.0.0.1:3000 http://localhost:3000"));
+        assert!(!csp.contains("'self'"));
     }
 
     #[test]
@@ -141,8 +150,8 @@ mod tests {
         assert!(csp.contains("form-action 'none'")); // form POST exfil
         assert!(csp.contains("object-src 'none'"));
         assert!(csp.contains("base-uri 'none'"));
-        // img-src must NOT be a wildcard — only host + data:
-        assert!(csp.contains("img-src http://127.0.0.1:3000 data:"));
+        // img-src must NOT be a wildcard — only the named hosts + data:
+        assert!(csp.contains("img-src http://127.0.0.1:3000 http://localhost:3000 data:"));
         assert!(!csp.contains("img-src *"));
     }
 

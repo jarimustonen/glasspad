@@ -19,49 +19,35 @@ use axum::{
 };
 
 /// Is this `Host` header one of the loopback names this server answers to?
-/// Accepts host with or without the port (some agents omit it), `127.0.0.1`,
-/// `localhost`, and IPv6 loopback. Anything else (an attacker's rebound name)
-/// is rejected.
+/// The server binds `127.0.0.1` only, so the sole valid hosts are `127.0.0.1`
+/// and `localhost`, optionally with our port. Parsing is strict: the name must
+/// match *exactly* (no trailing garbage), and a present port must be ours.
+/// Anything else — a rebound attacker name, a foreign port, IPv6, trailing
+/// junk like `[::1]evil` — is rejected. **Fails closed.**
 fn host_allowed(host: &str, port: u16) -> bool {
-    let host = host.trim();
-    // Strip a trailing :port if present (naive but fine for loopback names;
-    // IPv6 literals are wrapped in [] so their inner colons are not split here).
-    let (name, port_part) = if host.starts_with('[') {
-        match host.rfind(']') {
-            Some(end) => {
-                let name = &host[..=end];
-                let rest = &host[end + 1..];
-                let p = rest.strip_prefix(':');
-                (name, p)
-            }
-            None => (host, None),
-        }
-    } else {
-        match host.rsplit_once(':') {
-            Some((n, p)) => (n, Some(p)),
-            None => (host, None),
-        }
+    let (name, port_part) = match host.split_once(':') {
+        Some((n, p)) => (n, Some(p)),
+        None => (host, None),
     };
-
-    if let Some(p) = port_part {
-        // If a port is present it must be ours — a foreign port is not us.
-        if p.parse::<u16>() != Ok(port) {
-            return false;
-        }
+    // A present port must parse exactly to ours (rejects `:3000evil`, `:9999`).
+    if let Some(p) = port_part
+        && p.parse::<u16>() != Ok(port)
+    {
+        return false;
     }
-    matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+    matches!(name, "127.0.0.1" | "localhost")
 }
 
 /// Global guard: reject requests whose `Host` header names something other than
-/// this loopback server. A missing `Host` (non-browser tooling) is allowed —
-/// DNS rebinding is a browser attack and always carries a `Host`.
+/// this loopback server, **and** requests that omit or mangle it. A security
+/// allowlist fails closed: browsers always send a `Host`/`:authority`, and the
+/// CLI's `reqwest`/`curl` set it automatically — so nothing legitimate is lost.
 pub async fn host_guard(State(port): State<u16>, req: Request, next: Next) -> Response {
-    if let Some(host) = req.headers().get(header::HOST).and_then(|v| v.to_str().ok())
-        && !host_allowed(host, port)
-    {
-        return (StatusCode::MISDIRECTED_REQUEST, "bad Host header").into_response();
+    match req.headers().get(header::HOST).and_then(|v| v.to_str().ok()) {
+        Some(host) if host_allowed(host, port) => next.run(req).await,
+        Some(_) => (StatusCode::MISDIRECTED_REQUEST, "bad Host header").into_response(),
+        None => (StatusCode::BAD_REQUEST, "missing or invalid Host header").into_response(),
     }
-    next.run(req).await
 }
 
 /// Control-plane guard for the API: additionally reject a present `Origin` that
@@ -94,15 +80,20 @@ mod tests {
         assert!(host_allowed("localhost:3000", 3000));
         assert!(host_allowed("127.0.0.1", 3000));
         assert!(host_allowed("localhost", 3000));
-        assert!(host_allowed("[::1]:3000", 3000));
     }
 
     #[test]
-    fn host_rejects_rebinding_and_foreign_port() {
+    fn host_rejects_rebinding_foreign_port_and_malformed() {
         assert!(!host_allowed("evil.example.com", 3000));
         assert!(!host_allowed("evil.example.com:3000", 3000));
         assert!(!host_allowed("127.0.0.1:9999", 3000)); // foreign port
         assert!(!host_allowed("attacker.local:3000", 3000));
+        // Strict parsing: no trailing garbage, no IPv6, no junk port.
+        assert!(!host_allowed("[::1]:3000", 3000)); // IPv6 not served (v4 bind)
+        assert!(!host_allowed("[::1]evil", 3000));
+        assert!(!host_allowed("127.0.0.1:3000evil", 3000));
+        assert!(!host_allowed("localhost.evil.com", 3000));
+        assert!(!host_allowed("", 3000));
     }
 
     #[test]

