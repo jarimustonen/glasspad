@@ -2,13 +2,14 @@
 created: 2026-07-24
 updated: 2026-07-24
 type: bug
-status: in-progress
+status: fixed
 priority: normal
 commits:
 - hash: '8695354'
   summary: honour --json on skill --install-claude (envelope + error contract + tests)
 - hash: 3bd753a
   summary: apply llm-review findings (no-panic HOME, warnings[], atomic created, user-scope tests)
+closed: 2026-07-24
 ---
 
 # skill --install-claude ignores --json (emits plain text, not an envelope)
