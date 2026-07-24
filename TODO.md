@@ -20,23 +20,23 @@ line section-DSL (`src/spec/*`, `src/client/dashboard.js`) and the data parsers.
 
 ## ▶ Start here (next session)
 
-**First job: plan the waves.** Before spawning any coding worktree, turn the six
-phases below into a concrete **wave plan** and save it to
-`issues/html-artifact-host-rewrite/wave-plan.md`. Decide, per wave:
+**Phase 0 is done** — the wave plan exists at
+`issues/html-artifact-host-rewrite/wave-plan.md`. Read it first; it is the
+execution schedule (5 waves), and `plan.md` + `design.md` are the *what* and the
+security model it implements.
 
-- sequencing and dependencies (what must land before what);
-- what can run in parallel vs. what is strictly serial;
-- per-wave acceptance criteria / definition of done;
-- merge policy per wave (see below).
+**Next job: Wave 1 — Phase 1 (security contract + iframe shell).** Spawn it as
+an **interactive** worktree (`/worktree-code`), foreground, human-reviewed — it
+is the security gate for the whole rewrite, no auto-merge, merged by the user via
+`/worktree-merge`. Its definition-of-done (adversarial browser test suite,
+Vega-Lite `'unsafe-eval'` question, clean build/clippy/browser) is in the wave
+plan under "Wave 1". Everything else branches from Wave 1's landed result.
 
-Do this as a short planning round first (read `plan.md` + `design.md`, then
-write `wave-plan.md`). Only after the wave plan exists, start **Phase 1** as the
-first coding worktree.
-
-**Merge policy.** Phase 1 is **interactive** (`/worktree-code`) — it is the
-security gate for the whole rewrite, so it gets human review before it lands, no
-auto-merge. Later, mechanical phases may run autonomously (`/worktree-spinoff`,
-self-merging) once the wave plan says they're low-risk.
+**Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
+Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
+--headless`, self-merging) with `/llm-review` in the brief for every unit that
+touches production/security code. Confirm the "revisit gate" (units disjoint on
+the shared axum router) before running any parallel wave.
 
 ## Round plan (one worktree per phase, in order)
 
