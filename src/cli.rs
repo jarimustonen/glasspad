@@ -744,7 +744,13 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
 
 /// `glasspad skill` — print the companion `SKILL.md`, or install it into a Claude
 /// Code skills directory (`--install-claude`, `--user` for `~/.claude`).
-pub fn skill(install_claude: bool, user: bool) {
+///
+/// Under `--json`, an install emits the AI-first §10 success envelope
+/// (`{schema_version, installed, scope, path, created, cli_version}`); the error
+/// path (e.g. no project-level `.claude/`) uses the shared [`exit_error`] contract
+/// (structured error on stderr, non-zero exit). The bare, non-install `skill`
+/// stays a pure content dump on stdout in both modes.
+pub fn skill(install_claude: bool, user: bool, json: bool) {
     let skill_content = include_str!("skill.md");
 
     if install_claude || user {
@@ -755,24 +761,47 @@ pub fn skill(install_claude: bool, user: bool) {
         } else {
             let claude_dir = PathBuf::from(".claude");
             if !claude_dir.exists() {
-                eprintln!("error: .claude/ directory not found in current directory");
-                eprintln!("Are you in a project root? Use --user for user-level install.");
-                std::process::exit(1);
+                exit_error(
+                    json,
+                    1,
+                    "claude_dir_not_found",
+                    ".claude/ directory not found in current directory. \
+                     Are you in a project root? Use --user for a user-level install.",
+                    None,
+                    None,
+                );
             }
             claude_dir
         };
 
         let dir = base.join("skills/glasspad");
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| {
-            eprintln!("error: creating directory: {e}");
-            std::process::exit(2);
-        });
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            exit_error(json, 2, "io_error", &format!("creating directory: {e}"), None, None);
+        }
         let path = dir.join("SKILL.md");
-        std::fs::write(&path, skill_content).unwrap_or_else(|e| {
-            eprintln!("error: writing skill: {e}");
-            std::process::exit(2);
-        });
-        println!("Installed skill to {}", path.display());
+        // Snapshot existence before the write so the caller can tell a fresh
+        // install (created=true) from an in-place refresh (overwritten).
+        let created = !path.exists();
+        if let Err(e) = std::fs::write(&path, skill_content) {
+            exit_error(json, 2, "io_error", &format!("writing skill: {e}"), None, None);
+        }
+
+        if json {
+            // Prefer the canonical absolute path (the file now exists, so this
+            // resolves), falling back to the join if canonicalization fails.
+            let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let payload = json!({
+                "schema_version": SCHEMA_VERSION,
+                "installed": true,
+                "scope": if user { "user" } else { "project" },
+                "path": resolved.display().to_string(),
+                "created": created,
+                "cli_version": env!("CARGO_PKG_VERSION"),
+            });
+            emit_json_line(&payload);
+        } else {
+            println!("Installed skill to {}", path.display());
+        }
     } else {
         print!("{skill_content}");
     }

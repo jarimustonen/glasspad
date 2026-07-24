@@ -94,6 +94,6 @@ async fn main() {
         Commands::Create { file, name, port } => cli::create(file, name, port, json).await,
         Commands::Open { space, port, no_browser } => cli::open(space, port, json, no_browser),
         Commands::Data { file, format, meta } => cli::data(file, format, meta, json),
-        Commands::Skill { install_claude, user } => cli::skill(install_claude, user),
+        Commands::Skill { install_claude, user } => cli::skill(install_claude, user, json),
     }
 }
