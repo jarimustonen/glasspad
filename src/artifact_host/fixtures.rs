@@ -257,10 +257,14 @@ const PM_ABUSE: &str = r#"<!doctype html>
   send({ type: "delete-everything" });
   send({ foo: "bar" });
   send("not-an-object");
-  // Rapid-fire burst — over the rate cap.
-  for (var i = 0; i < 200; i++) send({ type: "navigate", slug: "index" });
+  // Rapid-fire burst — over the rate cap. Target THIS artifact's own slug so it is
+  // a same-slug no-op (the shell frames pm-abuse): the parent does NOT swap the
+  // iframe, so the flooding window stays live and the RATE CAP is what bounds it
+  // (a cross-slug flood is instead contained by the swap invalidating this window —
+  // both hold, but this keeps the rate-cap path under test).
+  for (var i = 0; i < 200; i++) send({ type: "navigate", slug: "pm-abuse" });
   // A single well-formed message (the one legitimate shape).
-  send({ type: "navigate", slug: "eval" });
+  send({ type: "navigate", slug: "pm-abuse" });
   var result = { kind: "pm-abuse", sent: true };
   window.__gpResult = result;
 })();

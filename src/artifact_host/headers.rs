@@ -85,12 +85,19 @@ pub fn artifact_csp(port: u16, allow_eval: bool) -> String {
 
 /// Trusted-shell CSP. First-party chrome, so `'self'` is meaningful here.
 /// A per-response `nonce` authorizes the shell's own inline bridge script — no
-/// blanket `'unsafe-inline'`. Trusted Types is required so any accidental
-/// `innerHTML` sink throws instead of executing artifact-derived text (§6).
+/// blanket `'unsafe-inline'`. **`script-src` names only the nonce, not `'self'`**:
+/// the shell loads no same-origin script *file* (its only script is the inline,
+/// nonce-authorized one), and `'self'` would otherwise authorize a parser-created
+/// `<script src="/{space}/assets/attacker.js">` — agent-authored content on the
+/// same origin — if any markup injection into the shell ever appeared. Dropping it
+/// is strictly tighter and shrinks the injection blast radius (Trusted Types does
+/// not stop parser-created `<script src>`). Trusted Types is required so any
+/// accidental `innerHTML` sink throws instead of executing artifact-derived
+/// text (§6); with no default policy defined, that throw is active today.
 pub fn shell_csp(nonce: &str) -> String {
     format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{nonce}'; \
+         script-src 'nonce-{nonce}'; \
          style-src 'self' 'unsafe-inline'; \
          img-src 'self' data:; \
          connect-src 'self'; \
@@ -177,9 +184,12 @@ mod tests {
     #[test]
     fn shell_csp_uses_nonce_and_trusted_types() {
         let csp = shell_csp("abc123");
-        // Script is nonce-gated — no 'unsafe-inline' in the script-src directive.
-        assert!(csp.contains("script-src 'self' 'nonce-abc123'"));
-        assert!(!csp.contains("script-src 'self' 'unsafe-inline'"));
+        // Script is nonce-gated — no 'unsafe-inline', and NO 'self' either (the
+        // shell loads no same-origin script file; 'self' would authorize an
+        // agent-authored /{space}/assets/*.js if markup injection ever appeared).
+        assert!(csp.contains("script-src 'nonce-abc123'"));
+        assert!(!csp.contains("script-src 'self'"));
+        assert!(!csp.contains("'unsafe-inline' 'nonce"));
         assert!(csp.contains("require-trusted-types-for 'script'"));
         assert!(csp.contains("frame-ancestors 'none'"));
     }

@@ -477,9 +477,10 @@ fn apply_manifest(text: &str, path: &Path, space: &mut Space) -> Result<(), Scan
     let m: Manifest =
         serde_yaml::from_str(text).map_err(|e| ScanError::Manifest(path.to_path_buf(), e.to_string()))?;
     if let Some(t) = m.title {
-        let t = decode_entities(t.trim());
+        let t = strip_unsafe_display_chars(&decode_entities(t.trim()));
+        let t = t.trim();
         if !t.is_empty() {
-            space.title = Some(bound_chars(&t, MAX_TITLE_CHARS));
+            space.title = Some(bound_chars(t, MAX_TITLE_CHARS));
         }
     }
     // Record the requested nav order; `finalize` reconciles it against reality.
@@ -617,8 +618,12 @@ fn extract_element_text(html: &str, tag: &str) -> Option<String> {
                 }
                 let content_end = find_close_tag(&lower, content_start, tag)?;
                 let raw = &html[content_start..content_end];
-                // Decode entities BEFORE collapsing whitespace, so `&nbsp;` folds.
-                let text = collapse_ws(decode_entities(&strip_tags(raw))).trim().to_string();
+                // Decode entities BEFORE collapsing whitespace, so `&nbsp;` folds;
+                // then strip invisible/bidi chars that could reorder or spoof the
+                // visible label (it lands in the trusted nav + `document.title`).
+                let text = strip_unsafe_display_chars(&collapse_ws(decode_entities(&strip_tags(raw))))
+                    .trim()
+                    .to_string();
                 if text.is_empty() {
                     return None;
                 }
@@ -710,6 +715,32 @@ fn collapse_ws(s: String) -> String {
         }
     }
     out
+}
+
+/// Remove characters that render invisibly or reorder surrounding text. A
+/// resolved title is inserted into the **trusted** nav chrome (as `textContent`)
+/// and set as `document.title`; it can never execute, but a bidi override
+/// (`U+202E`) or zero-width run could reorder/spoof the visible label or the tab
+/// title. These are stripped at resolution time so both the `<title>` and the nav
+/// see a clean string. Ordinary whitespace controls are already folded to spaces
+/// by `collapse_ws`; this targets the *non*-whitespace controls, the bidi
+/// embeddings/overrides/isolates, and the zero-width/BOM marks.
+fn strip_unsafe_display_chars(s: &str) -> String {
+    s.chars().filter(|&c| !is_unsafe_display_char(c)).collect()
+}
+
+fn is_unsafe_display_char(c: char) -> bool {
+    matches!(c,
+        // C0 controls (non-whitespace) + DEL. Whitespace controls (U+0009..U+000D)
+        // are left to collapse_ws; the rest have no place in a display label.
+        '\u{0000}'..='\u{0008}' | '\u{000e}'..='\u{001f}' | '\u{007f}'
+        // C1 controls.
+        | '\u{0080}'..='\u{009f}'
+        // Bidi embeddings / overrides / isolates (LRE/RLE/PDF/LRO/RLO, LRI..PDI).
+        | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        // Directional marks, zero-width space/non-joiner/joiner, word joiner, BOM.
+        | '\u{200b}'..='\u{200f}' | '\u{2060}' | '\u{feff}'
+    )
 }
 
 /// Bound a string to `max` chars (not bytes) without splitting a char.
@@ -895,6 +926,27 @@ mod tests {
         );
         // Non-ASCII everywhere, no title/h1 → None, still no panic.
         assert_eq!(resolve_title("\u{feff}just café ☕ text, no tags"), None);
+    }
+
+    #[test]
+    fn title_strips_bidi_and_zero_width_spoofing_chars() {
+        // A bidi override / zero-width run in a title can reorder or hide the
+        // visible label in the trusted nav; they must be stripped at resolution.
+        assert_eq!(
+            resolve_title("<title>Invoice \u{202e}txt.exe</title>"),
+            Some("Invoice txt.exe".to_string())
+        );
+        assert_eq!(
+            resolve_title("<title>a\u{200b}\u{200b}b\u{feff}c</title>"),
+            Some("abc".to_string())
+        );
+        // A non-whitespace C0 control is removed, not rendered.
+        assert_eq!(
+            resolve_title("<title>ok\u{0007}now</title>"),
+            Some("oknow".to_string())
+        );
+        // A title that is ONLY invisible chars collapses to nothing → None.
+        assert_eq!(resolve_title("<title>\u{202e}\u{200b}\u{feff}</title>"), None);
     }
 
     #[test]

@@ -25,13 +25,18 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   `?gp_theme=` so the wrap is FOUC-free. **Wave 4 — nav chrome:** renders a
   `<nav>` listing the space's artifacts from the server-resolved `(slug, title)`
   table, built **entirely client-side with `createElement` + `textContent`** (the
-  artifact-derived title never touches an HTML sink; Trusted Types would throw on
-  one). A single validated `navigateTo(slug)` path — grammar + `KNOWN_SET`
-  allowlist, same one the postMessage bridge uses — swaps the framed artifact in
-  place (no full reload) and updates the active entry + document title. A
-  full-document artifact's own links still fall back to `target="_top"` (the D1
-  top-nav path, author-controlled via `bridge.js`); the parent chrome never needs
-  it because the parent is not sandboxed.
+  artifact-derived title never touches an HTML sink; `require-trusted-types-for
+  'script'` with no default policy makes any accidental `innerHTML` throw). A
+  single validated `navigateTo(slug)` path — grammar + `KNOWN_SET` allowlist, same
+  one the postMessage bridge uses — swaps the framed artifact in place (no full
+  reload, same-slug is a no-op so a hostile child can't loop it) and updates the
+  active entry + document/iframe title. (URL-sync / deep-linking for in-place swaps
+  is deferred — see the wave's terminal report.) A full-document artifact gets
+  **no** injected `bridge.js`; its author writes native same-space links with
+  `target="_top"` (the D1 top-nav path). The parent chrome never needs it because
+  the parent is not sandboxed. Shell `script-src` names only the nonce (not
+  `'self'`) — the shell loads no same-origin script file, so this shrinks the
+  injection blast radius.
 - `wrap.rs` (Wave 3b) — **fragment detection + the bridge/theme injection point**.
   `is_fragment` is BOM/whitespace/comment-tolerant (a full document opens with
   `<!doctype>`/`<html …>`; anything else is a fragment). A fragment is wrapped
@@ -118,8 +123,8 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   chrome**: the trusted parent lists the space's artifacts and swaps the iframe in
   place on click (no reload, active entry marked), the **nav-injection probe** (a
   hostile artifact title renders as inert `textContent` — no execution, no element
-  nodes, no layout break), and full-document `target="_top"` cross-nav
-  (**40 checks — keep green**).
+  nodes anywhere in the chrome, no layout break), and full-document `target="_top"`
+  cross-nav (**41 checks — keep green**).
   Phase
   2 (Wave 2a): live-directory **server-side** probes — path traversal (browsers
   can't help here) and symlink escape are HTTP/exit-code checks against a real

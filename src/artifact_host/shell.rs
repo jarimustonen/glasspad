@@ -21,13 +21,15 @@
 //! resolves and hands down). Every list item is built **client-side with
 //! `createElement` + `textContent`** — the artifact-derived title never touches an
 //! HTML sink, so it can never break out of text context (Trusted Types would throw
-//! on any accidental `innerHTML` too). Clicking a list entry swaps the framed
-//! artifact **in place via the same validated navigate path** (no full reload); the
-//! shell never leaves the trusted parent, so its `frame-src 'self'` keeps
-//! containing whatever is framed. A full-document artifact's *own* internal links
-//! still fall back to `target="_top"` (author-controlled, via `bridge.js` — the
-//! D1-sanctioned top-nav path); the parent chrome itself never needs it because the
-//! parent is not sandboxed.
+//! on any accidental `innerHTML` too — `require-trusted-types-for 'script'` with
+//! no default policy makes every string→sink assignment throw). Clicking a list
+//! entry swaps the framed artifact **in place via the same validated navigate
+//! path** (no full reload); the shell never leaves the trusted parent, so its
+//! `frame-src 'self'` keeps containing whatever is framed. (URL-sync / deep-linking
+//! for in-place swaps is deferred — see the wave's terminal report.) A
+//! full-document artifact gets **no** injected `bridge.js` — its author writes
+//! native same-space links with `target="_top"`, the D1-sanctioned top-nav path;
+//! the parent chrome itself never needs it because the parent is not sandboxed.
 //!
 //! The inline script is authorized by a per-response nonce, not `'unsafe-inline'`.
 
@@ -92,14 +94,14 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
   nav.gp-nav a:hover {{ background:rgba(127,127,127,0.14); }}
   nav.gp-nav a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
   nav.gp-nav:empty {{ display:none; }}
-  iframe#gp-artifact {{ display:block; border:0; flex:1 1 auto; width:100%; }}
+  iframe#gp-artifact {{ display:block; border:0; flex:1 1 auto; width:100%; min-height:0; }}
 </style>
 </head><body>
 <header class="gp-chrome">
   <div class="gp-bar"><span id="gp-title"></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
   <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
 </header>
-<iframe id="gp-artifact"
+<iframe id="gp-artifact" title="{esc_title}"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
         data-src="{esc_src}"></iframe>
 <script nonce="{nonce}">
@@ -129,20 +131,25 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
   // --- Nav list: built entirely with createElement + textContent, so an
   // artifact-derived title can NEVER become live markup (no innerHTML sink; the
   // shell CSP's Trusted Types would throw on one anyway). Each entry is an <a>
-  // whose href is the real shell URL (a working no-JS fallback / open-in-new-tab
-  // target); a primary click is intercepted and swaps the iframe in place.
+  // whose href is the real shell URL — a meaningful open-in-new-tab / modified-
+  // click target (the shell needs JS to run, so this is NOT a no-JS fallback); a
+  // primary click is intercepted and swaps the iframe in place. Built into a
+  // DocumentFragment and attached once (a single layout pass, not one per entry).
   var navEl = document.getElementById("gp-nav");
   var linkBySlug = Object.create(null);
+  var navFrag = document.createDocumentFragment();
   for (var k = 0; k < NAV.length; k++) {{
     var item = NAV[k];
     if (!item || typeof item.slug !== "string") continue;
     var a = document.createElement("a");
     a.setAttribute("href", "/" + SPACE + "/" + item.slug);
     a.setAttribute("data-slug", item.slug);
+    a.setAttribute("rel", "noopener");
     a.textContent = (typeof item.title === "string" && item.title !== "") ? item.title : item.slug;
-    navEl.appendChild(a);
-    linkBySlug[item.slug] = a;
+    navFrag.appendChild(a);
+    linkBySlug[item.slug] = a;   // last wins if the server ever sent a dup slug
   }}
+  navEl.appendChild(navFrag);
   function paintActive() {{
     for (var s in linkBySlug) {{
       if (s === current) linkBySlug[s].setAttribute("aria-current", "page");
@@ -177,19 +184,32 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
   // and the postMessage bridge, so every swap goes through the same allowlist +
   // grammar check and updates the chrome consistently. It only ever sets the
   // iframe src to a same-space content URL for a KNOWN slug — no full reload, and
-  // the shell never leaves the trusted parent.
+  // the shell never leaves the trusted parent (its `frame-src 'self'` keeps
+  // containing whatever is framed).
+  //
+  // The shell's own top-level URL is intentionally NOT updated on an in-place swap
+  // (no `history.pushState`): syncing it means also owning Back/Forward, and an
+  // iframe navigation adds its own session-history entry that entangles with a
+  // pushState in browser-dependent ways. Deep-linking / URL-sync is deferred (see
+  // the terminal report) rather than shipped fragile in trusted parent code.
   var validSlug = /^[a-z0-9][a-z0-9-]{{0,63}}$/;
   function navigateTo(slug) {{
     if (typeof slug !== "string" || slug.length > MAX_SLUG) return false;
     if (!validSlug.test(slug) || !KNOWN_SET.has(slug)) return false;
+    // Same-slug is a validated no-op: it must NOT re-assign frame.src (that would
+    // reload the artifact) — a hostile child posting navigate-to-self on load would
+    // otherwise loop up to the rate cap. Return true so a nav click still
+    // preventDefault()s and a bridge message still counts as accepted.
+    if (slug === current) return true;
     current = slug;
+    var t = TITLE_BY_SLUG[slug];
+    var shown = (typeof t === "string" && t !== "") ? t : (SPACE + " / " + slug);
     // Inline the current theme into the swapped artifact so the new fragment wraps
     // with the right `data-theme` (no FOUC). The `load` handler re-sends it too.
     frame.src = "/" + SPACE + "/_c/" + slug + themeQuery();
-    var t = TITLE_BY_SLUG[slug];
-    var shown = (typeof t === "string" && t !== "") ? t : (SPACE + " / " + slug);
     titleEl.textContent = shown;   // textContent — never innerHTML
     document.title = shown;
+    frame.setAttribute("title", shown);
     paintActive();
     return true;
   }}
@@ -456,5 +476,43 @@ mod tests {
         let html = render("demo", "index", "", &nav_of(&["index", "sales"]), "n");
         assert!(html.contains("!KNOWN_SET.has(slug)"));
         assert!(html.contains(r#""/" + SPACE + "/_c/" + slug"#));
+    }
+
+    #[test]
+    fn shell_nav_title_encodes_script_terminator_and_line_separators() {
+        // A title that tries to close the <script> element or inject a line
+        // separator (both legal in HTML, illegal in a JS string literal) must be
+        // fully neutralized in the NAV data literal — mixed-case `</ScRiPt>`, the
+        // `<`/`>`/`&` bytes, and U+2028/U+2029.
+        let hostile = "</ScRiPt><b>&\u{2028}\u{2029}";
+        let html = render("demo", "index", "Home", &[("index", "Home"), ("evil", hostile)], "n");
+        // No raw `</script>` (any case) survives to close the shell's own script.
+        assert!(!html.to_ascii_lowercase().contains("</script><b>"));
+        let nav_line = html.lines().find(|l| l.contains("var NAV =")).unwrap();
+        // Encoded, not raw: no bare `<`/`>`/U+2028/U+2029 in the data literal.
+        assert!(!nav_line.contains('<'));
+        assert!(!nav_line.contains('>'));
+        assert!(!nav_line.contains('\u{2028}'));
+        assert!(!nav_line.contains('\u{2029}'));
+        assert!(nav_line.contains("\\u003c/ScRiPt")); // the terminator is <-escaped
+        assert!(nav_line.contains("\\u2028") && nav_line.contains("\\u2029"));
+    }
+
+    #[test]
+    fn shell_renders_with_empty_nav_without_panicking() {
+        // A space with no artifacts (empty nav table) must render a valid shell —
+        // the nav loop is a no-op and paintActive iterates nothing.
+        let html = render("demo", "index", "", &[], "n");
+        assert!(html.contains(r#"<nav class="gp-nav" id="gp-nav""#));
+        assert!(html.contains(r#"var NAV = [];"#) || html.contains("var NAV = [ ]") || html.contains("var NAV = []"));
+    }
+
+    #[test]
+    fn shell_same_slug_navigate_is_a_no_op() {
+        // A same-slug navigate must be a validated no-op (return true, no frame
+        // reassignment) so a hostile child can't loop the iframe by re-posting the
+        // current slug on every load.
+        let html = render("demo", "index", "", &nav_of(&["index", "sales"]), "n");
+        assert!(html.contains("if (slug === current) return true;"));
     }
 }

@@ -395,23 +395,36 @@ async function main() {
       navSlugs.length >= 2 && navSlugs.includes("index") && navSlugs.includes("inject"),
       `slugs=${JSON.stringify(navSlugs).slice(0, 160)}`);
 
-    // Injection: the hostile-titled artifact is rendered as inert text.
+    // Injection: the hostile-titled artifact is rendered as inert text. The
+    // assertions inspect the WHOLE trusted chrome (not just the target anchor), so
+    // a parser breakout that planted a sibling/overlay anywhere in the header would
+    // be caught — not only the CSP-blocked inline-handler execution.
     const inj = await page.evaluate(() => {
       const a = document.querySelector('#gp-nav a[data-slug="inject"]');
       return {
         fired: window.__navInjectionFired === true,
-        hasImg: !!(a && a.querySelector && a.querySelector("img,script")),
+        // No unexpected element node anywhere in the trusted chrome (nav is anchors
+        // only; the header carries no img/script/style/iframe/form/meta/svg).
+        strayNavEls: document.querySelectorAll("#gp-nav :not(a)").length,
+        strayHeaderEls: document.querySelectorAll(
+          "header.gp-chrome img, header.gp-chrome script, header.gp-chrome style, " +
+          "header.gp-chrome iframe, header.gp-chrome form, header.gp-chrome meta, " +
+          "header.gp-chrome svg, header.gp-chrome object").length,
+        // No duplicate critical ids (an id-clobbering breakout would add one).
+        dupIds: document.querySelectorAll("#gp-nav").length !== 1 ||
+                document.querySelectorAll("#gp-title").length !== 1 ||
+                document.querySelectorAll("#gp-artifact").length !== 1,
+        anchorChildEls: a ? a.childElementCount : -1,
         // textContent carries the raw hostile string verbatim (proof it's TEXT,
         // not parsed markup): the `<img …>` survives only as characters.
         textHasRawMarkup: !!(a && /<img /i.test(a.textContent) && /onerror=/i.test(a.textContent)),
-        childElementCount: a ? a.childElementCount : -1,
       };
     });
     check("nav-injection: hostile artifact title did NOT execute in the trusted parent",
       inj.fired === false, `__navInjectionFired=${inj.fired}`);
-    check("nav-injection: hostile title produced no element nodes in the nav (textContent, not innerHTML)",
-      inj.hasImg === false && inj.childElementCount === 0,
-      `hasImg=${inj.hasImg} childElementCount=${inj.childElementCount}`);
+    check("nav-injection: no stray element nodes anywhere in the trusted chrome (textContent, not innerHTML)",
+      inj.strayNavEls === 0 && inj.strayHeaderEls === 0 && inj.anchorChildEls === 0 && inj.dupIds === false,
+      `strayNav=${inj.strayNavEls} strayHeader=${inj.strayHeaderEls} anchorChildren=${inj.anchorChildEls} dupIds=${inj.dupIds}`);
     check("nav-injection: the hostile markup survives only as inert TEXT in the nav label",
       inj.textHasRawMarkup === true, "textContent should contain the raw <img …> as characters");
 
@@ -419,6 +432,7 @@ async function main() {
     const frameHas = (slug) =>
       page.frames().some((f) => new RegExp(`/demo/_c/${slug}(\\?|$)`).test(f.url()));
     const parentUrlBefore = page.url();
+    await page.evaluate(() => { window.__shellNotReloaded = true; }); // wiped by any full reload
     await page.click('#gp-nav a[data-slug="eval"]');
     await page.waitForFunction(
       () => document.getElementById("gp-artifact").getAttribute("src") &&
@@ -427,10 +441,14 @@ async function main() {
     check("nav-chrome: clicking a nav entry swapped the framed artifact in place",
       frameHas("eval"), "iframe src should be /demo/_c/eval");
     check("nav-chrome: parent nav navigation did NOT reload the trusted shell",
-      page.url() === parentUrlBefore, `url=${page.url()}`);
+      (await page.evaluate(() => window.__shellNotReloaded === true)) && page.url() === parentUrlBefore,
+      `sentinel survived, url=${page.url()}`);
     check("nav-chrome: the active nav entry is marked aria-current",
       await page.evaluate(() =>
         document.querySelector('#gp-nav a[data-slug="eval"]').getAttribute("aria-current") === "page"));
+    check("nav-chrome: the previously-active entry cleared its aria-current (single active)",
+      await page.evaluate(() =>
+        document.querySelectorAll('#gp-nav a[aria-current="page"]').length === 1));
   }
 
   // ---------------------------------------------------------------------
