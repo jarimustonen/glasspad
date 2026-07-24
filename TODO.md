@@ -30,11 +30,11 @@ granted (`AGENTS.md`). On `master`: security gate, space model + live serving,
 base libs (`base.css`/`charts.js`/`bridge.js`/`manifest.json`), legacy v0.1
 surface removed (D2). Suite green: 31 browser checks + Wave 2a probes + vega/eval;
 all cargo tests pass.
-**Next job: Wave 3 batch 2 — 3a CLI** (`serve`/`create`/`open`, fragment-vs-full-
-doc detection), then **Wave 4** (nav chrome) → **Wave 5** (final removals:
-`src/spec/*`, `dashboard.js`, data parsers → `glasspad data`). `structured-api-
-errors` is moot now `/api/pads` is gone; the CLI error contract follows
-`AGENTS-AI-FIRST-CLI.md`.
+**Waves 1–3 all DONE** (incl. 3a CLI salvaged + reviewed). **Next job: Wave 4**
+(Phase 5 — nav chrome + same-space cross-nav, trusted parent code; D1 top-nav is
+KEPT and lands here). Then **Wave 5** (final removals: `src/spec/*`,
+`dashboard.js`, data parsers → `glasspad data`). `structured-api-errors` moot now
+`/api/pads` is gone.
 
 **Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
 Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
@@ -81,8 +81,11 @@ wave plan's merge policy).
   worker's Claude process hung mid-run (confirmed by user), dying after commit but
   before its merge/review. Branch was green (build/clippy/test/31-check suite all
   pass, CLI tests 73→78), fast-forwarded onto `master`, dead worktree/branch
-  cleaned up. **Deferred `/llm-review` now running** (run `01kya0jf8x`) to close
-  the review gate the hang skipped.
+  cleaned up. **Deferred `/llm-review` DONE** (`e04b296`/`49286c3`): 4-model
+  review, 9 FIX applied — detector now skips a leading `<?xml?>` prolog + accepts
+  form-feed delimiter; reject `--port 0`; validate space name before file I/O;
+  structured errors instead of panics; bounded reads. `cargo test` 332 green,
+  suite 31 + Wave 2a green, serve/create/open verified.
 - [x] **Phase 4 — Base libraries** under `/_gp/v1/`. **4-static DONE**
   (`6636493`/`85fe95d`): `base.css` (`--gp-*`, light/dark/auto), `charts.js`
   (`gp.chart` over vendored vega/vega-lite/vega-embed), `manifest.json`. **4-bridge
@@ -97,8 +100,9 @@ wave plan's merge policy).
   spec/data/security via the lib crate. DSL/parsers/client-renderer left for Wave 5.
   Binary clippy warnings dropped 33→5. Added `no_mutating_same_origin_surface_exists`
   invariant test.
-- [ ] **Phase 5 — Nav + cross-links.** Parent-frame nav chrome; bridge intercepts
-  same-space relative links.
+- [ ] **Phase 5 — Nav + cross-links** (Wave 4, in flight). Parent-frame nav
+  chrome; bridge intercepts same-space relative links; artifact text as
+  `textContent` under Trusted Types; injection probe added to the suite.
 - [ ] **Phase 6 — Removals + migration.** Coupling audit of the "reused" server
   pieces first; then delete `src/spec/*`, `src/client/dashboard.js`; **also delete
   the legacy `/{id}` pad renderer + `/api/pads` handlers (PO confirmed unused —
