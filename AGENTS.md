@@ -49,7 +49,9 @@ Generic operating policy for orchestrated work sessions (`/stint`) and worktrees
 
 **Deploy = localhost.** There is no remote deploy. "Deploy/verify" means: `cargo build`, restart the local server, create a new pad, and confirm in the browser. The orchestrator owns this single build+restart when integrating a round.
 
-**Merge & review.** Interactive `/worktree-code` units are merged by the user via `/worktree-merge` after review. Autonomous units self-merge only when no user decision is required; anything ambiguous is surfaced to the orchestrator, not decided silently.
+**Standing autonomy (granted 2026-07-24).** The orchestrator has standing authority to **push the v0.2 rewrite forward without asking permission** — launch waves, spawn worktrees, merge landed units, deploy to localhost, and start the next wave, all autonomously. Work should keep moving; do not pause for go/no-go on routine wave launches, merges, or the localhost deploy. **Prefer spinoffs** (`/worktree-spinoff --headless`, self-merging) over interactive `/worktree-code` — including for the Wave 1 security gate — with `/llm-review` (+ `/assess-findings`) in the brief for any unit that touches production/security code. Still pause only for: a genuine fork where reasonable people disagree, something that cannot be done, or a bug fix/defer/not-a-bug decision (always the user's call).
+
+**Merge & review.** Autonomous spinoff units self-merge once their brief's review + adversarial tests pass and no user decision is required; anything genuinely ambiguous is surfaced to the orchestrator, not decided silently. (Interactive `/worktree-code` units, when used, are merged by the user via `/worktree-merge`.)
 
 **Main stays clean.** Commit issue/status/doc changes immediately; never leave `main` modified-but-uncommitted across a session boundary (parallel worktrees branch from `main`'s current state). Pushing is the user's call.
 
