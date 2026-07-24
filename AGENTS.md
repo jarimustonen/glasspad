@@ -47,9 +47,9 @@ Generic operating policy for orchestrated work sessions (`/stint`) and worktrees
 
 **Pre-authorized in any worktree** (no need to ask): read anything, `cargo build`, `cargo test`, `cargo clippy`, and `./test-browser.sh` (check `./test-browser.sh errors` first). Verifying a change end-to-end before merge is expected, not optional.
 
-**Deploy = localhost.** There is no remote deploy. "Deploy/verify" means: `cargo build`, restart the local server, create a new pad, and confirm in the browser. The orchestrator owns this single build+restart when integrating a round.
+**Deploy = localhost.** There is no remote deploy. "Deploy/verify" means: `cargo build`, `glasspad serve` a space, confirm the sandboxed artifact renders in the browser, and run `./test-security.sh` (41 checks + Wave 2a probes) as the regression gate. The orchestrator owns this single build+verify when integrating a round.
 
-**Standing autonomy (granted 2026-07-24).** The orchestrator has standing authority to **push the v0.2 rewrite forward without asking permission** — launch waves, spawn worktrees, merge landed units, deploy to localhost, and start the next wave, all autonomously. Work should keep moving; do not pause for go/no-go on routine wave launches, merges, or the localhost deploy. **Prefer spinoffs** (`/worktree-spinoff --headless`, self-merging) over interactive `/worktree-code` — including for the Wave 1 security gate — with `/llm-review` (+ `/assess-findings`) in the brief for any unit that touches production/security code. Still pause only for: a genuine fork where reasonable people disagree, something that cannot be done, or a bug fix/defer/not-a-bug decision (always the user's call).
+**Standing autonomy (granted 2026-07-24).** The orchestrator has standing authority to **push planned work forward without asking permission** — spawn worktrees, merge landed units, deploy to localhost, and start the next unit, all autonomously. Work should keep moving; do not pause for go/no-go on routine spawns, merges, or the localhost deploy. **Prefer spinoffs** (`/worktree-spinoff --headless`, self-merging) over interactive `/worktree-code`, with `/llm-review` (+ `/assess-findings`) in the brief for any unit that touches production/security code. Still pause only for: a genuine fork where reasonable people disagree, something that cannot be done, or a bug fix/defer/not-a-bug decision (always the user's call). (Originally granted to drive the v0.2 HTML-artifact-host rewrite, which completed 2026-07-24; the posture carries forward to subsequent rounds.)
 
 **Merge & review.** Autonomous spinoff units self-merge once their brief's review + adversarial tests pass and no user decision is required; anything genuinely ambiguous is surfaced to the orchestrator, not decided silently. (Interactive `/worktree-code` units, when used, are merged by the user via `/worktree-merge`.)
 
@@ -59,11 +59,25 @@ Generic operating policy for orchestrated work sessions (`/stint`) and worktrees
 
 ## Debugging rendered output
 
-Charts render client-side with Vega-Lite. JS is embedded at build time —
-after editing `src/client/dashboard.js`: `cargo build`, restart server,
-create a new pad.
+Glasspad is an **HTML-artifact host** (v0.2): the calling agent authors HTML in
+a directory and `glasspad serve ./dir` hosts each file in a null-origin
+sandboxed iframe. There is no content-DSL and no server-side renderer — the old
+`src/spec/*` + `src/client/dashboard.js` path was removed. The host internals
+live in **`src/artifact_host/`** (see its `AGENTS.md`).
 
-Use `./test-browser.sh` for browser automation (requires Brave > View >
+Base libraries are served under `/_gp/v1/`: `base.css` (the `--gp-*` design
+system), `charts.js` (`gp.chart(el, spec)` over Vega-Lite), `bridge.js`
+(auto-injected same-space nav + theme), `manifest.json`. After changing host
+code or a base lib: `cargo build`, restart `glasspad serve`, reload the space.
+
+**The security contract is the gate.** `./test-security.sh` is a self-contained
+Playwright suite (41 adversarial browser checks + Wave 2a space-model probes:
+per-channel exfil, sandbox-escape, direct-open, postMessage abuse, traversal/
+symlink, injection, vega/eval). Run it after any change to the host, headers,
+CSP, or bridge — it must stay green. Legacy data formats (CSV/JSON/mbox) parse
+via the optional `glasspad data` CLI helper, not the host.
+
+Use `./test-browser.sh` for ad-hoc browser automation (requires Brave > View >
 Developer > Allow JavaScript from Apple Events). Always check
 `./test-browser.sh errors` first.
 
