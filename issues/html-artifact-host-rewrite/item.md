@@ -10,6 +10,8 @@ slug: html-artifact-host-rewrite
 commits:
 - hash: 01c1498
   summary: Wave 1 security gate — sandbox host + CSP contract + adversarial suite
+- hash: 4969c2d
+  summary: Wave 1 review fixes — bridge/host-guard hardening, both-origin CSP, guard tests
 ---
 
 # Rewrite Glasspad as an HTML-artifact host
