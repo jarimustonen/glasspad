@@ -25,12 +25,13 @@ line section-DSL (`src/spec/*`, `src/client/dashboard.js`) and the data parsers.
 execution schedule (5 waves), and `plan.md` + `design.md` are the *what* and the
 security model it implements.
 
-**Next job: Wave 1 — Phase 1 (security contract + iframe shell).** Spawn it as
-an **interactive** worktree (`/worktree-code`), foreground, human-reviewed — it
-is the security gate for the whole rewrite, no auto-merge, merged by the user via
-`/worktree-merge`. Its definition-of-done (adversarial browser test suite,
-Vega-Lite `'unsafe-eval'` question, clean build/clippy/browser) is in the wave
-plan under "Wave 1". Everything else branches from Wave 1's landed result.
+**Wave 1 is DONE and landed on `master` (2026-07-24).** Standing autonomy is
+now granted (`AGENTS.md`): the orchestrator launches waves / merges / deploys
+without asking and prefers spinoffs. **Next job: Wave 2 — 2a (space model +
+live serving) ∥ 2b (static base assets under `/_gp/v1/`).** Both autonomous
+`/worktree-spinoff --headless`, self-merging, `/llm-review` in the brief.
+Revisit gate confirmed: `/_gp/v1/{*path}` is a stub route 2b populates without
+touching 2a's space-model router lines. Sequence the two merges (2a first).
 
 **Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
 Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
@@ -48,13 +49,21 @@ wave plan's merge policy).
 - [x] **Phase 0 — Wave plan.** `wave-plan.md` written (2026-07-23). Waves: 1=Phase 1
   (interactive gate); 2a∥2b=Phase 2 ∥ Phase 4-static; 3a∥3b=Phase 3 CLI ∥
   Phase 4-bridge; 4=Phase 5 nav; 5=Phase 6 removals. See the issue's `wave-plan.md`.
-- [ ] **Phase 1 — Security contract + iframe shell.** URL topology
-  (`/{space}/{slug}` shell, `/{space}/_c/{slug}` raw content, `/_gp/v1/*`);
-  artifact-response headers (`CSP: sandbox allow-scripts` + egress CSP naming the
-  host + `nosniff` + `Permissions-Policy` deny-list); null-origin iframe;
-  validated `postMessage` bridge (`event.source` check). **Ship the adversarial
-  browser test** (per-channel exfil, sandbox-escape, direct-open, postMessage
-  abuse). Verify what Vega-Lite needs (`'unsafe-eval'`?).
+- [x] **Phase 1 — Security contract + iframe shell.** DONE (2026-07-24,
+  commits `01c1498`/`4969c2d`/`4823d53`). Null-origin sandbox host + full
+  CSP/egress contract + control-plane guards, alongside the untouched v0.1 path.
+  `test-security.sh` = 21-check adversarial headless-Chromium suite (all pass) +
+  55 Rust contract/guard tests. Vega-Lite resolved: `'unsafe-eval'` required and
+  frozen into `script-src` (recorded `design.md §4`). `/llm-review` (Gemini 3.1
+  Pro, GPT-5.6-sol, Opus 4.7, DeepSeek v4 Pro) + `/assess-findings`: 9 FIX
+  applied, 3 design forks open (see below). **3 PO decisions pending** (none
+  block Wave 2; item 1 blocks Wave 3b/4):
+  1. `allow-top-navigation-by-user-activation` — click-gated top-nav residual;
+     keep (needed for Wave 3b full-doc nav) vs route all cross-nav through bridge.
+  2. Legacy `/{id}` pad renderer coexists unsandboxed same-origin (Wave 5 removes
+     it) — accept coexistence through Waves 1–4 vs pull its sandboxing forward.
+  3. Artifact CSP names whole loopback host, not just `/_gp/v1/` — consider a
+     separate asset origin (Wave 2a architecture decision).
 - [ ] **Phase 2 — Space model + live directory serving.** Snapshot scanner,
   slug grammar + collision/reserved-name rejection, asset routing + MIME + size
   limits, atomic rescan, filesystem watch + SSE reload.
