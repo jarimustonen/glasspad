@@ -30,11 +30,12 @@ granted (`AGENTS.md`). On `master`: security gate, space model + live serving,
 base libs (`base.css`/`charts.js`/`bridge.js`/`manifest.json`), legacy v0.1
 surface removed (D2). Suite green: 31 browser checks + Wave 2a probes + vega/eval;
 all cargo tests pass.
-**Waves 1–3 all DONE** (incl. 3a CLI salvaged + reviewed). **Next job: Wave 4**
-(Phase 5 — nav chrome + same-space cross-nav, trusted parent code; D1 top-nav is
-KEPT and lands here). Then **Wave 5** (final removals: `src/spec/*`,
-`dashboard.js`, data parsers → `glasspad data`). `structured-api-errors` moot now
-`/api/pads` is gone.
+**Waves 1–4 all DONE.** The new HTML-artifact host is complete and agent-usable
+end-to-end; suite at 41 browser checks + Wave 2a probes, all green. **Next & LAST
+job: Wave 5** (Phase 6 — final removals: coupling audit → delete `src/spec/*`,
+`src/client/dashboard.js`; move `src/data/*` → optional `glasspad data` helper;
+demote `src/security/sanitize.rs`; update `skill.md`/`README.md`/`DESIGN.md`).
+Precondition met (suite green on the new path). After Wave 5 the rewrite is done.
 
 **Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
 Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
@@ -100,9 +101,13 @@ wave plan's merge policy).
   spec/data/security via the lib crate. DSL/parsers/client-renderer left for Wave 5.
   Binary clippy warnings dropped 33→5. Added `no_mutating_same_origin_surface_exists`
   invariant test.
-- [ ] **Phase 5 — Nav + cross-links** (Wave 4, in flight). Parent-frame nav
-  chrome; bridge intercepts same-space relative links; artifact text as
-  `textContent` under Trusted Types; injection probe added to the suite.
+- [x] **Phase 5 — Nav + cross-links** DONE (Wave 4, `1d549a6`/`cc3ff85`/`d240e1c`).
+  Trusted-parent nav chrome lists the space's artifacts; shared validated
+  `navigateTo(slug)` (grammar + KNOWN_SET allowlist, reused by the bridge) swaps
+  the iframe with no reload; full-doc `target=_top`. Titles as `textContent` only
+  under Trusted Types; nonce-only shell `script-src`; bidi/control strip + a11y.
+  Injection probe added. Suite → 41 browser checks. 4-model review confirmed the
+  injection boundary sound.
 - [ ] **Phase 6 — Removals + migration.** Coupling audit of the "reused" server
   pieces first; then delete `src/spec/*`, `src/client/dashboard.js`; **also delete
   the legacy `/{id}` pad renderer + `/api/pads` handlers (PO confirmed unused —
