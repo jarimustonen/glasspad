@@ -53,6 +53,13 @@ pub async fn host_guard(State(port): State<u16>, req: Request, next: Next) -> Re
 /// Control-plane guard for the API: additionally reject a present `Origin` that
 /// is `null` or not one of our loopback origins. Requests with no `Origin`
 /// (CLI/curl) pass; browser cross-origin / sandboxed-frame requests do not.
+///
+/// **Currently unwired (Wave 3, decision D2):** its sole consumer was the v0.1
+/// `/api/pads` control surface, removed with the legacy routes. It is retained
+/// intact — not deleted — because it is the tested `Origin`-rejection primitive
+/// the Wave 3a artifact-host control/mutation surface will re-attach. `#[allow]`
+/// keeps it warning-free until then; do not weaken its logic.
+#[allow(dead_code)]
 pub async fn control_origin_guard(
     State(port): State<u16>,
     req: Request,
@@ -66,6 +73,9 @@ pub async fn control_origin_guard(
     next.run(req).await
 }
 
+// Called only by `control_origin_guard` (unwired since Wave 3) and its unit
+// test; retained alongside the guard for the Wave 3a control surface.
+#[allow(dead_code)]
 fn origin_allowed(origin: &str, port: u16) -> bool {
     origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}")
 }

@@ -1,14 +1,13 @@
+// The DSL/spec, data parsers, and security primitives live in the library crate
+// (`glasspad::{spec,data,security}`) — kept intact for Wave 5. The binary reaches
+// them through the lib rather than re-compiling them: with the legacy pad path
+// removed (Wave 3, design.md §10 / D2), only `cli` (data parsers) and
+// `artifact_host` (security::token) still consume them, so re-`mod`-ing the full
+// DSL into the binary would only manufacture dead-code warnings.
 mod artifact_host;
 mod cli;
-mod data;
 mod docs;
-mod models;
-mod renderer;
-mod routes;
-mod security;
 mod server;
-mod spec;
-mod store;
 
 use std::path::PathBuf;
 

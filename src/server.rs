@@ -4,17 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{
-    middleware,
-    routing::{get, post},
-    Router,
-};
+use axum::{middleware, Router};
 use tokio::net::TcpListener;
 
 use crate::artifact_host::space::{self, ScanError, Snapshot};
 use crate::artifact_host::{self, guards, ArtifactHost};
-use crate::routes::{api, render};
-use crate::store::PadStore;
 
 /// How often the (dependency-free) filesystem watcher polls the served directory
 /// for changes. 500 ms is imperceptible for a local edit-reload loop and avoids
@@ -22,46 +16,31 @@ use crate::store::PadStore;
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Build the complete, fully-guarded application router over a shared artifact
-/// host. Extracted so tests can exercise the middleware stack (Host / Origin
-/// guards) — `artifact_host::router` alone omits them, which would let the
-/// security gate pass with the guards absent or misordered.
-pub fn build_app_with_host(port: u16, store: Arc<PadStore>, host: Arc<ArtifactHost>) -> Router {
-    // --- v0.1 control API + legacy pad render (unchanged; removed in Wave 5) ---
-    // The control API is guarded per design.md §5: reject `Origin: null` and any
-    // foreign origin on control endpoints.
-    let control = Router::new()
-        .route("/api/pads", post(api::create_pad).get(api::list_pads))
-        .route(
-            "/api/pads/{id}",
-            get(api::get_pad)
-                .put(api::update_pad)
-                .delete(api::delete_pad),
-        )
-        .route_layer(middleware::from_fn_with_state(
-            port,
-            guards::control_origin_guard,
-        ))
-        .route("/{id}", get(render::get_pad_html))
-        .with_state(store);
-
+/// host. Extracted so tests can exercise the middleware stack (the global Host
+/// guard) — `artifact_host::router` alone omits it, which would let the security
+/// gate pass with the guard absent or misordered.
+///
+/// The v0.1 control API (`/api/pads`) and legacy `/{id}` pad renderer were
+/// removed in Wave 3 (design.md §10, decision D2): the only same-origin surface
+/// now is the sandboxed artifact host, so the sole coexistence risk it posed is
+/// closed.
+pub fn build_app_with_host(port: u16, host: Arc<ArtifactHost>) -> Router {
     // --- v0.2 HTML-artifact host (Wave 1 security gate + Wave 2a space model) ---
-    control
-        .merge(artifact_host::router(host))
+    artifact_host::router(host)
         // Global DNS-rebinding defense: validate the Host header on every route.
         .layer(middleware::from_fn_with_state(port, guards::host_guard))
 }
 
 /// Convenience for tests that don't serve a live directory (fixtures only).
 #[cfg(test)]
-pub fn build_app(port: u16, store: Arc<PadStore>) -> Router {
-    build_app_with_host(port, store, Arc::new(ArtifactHost::new(port)))
+pub fn build_app(port: u16) -> Router {
+    build_app_with_host(port, Arc::new(ArtifactHost::new(port)))
 }
 
 /// Serve, optionally rendering a live directory as a space (Wave 2a). Wave 3a
 /// formalizes the CLI surface (`serve ./dir`, fragment detection, `--json`); this
 /// is the minimal wiring Phase 2 needs to prove live serving end-to-end.
 pub async fn run_dir(port: u16, dir: Option<PathBuf>) {
-    let store = Arc::new(PadStore::new(port));
     let host = Arc::new(ArtifactHost::new(port));
 
     if let Some(dir) = dir {
@@ -77,7 +56,7 @@ pub async fn run_dir(port: u16, dir: Option<PathBuf>) {
         spawn_watcher(host.clone(), dir);
     }
 
-    let app = build_app_with_host(port, store, host);
+    let app = build_app_with_host(port, host);
 
     let addr = format!("127.0.0.1:{}", port);
     eprintln!("glasspad serving on http://{}", addr);
@@ -197,15 +176,59 @@ fn collect_level(dir: &Path, recurse: bool, out: &mut Vec<(PathBuf, bool, u64, i
 mod tests {
     use super::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::{Method, Request, StatusCode};
     use tower::util::ServiceExt;
 
     fn app() -> Router {
-        build_app(3000, Arc::new(PadStore::new(3000)))
+        build_app(3000)
     }
 
     async fn send(req: Request<Body>) -> StatusCode {
         app().oneshot(req).await.unwrap().status()
+    }
+
+    /// Wave 3 (D2) invariant: the legacy same-origin control surface is gone and
+    /// no *new* same-origin mutation endpoint has crept back in. This is what
+    /// makes it safe to have unwired `control_origin_guard` — there is nothing
+    /// state-mutating for it to protect. If a future wave adds a `POST`/`PUT`/
+    /// `DELETE` control route, this test fails until Origin protection is wired,
+    /// forcing the guard back on before the endpoint ships.
+    #[tokio::test]
+    async fn no_mutating_same_origin_surface_exists() {
+        // Neither the removed legacy `/api/pads` CRUD surface nor any mutating
+        // method against a live artifact route is *handled*: every one bounces
+        // with 404 (no such route) or 405 (the artifact routes are GET-only, so
+        // `/api/pads` now merely falls through to `/{space}/{slug}` and a
+        // mutating verb is rejected). A 2xx here would mean a same-origin write
+        // path exists — the thing the unwired `control_origin_guard` would need
+        // to protect. The invariant that keeps it safely unwired is: there is
+        // none.
+        let cases = [
+            (Method::GET, "/api/pads"),
+            (Method::POST, "/api/pads"),
+            (Method::PUT, "/api/pads/abc"),
+            (Method::DELETE, "/api/pads/abc"),
+            (Method::POST, "/demo/_c/index"),
+            (Method::PUT, "/demo/_c/index"),
+            (Method::DELETE, "/demo/_c/index"),
+            (Method::PATCH, "/demo/_c/index"),
+        ];
+        for (method, uri) in cases {
+            let s = send(
+                Request::builder()
+                    .method(method.clone())
+                    .uri(uri)
+                    .header("host", "127.0.0.1:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert!(
+                matches!(s, StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED),
+                "{method} {uri} was handled ({s}) — an unguarded same-origin \
+                 mutation surface may have been (re)introduced"
+            );
+        }
     }
 
     #[tokio::test]
@@ -248,45 +271,5 @@ mod tests {
         )
         .await;
         assert_eq!(s, StatusCode::MISDIRECTED_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn control_origin_guard_rejects_null_and_foreign_on_api() {
-        // Sandboxed-frame / cross-origin write carries Origin: null → rejected.
-        let s = send(
-            Request::post("/api/pads")
-                .header("host", "127.0.0.1:3000")
-                .header("origin", "null")
-                .header("content-type", "application/x-yaml")
-                .body(Body::from("spec_version: 1\ntitle: x\nsections: []\n"))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(s, StatusCode::FORBIDDEN);
-        let s = send(
-            Request::post("/api/pads")
-                .header("host", "127.0.0.1:3000")
-                .header("origin", "http://evil.example.com")
-                .header("content-type", "application/x-yaml")
-                .body(Body::from("spec_version: 1\ntitle: x\nsections: []\n"))
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(s, StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn control_origin_guard_allows_loopback_origin() {
-        // Same-loopback-origin request passes the Origin guard (content-type
-        // then drives the rest of the handler; we only assert it's not FORBIDDEN).
-        let s = send(
-            Request::get("/api/pads")
-                .header("host", "127.0.0.1:3000")
-                .header("origin", "http://127.0.0.1:3000")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(s, StatusCode::OK);
     }
 }

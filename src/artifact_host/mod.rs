@@ -43,7 +43,7 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
-use crate::security::token;
+use glasspad::security::token;
 use space::Snapshot;
 
 /// Shared state for the artifact host: the port (the CSP must name the explicit

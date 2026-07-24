@@ -2,7 +2,19 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::PathBuf;
 
-use crate::models::PadCreated;
+use serde::Deserialize;
+
+/// Server response parsed by the v0.1 `create` verb. The `/api/pads` surface it
+/// deserializes from was removed in Wave 3 (design.md §10, D2); this DTO and the
+/// verbs that use it are rebuilt against the artifact-host path in Wave 3a. Kept
+/// private here — it is not a shared model, just this CLI client's wire shape.
+#[derive(Debug, Deserialize)]
+struct PadCreated {
+    id: String,
+    url: String,
+    title: String,
+    token: String,
+}
 
 const DEFAULT_PORT: u16 = 3000;
 const DEFAULT_URL: &str = "http://localhost:3000";
@@ -132,7 +144,7 @@ pub async fn create(
                         eprintln!("Error reading data file {}: {}", path.display(), e);
                         std::process::exit(1);
                     });
-                    let dataset = match crate::data::mbox::parse_mbox_bytes(&data_bytes) {
+                    let dataset = match glasspad::data::mbox::parse_mbox_bytes(&data_bytes) {
                         Ok(d) => d,
                         Err(e) => {
                             eprintln!("Error parsing email {}: {}", path.display(), e);
@@ -156,7 +168,7 @@ pub async fn create(
 
                 match ext.as_str() {
                 "csv" => {
-                    let dataset = match crate::data::csv::parse_csv_str(&data_str) {
+                    let dataset = match glasspad::data::csv::parse_csv_str(&data_str) {
                         Ok(d) => d,
                         Err(e) => {
                             eprintln!("Error parsing CSV {}: {}", path.display(), e);
@@ -172,7 +184,7 @@ pub async fn create(
                     }
                 }
                 "json" => {
-                    let dataset = match crate::data::json::parse_json_str(&data_str) {
+                    let dataset = match glasspad::data::json::parse_json_str(&data_str) {
                         Ok(d) => d,
                         Err(e) => {
                             eprintln!("Error parsing JSON {}: {}", path.display(), e);
