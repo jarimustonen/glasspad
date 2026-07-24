@@ -753,11 +753,24 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
 pub fn skill(install_claude: bool, user: bool, json: bool) {
     let skill_content = include_str!("skill.md");
 
-    if install_claude || user {
+    // `--user` requires `--install-claude` (clap-enforced), so `install_claude`
+    // alone gates the install branch.
+    if install_claude {
         let base = if user {
-            dirs::home_dir()
-                .expect("Cannot determine home directory")
-                .join(".claude")
+            match dirs::home_dir() {
+                Some(h) => h.join(".claude"),
+                // A missing home dir is a system-level failure the caller cannot
+                // fix by correcting input → structured error, exit 2 (never panic,
+                // which would bypass the --json contract with a raw backtrace).
+                None => exit_error(
+                    json,
+                    2,
+                    "home_dir_not_found",
+                    "cannot determine home directory for a --user install ($HOME unset)",
+                    None,
+                    None,
+                ),
+            }
         } else {
             let claude_dir = PathBuf::from(".claude");
             if !claude_dir.exists() {
@@ -766,7 +779,7 @@ pub fn skill(install_claude: bool, user: bool, json: bool) {
                     1,
                     "claude_dir_not_found",
                     ".claude/ directory not found in current directory. \
-                     Are you in a project root? Use --user for a user-level install.",
+                     Are you in a project root? Use --install-claude --user for a user-level install.",
                     None,
                     None,
                 );
@@ -776,15 +789,31 @@ pub fn skill(install_claude: bool, user: bool, json: bool) {
 
         let dir = base.join("skills/glasspad");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            exit_error(json, 2, "io_error", &format!("creating directory: {e}"), None, None);
+            exit_error(json, 2, "io_error", &format!("cannot create {}: {e}", dir.display()), None, None);
         }
         let path = dir.join("SKILL.md");
-        // Snapshot existence before the write so the caller can tell a fresh
-        // install (created=true) from an in-place refresh (overwritten).
-        let created = !path.exists();
-        if let Err(e) = std::fs::write(&path, skill_content) {
-            exit_error(json, 2, "io_error", &format!("writing skill: {e}"), None, None);
-        }
+        // `created` tracks the SKILL.md file specifically (not the dir tree, which
+        // may pre-exist). Decide it atomically: an exclusive create_new tells a
+        // fresh install (created=true) from an in-place refresh apart from any
+        // racing installer — a plain exists()+write would misreport under a race.
+        use std::io::Write as _;
+        let created = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(skill_content.as_bytes()) {
+                    exit_error(json, 2, "io_error", &format!("cannot write {}: {e}", path.display()), None, None);
+                }
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if let Err(e) = std::fs::write(&path, skill_content) {
+                    exit_error(json, 2, "io_error", &format!("cannot write {}: {e}", path.display()), None, None);
+                }
+                false
+            }
+            Err(e) => {
+                exit_error(json, 2, "io_error", &format!("cannot write {}: {e}", path.display()), None, None)
+            }
+        };
 
         if json {
             // Prefer the canonical absolute path (the file now exists, so this
@@ -797,6 +826,9 @@ pub fn skill(install_claude: bool, user: bool, json: bool) {
                 "path": resolved.display().to_string(),
                 "created": created,
                 "cli_version": env!("CARGO_PKG_VERSION"),
+                // Present (empty) for cross-command uniformity: callers read
+                // `warnings` unconditionally across every envelope (see `data`).
+                "warnings": [],
             });
             emit_json_line(&payload);
         } else {

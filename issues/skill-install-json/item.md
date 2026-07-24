@@ -4,6 +4,9 @@ updated: 2026-07-24
 type: bug
 status: in-progress
 priority: normal
+commits:
+- hash: '8695354'
+  summary: honour --json on skill --install-claude (envelope + error contract + tests)
 ---
 
 # skill --install-claude ignores --json (emits plain text, not an envelope)

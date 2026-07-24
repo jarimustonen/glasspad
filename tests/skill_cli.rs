@@ -45,13 +45,20 @@ fn project_install_json_envelope_shape() {
     assert_eq!(v["installed"], true);
     assert_eq!(v["scope"], "project");
     assert_eq!(v["created"], true);
-    assert!(v["cli_version"].is_string());
+    assert_eq!(v["cli_version"], env!("CARGO_PKG_VERSION"));
+    // `warnings` is present (empty) for cross-command uniformity.
+    assert_eq!(v["warnings"], serde_json::json!([]));
     let path = v["path"].as_str().unwrap();
     assert!(path.ends_with("skills/glasspad/SKILL.md"), "path: {path}");
-    assert!(std::path::Path::new(path).is_file(), "file not written: {path}");
+    // The installed file has the real skill content, not an empty/partial write.
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        include_str!("../src/skill.md")
+    );
     assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
 
-    // A second install into the same tree reports created=false (overwritten).
+    // A second install into the same tree reports created=false (overwritten),
+    // and still lands the correct content.
     let out2 = bin()
         .current_dir(&root)
         .arg("--json")
@@ -61,8 +68,47 @@ fn project_install_json_envelope_shape() {
         .unwrap();
     let v2: serde_json::Value = serde_json::from_slice(&out2.stdout).unwrap();
     assert_eq!(v2["created"], false);
+    assert_eq!(
+        std::fs::read_to_string(v2["path"].as_str().unwrap()).unwrap(),
+        include_str!("../src/skill.md")
+    );
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn user_install_json_envelope() {
+    // `--user` resolves `.claude/` under $HOME; point HOME (and USERPROFILE, the
+    // Windows equivalent `dirs` consults) at a throwaway dir so the test never
+    // touches the real user home.
+    let home = temp_dir("user-home");
+
+    let out = bin()
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .arg("--json")
+        .arg("skill")
+        .arg("--install-claude")
+        .arg("--user")
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["scope"], "user");
+    assert_eq!(v["created"], true);
+    assert_eq!(v["warnings"], serde_json::json!([]));
+    let path = v["path"].as_str().unwrap();
+    assert!(path.ends_with("skills/glasspad/SKILL.md"), "path: {path}");
+    // The install landed under our overridden HOME, not the real one.
+    assert!(
+        std::path::Path::new(path).starts_with(std::fs::canonicalize(&home).unwrap()),
+        "path {path} escaped the test HOME {}",
+        home.display()
+    );
+    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 #[test]
@@ -81,6 +127,9 @@ fn project_install_text_line_unchanged() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.starts_with("Installed skill to "), "stdout: {stdout}");
     assert!(stdout.contains("skills/glasspad/SKILL.md"), "stdout: {stdout}");
+    // The plain-text success path is exactly one line and nothing on stderr.
+    assert_eq!(stdout.lines().count(), 1, "stdout: {stdout}");
+    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
 
     let _ = std::fs::remove_dir_all(&root);
 }
