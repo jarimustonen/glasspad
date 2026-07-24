@@ -4,7 +4,7 @@ updated: 2026-07-24
 type: feature
 reporter: jari
 assignee: jari
-status: in-progress
+status: done
 priority: high
 slug: html-artifact-host-rewrite
 commits:
@@ -26,6 +26,9 @@ commits:
   summary: Wave 4 /llm-review fixes — injection-probe broadening, shell script-src nonce-only, same-slug no-op, bidi strip, a11y
 - hash: 1b21d34a26e844ab3d4384315a49c4f6dd926680
   summary: Wave 5 — remove section-DSL path, add glasspad data helper
+- hash: 1992b88de665bf0fa9749eba6c5d226af05c2000
+  summary: Wave 5 /llm-review fixes — harden glasspad data contract + tests
+closed: 2026-07-24
 ---
 
 # Rewrite Glasspad as an HTML-artifact host
