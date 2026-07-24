@@ -74,8 +74,13 @@ pub fn is_fragment(html: &str) -> bool {
 
 /// A real tag/name delimiter — the byte that must follow `doctype`/`html` for it
 /// to be that token rather than a longer name (`<!doctypeevil>`, `<htmlx>`).
+/// The whitespace set is HTML's ASCII whitespace (tab, LF, form-feed, CR, space),
+/// so `<html\u{c}lang>`/`<!doctype\u{c}html>` are recognized like any other space.
 fn is_tag_delim(next: Option<char>) -> bool {
-    matches!(next, None | Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\r') | Some('/'))
+    matches!(
+        next,
+        None | Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\x0c') | Some('\r') | Some('/')
+    )
 }
 
 /// `<!doctype>` / `<!doctype html>` — but not `<!doctypeevil>` (require a delimiter).
@@ -92,8 +97,11 @@ fn starts_with_html_tag(lower_head: &str) -> bool {
         .is_some_and(|after| is_tag_delim(after.chars().next()))
 }
 
-/// Skip a leading BOM, ASCII whitespace, and complete leading HTML comments.
-/// Stops at the first byte of real content (or an unterminated comment).
+/// Skip a leading BOM, ASCII whitespace, complete leading HTML comments, and a
+/// leading XML/processing-instruction prolog (`<?xml …?>`). Stops at the first
+/// byte of real content (or an unterminated comment/PI). Skipping the `<?xml?>`
+/// prolog keeps a valid XHTML document (`<?xml …?><!doctype html><html>…`)
+/// classified as a full document instead of being double-wrapped as a fragment.
 fn skip_prelude(html: &str) -> &str {
     let mut s = html.strip_prefix('\u{feff}').unwrap_or(html);
     loop {
@@ -104,6 +112,14 @@ fn skip_prelude(html: &str) -> &str {
                 continue;
             }
             // Unterminated comment: no real markup follows — treat as fragment.
+            return "";
+        }
+        if let Some(after_open) = trimmed.strip_prefix("<?") {
+            if let Some(end) = after_open.find("?>") {
+                s = &after_open[end + 2..];
+                continue;
+            }
+            // Unterminated processing instruction: no real markup follows.
             return "";
         }
         return trimmed;
@@ -166,6 +182,13 @@ mod tests {
         assert!(is_full_document("<!-- license header -->\n<!doctype html><html>…"));
         assert!(is_full_document("  <!-- a --> <!-- b --> <html>…"));
         assert!(is_full_document("<!doctype html>")); // bare doctype, no trailing markup
+        // A leading XML/XHTML prolog must be skipped, not mistaken for a fragment:
+        // `<?xml …?><!doctype html>` is a full document (else it gets double-wrapped).
+        assert!(is_full_document("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html><html>…"));
+        assert!(is_full_document("\u{feff}<?xml version=\"1.0\"?><!-- c --><html>…"));
+        // Form feed (an HTML ASCII whitespace) is a valid tag-name delimiter.
+        assert!(is_full_document("<html\u{c}lang=\"en\">…"));
+        assert!(is_full_document("<!doctype\u{c}html>"));
     }
 
     #[test]
@@ -184,6 +207,10 @@ mod tests {
         assert!(is_fragment("\u{feff}  <!-- a --> <!-- b -->\n<div>card</div>"));
         // An unterminated leading comment leaves no real markup → fragment.
         assert!(is_fragment("<!-- never closed <html>"));
+        // A PI-like prolog that is NOT followed by a doctype/html token is still a
+        // fragment; and an unterminated PI leaves no real markup → fragment.
+        assert!(is_fragment("<?xml version=\"1.0\"?><h1>Hi</h1>"));
+        assert!(is_fragment("<?xml never closed <html>"));
         // Look-alikes that are NOT a real doctype/html token must not slip through
         // as "full documents" (that would skip wrapping + bridge injection).
         assert!(is_fragment("<!doctypeevil>hi"));

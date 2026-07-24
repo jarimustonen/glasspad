@@ -31,7 +31,8 @@ enum Commands {
     Serve {
         /// Directory to serve as a space. Omit to serve only the built-in fixtures.
         dir: Option<PathBuf>,
-        #[arg(short, long, default_value = "3000")]
+        /// TCP port on 127.0.0.1 (1-65535).
+        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
     },
     /// Build a one-artifact space from a single file and serve it live.
@@ -41,14 +42,16 @@ enum Commands {
         /// Space name (default: the file stem). Must match the space grammar.
         #[arg(long)]
         name: Option<String>,
-        #[arg(short, long, default_value = "3000")]
+        /// TCP port on 127.0.0.1 (1-65535).
+        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
     },
     /// Open a served space's URL in the browser.
     Open {
         /// Space name (the `{space}` in `/{space}/`).
         space: String,
-        #[arg(short, long, default_value = "3000")]
+        /// TCP port on 127.0.0.1 (1-65535).
+        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
         /// Print the URL without launching a browser (pipe-friendly).
         #[arg(long)]

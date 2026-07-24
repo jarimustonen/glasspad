@@ -51,8 +51,10 @@ pub async fn bind_loopback(port: u16) -> std::io::Result<TcpListener> {
 /// Serve the app on an already-bound listener until the process is killed. Split
 /// from `bind_loopback` so the CLI can bind first (surfacing a bind failure as an
 /// error) and print its startup envelope only once the port is actually held.
-pub async fn serve_on(listener: TcpListener, app: Router) {
-    axum::serve(listener, app).await.unwrap();
+/// Returns the serve error instead of panicking, so the CLI can surface a
+/// mid-run failure as its structured error envelope (AI-first §10).
+pub async fn serve_on(listener: TcpListener, app: Router) -> std::io::Result<()> {
+    axum::serve(listener, app).await
 }
 
 /// Scan `dir` into a one-space [`Snapshot`], also returning the derived space
@@ -181,6 +183,7 @@ pub fn spawn_file_watcher(host: Arc<ArtifactHost>, file: PathBuf, name: String) 
 /// watcher keeps the last-good snapshot). The initial `create` load does its own
 /// richer validation (see `cli`); this is the reload path.
 pub fn read_artifact_file(file: &Path) -> Result<String, String> {
+    use std::io::Read;
     let meta = std::fs::metadata(file).map_err(|e| e.to_string())?;
     if !meta.is_file() {
         return Err(format!("{} is not a regular file", file.display()));
@@ -192,9 +195,15 @@ pub fn read_artifact_file(file: &Path) -> Result<String, String> {
             space::MAX_FILE_BYTES
         ));
     }
-    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+    // Bounded read (cap the allocation at limit + 1) so a file that grows past the
+    // cap between the stat above and the read cannot force an unbounded buffer.
+    let f = std::fs::File::open(file).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    f.take(space::MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
     if bytes.len() as u64 > space::MAX_FILE_BYTES {
-        return Err(format!("{} bytes, over the per-file limit", bytes.len()));
+        return Err(format!("over the {}-byte per-file limit", space::MAX_FILE_BYTES));
     }
     String::from_utf8(bytes).map_err(|_| format!("{} is not valid UTF-8", file.display()))
 }

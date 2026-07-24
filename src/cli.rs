@@ -56,7 +56,12 @@ pub fn exit_error(
             err.insert("expected".into(), json!(e));
         }
         let payload = json!({ "schema_version": SCHEMA_VERSION, "error": err });
-        eprintln!("{}", serde_json::to_string(&payload).unwrap_or_default());
+        // Never emit a blank line: if the (statically-serializable) envelope somehow
+        // fails to serialize, fall back to the text form so the message is not lost.
+        match serde_json::to_string(&payload) {
+            Ok(s) => eprintln!("{s}"),
+            Err(_) => eprintln!("error: {message}"),
+        }
     } else {
         eprintln!("error: {message}");
     }
@@ -88,9 +93,14 @@ fn exit_scan_error(e: &ScanError, json: bool) -> ! {
     exit_error(json, exit, code, &e.to_string(), None, None);
 }
 
-/// The comma-joined reserved-name list, for error hints.
-fn reserved_list() -> Vec<String> {
-    artifact_host::RESERVED.iter().map(|s| s.to_string()).collect()
+/// Print a JSON envelope line to stdout and flush it. The flush matters for the
+/// long-running `serve`/`create`: their startup envelope must reach a piped
+/// consumer *before* the process blocks serving, not sit in a block buffer.
+fn emit_json_line(payload: &serde_json::Value) {
+    use std::io::Write;
+    let s = serde_json::to_string(payload).unwrap_or_default();
+    println!("{s}");
+    let _ = std::io::stdout().flush();
 }
 
 // --- serve ----------------------------------------------------------------
@@ -134,7 +144,9 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
     emit_serving(json, port, live.as_ref());
 
     let app = server::build_app_with_host(port, host);
-    server::serve_on(listener, app).await;
+    if let Err(e) = server::serve_on(listener, app).await {
+        exit_error(json, 2, "serve_failed", &format!("server stopped with an error: {e}"), None, None);
+    }
 }
 
 /// Print the `serve` startup envelope. `--json` → one line to stdout (the data
@@ -156,7 +168,7 @@ fn emit_serving(json: bool, port: u16, live: Option<&(String, Vec<String>, Optio
                     "home": home,
                     "warnings": [],
                 });
-                println!("{}", serde_json::to_string(&payload).unwrap_or_default());
+                emit_json_line(&payload);
             } else {
                 eprintln!(
                     "glasspad serving space '{name}' at {url} ({} artifact{})",
@@ -180,7 +192,7 @@ fn emit_serving(json: bool, port: u16, live: Option<&(String, Vec<String>, Optio
                     "home": serde_json::Value::Null,
                     "warnings": [warn],
                 });
-                println!("{}", serde_json::to_string(&payload).unwrap_or_default());
+                emit_json_line(&payload);
             } else {
                 eprintln!("glasspad serving built-in fixtures at {url} ({warn})");
             }
@@ -222,7 +234,9 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) 
     emit_created(json, port, &space_name, kind);
 
     let app = server::build_app_with_host(port, host);
-    server::serve_on(listener, app).await;
+    if let Err(e) = server::serve_on(listener, app).await {
+        exit_error(json, 2, "serve_failed", &format!("server stopped with an error: {e}"), None, None);
+    }
 }
 
 /// Validate + read the single file `create` serves, resolving the space name.
@@ -230,6 +244,11 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) 
 /// non-UTF-8 file, or an un-derivable/invalid space name each exits with an
 /// informative envelope rather than a silent fixup. Returns `(space_name, html)`.
 fn load_single_file(file: &Path, name_override: Option<&str>, json: bool) -> (String, String) {
+    // Validate the space name FIRST (AI-first §1 fail-fast): the name comes from
+    // `--name` or the file stem — neither needs the file contents — so an
+    // immediately-detectable argument error is reported before any file I/O.
+    let space_name = resolve_space_name(file, name_override, json);
+
     // `metadata` follows a symlink: the user named this file explicitly, so a
     // symlink to their own file is served (unlike a directory scan, where a
     // symlink can smuggle a file in from outside the space and is rejected).
@@ -294,7 +313,10 @@ fn load_single_file(file: &Path, name_override: Option<&str>, json: bool) -> (St
         );
     }
 
-    let bytes = match std::fs::read(file) {
+    // Bounded read: cap the allocation at `MAX_FILE_BYTES + 1` so a file that grows
+    // past the limit between the stat above and the read (a concurrent writer)
+    // cannot make us allocate an unbounded buffer before the size recheck fires.
+    let bytes = match read_capped(file, space::MAX_FILE_BYTES) {
         Ok(b) => b,
         Err(e) => exit_error(
             json,
@@ -305,17 +327,14 @@ fn load_single_file(file: &Path, name_override: Option<&str>, json: bool) -> (St
             None,
         ),
     };
-    // Re-check the actual bytes read (a concurrent write could have grown it past
-    // the stat length between the check above and the read).
     if bytes.len() as u64 > space::MAX_FILE_BYTES {
         exit_error(
             json,
             1,
             "file_too_large",
             &format!(
-                "{} is {} bytes, over the {}-byte per-file limit",
+                "{} exceeds the {}-byte per-file limit",
                 file.display(),
-                bytes.len(),
                 space::MAX_FILE_BYTES
             ),
             None,
@@ -337,40 +356,57 @@ fn load_single_file(file: &Path, name_override: Option<&str>, json: bool) -> (St
         ),
     };
 
-    // Space name: `--name` override, else the file stem. Same grammar the router
-    // and scanner enforce, so `create` can never mint a name they would reject.
-    let derived;
+    (space_name, html)
+}
+
+/// Resolve + validate the space name for `create`: the `--name` override, else the
+/// file stem. Same grammar the router and scanner enforce, so `create` can never
+/// mint a name they would reject. Exits with an informative envelope on failure.
+fn resolve_space_name(file: &Path, name_override: Option<&str>, json: bool) -> String {
     let (from_flag, raw_name) = match name_override {
-        Some(n) => (true, n),
-        None => {
-            derived = file
-                .file_stem()
+        Some(n) => (true, n.to_string()),
+        None => (
+            false,
+            file.file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
-                .to_string();
-            (false, derived.as_str())
-        }
+                .to_string(),
+        ),
     };
-    if !artifact_host::valid_space(raw_name) {
-        let message = if from_flag {
-            format!(
-                "invalid --name {raw_name:?}: a space name must be lowercase [a-z0-9-], \
-                 start alphanumeric, be ≤64 chars, and not be reserved ({})",
-                artifact_host::RESERVED.join(", ")
-            )
-        } else {
-            format!(
-                "cannot derive a valid space name from {}: {raw_name:?} is not a valid name \
-                 (lowercase [a-z0-9-], start alphanumeric, ≤64 chars, not reserved: {}). \
-                 Pass --name <space> to set one explicitly.",
-                file.display(),
-                artifact_host::RESERVED.join(", ")
-            )
-        };
-        exit_error(json, 1, "invalid_space_name", &message, Some(raw_name), Some(reserved_list()));
+    if artifact_host::valid_space(&raw_name) {
+        return raw_name;
     }
+    let message = if from_flag {
+        format!(
+            "invalid --name {raw_name:?}: a space name must be lowercase [a-z0-9-], \
+             start alphanumeric, be ≤64 chars, and not be reserved ({})",
+            artifact_host::RESERVED.join(", ")
+        )
+    } else {
+        format!(
+            "cannot derive a valid space name from {}: {raw_name:?} is not a valid name \
+             (lowercase [a-z0-9-], start alphanumeric, ≤64 chars, not reserved: {}). \
+             Pass --name <space> to set one explicitly.",
+            file.display(),
+            artifact_host::RESERVED.join(", ")
+        )
+    };
+    // No `expected` list: the space grammar is not a finite enum, and the reserved
+    // names are a *deny* list — surfacing them under `expected` (an allowlist, per
+    // AI-first §10) would mislead a caller into retrying with a reserved name. The
+    // message already spells out the grammar + reserved set.
+    exit_error(json, 1, "invalid_space_name", &message, Some(&raw_name), None);
+}
 
-    (raw_name.to_string(), html)
+/// Read at most `max + 1` bytes of `file` into memory (a bounded allocation). The
+/// caller treats a returned length `> max` as over-limit; the `+1` lets it detect
+/// "exactly at the cap vs. over" without ever buffering an unbounded file.
+fn read_capped(file: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let f = std::fs::File::open(file)?;
+    let mut buf = Vec::new();
+    f.take(max + 1).read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 /// Print the `create` startup envelope (mirrors [`emit_serving`], plus the single
@@ -389,7 +425,7 @@ fn emit_created(json: bool, port: u16, space: &str, kind: &str) {
             "kind": kind,
             "warnings": [],
         });
-        println!("{}", serde_json::to_string(&payload).unwrap_or_default());
+        emit_json_line(&payload);
     } else {
         eprintln!("glasspad serving '{space}' ({kind}) at {url}");
     }
@@ -413,11 +449,23 @@ pub fn open(space: String, port: u16, json: bool, no_browser: bool) {
                 artifact_host::RESERVED.join(", ")
             ),
             Some(&space),
-            Some(reserved_list()),
+            None, // see load_single_file: reserved names are a deny list, not `expected`
         );
     }
     let url = format!("http://127.0.0.1:{port}/{space}/");
     let launched = if no_browser { false } else { launch_browser(&url) };
+
+    // A requested-but-failed launch must not look like a deliberate `--no-browser`:
+    // surface it as a non-fatal warning (§4/§10) so the caller can tell them apart.
+    // Exit stays 0 — the URL is still valid and printed for the caller to use.
+    let mut warnings: Vec<String> = Vec::new();
+    if !no_browser && !launched {
+        warnings.push(
+            "browser launch failed (no opener available or spawn failed); \
+             the URL is still valid — open it manually"
+                .to_string(),
+        );
+    }
 
     if json {
         let payload = json!({
@@ -426,14 +474,19 @@ pub fn open(space: String, port: u16, json: bool, no_browser: bool) {
             "port": port,
             "url": url,
             "browser_launched": launched,
-            "warnings": [],
+            "warnings": warnings,
         });
-        println!("{}", serde_json::to_string(&payload).unwrap_or_default());
-    } else if launched {
-        println!("Opening {url}");
+        emit_json_line(&payload);
     } else {
-        // Pipe-friendly: the bare URL on stdout so `open --no-browser` composes.
-        println!("{url}");
+        for w in &warnings {
+            eprintln!("warning: {w}");
+        }
+        if launched {
+            println!("Opening {url}");
+        } else {
+            // Pipe-friendly: the bare URL on stdout so `open --no-browser` composes.
+            println!("{url}");
+        }
     }
 }
 
