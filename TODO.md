@@ -5,43 +5,45 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-Glasspad is being **rewritten (v0.2)**: the calling agent authors **HTML
-directly** and Glasspad hosts it in a sandboxed iframe. This deletes the ~6000-
-line section-DSL (`src/spec/*`, `src/client/dashboard.js`) and the data parsers.
+**The v0.2 rewrite is COMPLETE (2026-07-24).** Glasspad is now the lightweight
+HTML-artifact host: the calling agent authors **HTML directly** in a directory,
+`glasspad serve`s it, and it renders in a null-origin sandboxed iframe with nav
+chrome + base libraries. The old ~6000-line section-DSL path is gone.
 
 - **Scope: localhost-only.** No team/cloud, accounts, or persistence backends.
-- Everything is driven by one feature issue: **`html-artifact-host-rewrite`**
-  (`issuectl show html-artifact-host-rewrite`). Read its `plan.md` and
-  `design.md` before touching code — the security model must be built first.
-- Design decisions are **locked** (see the issue's `## Decisions` + `analysis.md`):
-  D1 null-origin sandbox + `CSP: sandbox` response header + egress CSP naming the
-  host; D2 first-class assets/data; D3 serve the directory live, no store; relative
-  links (no `glasspad:` scheme).
+- Feature issue **`html-artifact-host-rewrite`** is **CLOSED (done)**. Its
+  `plan.md` / `design.md` / `wave-plan.md` remain the record of the architecture
+  and security model; `design.md §10` holds the resolved review decisions.
+- Delivered across 5 waves / 27 commits: Wave 1 security gate (null-origin
+  sandbox + CSP/egress contract + validated postMessage bridge), Wave 2a space
+  model + live serving, Wave 2b base libs (`base.css`/`charts.js`/`manifest.json`),
+  Wave 3a CLI (`serve`/`create`/`open`), Wave 3b `bridge.js`, D2 legacy-surface
+  removal, Wave 4 trusted-parent nav chrome, Wave 5 section-DSL teardown +
+  `glasspad data` helper. Net −5,500 lines.
+- **Green baseline on `master`:** `./test-security.sh` = 41 browser checks +
+  Wave 2a probes; `cargo build`/`clippy --all-targets`/`test` all clean.
 
 ## ▶ Start here (next session)
 
-**Phase 0 is done** — the wave plan exists at
-`issues/html-artifact-host-rewrite/wave-plan.md`. Read it first; it is the
-execution schedule (5 waves), and `plan.md` + `design.md` are the *what* and the
-security model it implements.
+The rewrite is done — **no rewrite work remains.** The natural next target is the
+**`mcp-integration` epic** (`issuectl show mcp-integration`): how agents reach
+glasspad (an MCP surface over `serve`/`create`/`open`). Start a fresh `/stint`
+and plan that round, or pick from the backlog below.
 
-**Waves 1, 2, and Wave 3 batch 1 are DONE (2026-07-24).** Standing autonomy
-granted (`AGENTS.md`). On `master`: security gate, space model + live serving,
-base libs (`base.css`/`charts.js`/`bridge.js`/`manifest.json`), legacy v0.1
-surface removed (D2). Suite green: 31 browser checks + Wave 2a probes + vega/eval;
-all cargo tests pass.
-**Waves 1–4 all DONE.** The new HTML-artifact host is complete and agent-usable
-end-to-end; suite at 41 browser checks + Wave 2a probes, all green. **Next & LAST
-job: Wave 5** (Phase 6 — final removals: coupling audit → delete `src/spec/*`,
-`src/client/dashboard.js`; move `src/data/*` → optional `glasspad data` helper;
-demote `src/security/sanitize.rs`; update `skill.md`/`README.md`/`DESIGN.md`).
-Precondition met (suite green on the new path). After Wave 5 the rewrite is done.
+**Two things flagged this round for a human eye (not blocking):**
+1. **`glasspad data`** — the old data parsers were NOT deleted; they became an
+   opt-in `glasspad data` CLI helper (legacy CSV/JSON/mbox → JSON rows, AI-first
+   `--json`/`--format`/`--meta`). Confirm this matches intent vs. dropping them.
+2. **orchestratectl worker hang** — Wave 3a's worker Claude process hung mid-run
+   (committed, then died before merge). It was salvaged cleanly (green branch
+   fast-forwarded, deferred `/llm-review` run after). If this recurs, consider a
+   watchdog. Salvage pattern: verify branch green → `git merge --ff-only` →
+   `git worktree remove --force` + `git branch -d` → spawn a deferred-review
+   spinoff to close the skipped review gate.
 
-**Merge policy (per wave).** See the wave plan's merge-policy table. Summary:
-Wave 1 interactive/human-gated; Waves 2–5 autonomous (`/worktree-spinoff
---headless`, self-merging) with `/llm-review` in the brief for every unit that
-touches production/security code. Confirm the "revisit gate" (units disjoint on
-the shared axum router) before running any parallel wave.
+**Backlog / decisions (see below):** `structured-api-errors` is now **moot**
+(`/api/pads` removed) — close it. `auth-status-codes` likewise moot under
+localhost-only — close it. `mcp-integration` epic is the forward work.
 
 ## Round plan (one worktree per phase, in order)
 
