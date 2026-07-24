@@ -1,12 +1,13 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-07-24
 type: decision
 reporter: jari
 assignee: jari
-status: open
+status: wontfix
 priority: normal
 slug: structured-api-errors
+closed: 2026-07-24
 ---
 
 # Decide on structured API error responses
