@@ -47,12 +47,13 @@ pub fn self_origins(port: u16) -> String {
 /// * `script-src` — inline (agents write inline) + `'unsafe-eval'` (Vega-Lite;
 ///   see design.md §4) + the explicit host so `/_gp/v1/*` base libs load via
 ///   classic `<script src>`.
-/// * `connect-src` — **the exfil boundary**. Wave 1 set this to `'none'`; Wave 2a
-///   widens it to name **exactly the loopback SSE-reload path** on both origins
-///   (`http://127.0.0.1:PORT/_gp/reload http://localhost:PORT/_gp/reload`) and
-///   nothing else. A CSP path-source is an exact-path match, so `fetch`/beacon/ws/
-///   XHR to `/api/*`, any other path, any foreign host, or the network canary all
-///   still violate the policy — the boundary stays closed except for live reload.
+/// * `connect-src 'none'` — **the exfil boundary**: no `fetch`, `sendBeacon`,
+///   `WebSocket`, or XHR to anywhere, including self. Live reload is driven from
+///   the **trusted shell** (its `connect-src 'self'` permits the `EventSource`),
+///   so the artifact needs no connect authority and this stays fully closed.
+///   (An in-*artifact* reload client would be Wave 3b's `bridge.js`; if it lands,
+///   widen this to the exact `/_gp/reload` path — a CSP path-source — never a bare
+///   origin, which would re-open `/api/*`, and never a foreign host.)
 /// * `img-src` names the host + `data:` only — no external beacon pixels.
 /// * `form-action 'none'`, `base-uri 'none'`, `object-src 'none'`,
 ///   `frame-src 'none'`, `worker-src 'none'` — close the remaining channels.
@@ -65,9 +66,6 @@ pub fn self_origins(port: u16) -> String {
 pub fn artifact_csp(port: u16, allow_eval: bool) -> String {
     let hosts = self_origins(port);
     let eval = if allow_eval { " 'unsafe-eval'" } else { "" };
-    // The ONLY egress the artifact may open: the live-reload SSE endpoint, named
-    // by exact loopback path on both origins. Everything else stays blocked.
-    let reload = format!("http://127.0.0.1:{port}/_gp/reload http://localhost:{port}/_gp/reload");
     format!(
         "sandbox allow-scripts allow-top-navigation-by-user-activation; \
          default-src 'none'; \
@@ -75,7 +73,7 @@ pub fn artifact_csp(port: u16, allow_eval: bool) -> String {
          style-src 'unsafe-inline' {hosts}; \
          img-src {hosts} data:; \
          font-src {hosts}; \
-         connect-src {reload}; \
+         connect-src 'none'; \
          object-src 'none'; \
          frame-src 'none'; \
          worker-src 'none'; \
@@ -152,30 +150,16 @@ mod tests {
     #[test]
     fn artifact_csp_blocks_all_egress_channels() {
         let csp = artifact_csp(3000, true);
-        // connect-src is scoped to exactly the loopback SSE-reload path — no
-        // wildcard, no bare host, no foreign origin. `/api/*` and canaries stay
-        // blocked (path-source is an exact match), so the exfil boundary holds.
-        assert!(csp.contains(
-            "connect-src http://127.0.0.1:3000/_gp/reload http://localhost:3000/_gp/reload"
-        ));
-        assert!(!csp.contains("connect-src *"));
-        assert!(!csp.contains("connect-src http://127.0.0.1:3000 ")); // not the bare origin
+        assert!(csp.contains("connect-src 'none'")); // fetch/beacon/ws/xhr, incl. self
         assert!(csp.contains("form-action 'none'")); // form POST exfil
         assert!(csp.contains("object-src 'none'"));
         assert!(csp.contains("base-uri 'none'"));
         // img-src must NOT be a wildcard — only the named hosts + data:
         assert!(csp.contains("img-src http://127.0.0.1:3000 http://localhost:3000 data:"));
         assert!(!csp.contains("img-src *"));
-    }
-
-    #[test]
-    fn artifact_csp_connect_src_does_not_grant_api_or_foreign() {
-        let csp = artifact_csp(3000, true);
-        // The reload path is the whole connect-src allowance; a bare origin would
-        // (wrongly) permit `/api/*`. Assert the source always carries the path.
-        assert!(csp.contains("/_gp/reload"));
-        assert!(!csp.contains("connect-src 'self'"));
-        assert!(!csp.contains("gp-exfil.invalid"));
+        // No path-scoped SSE source leaked into the artifact policy — reload is
+        // shell-side only, so the artifact stays fully closed.
+        assert!(!csp.contains("/_gp/reload"));
     }
 
     #[test]

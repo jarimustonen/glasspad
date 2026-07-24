@@ -92,6 +92,9 @@ hdr()  { curl -s -D- -o /dev/null "$1" | tr -d '\r' | awk -F': ' "tolower(\$1)==
 [ "$(hdr "$SB/myspace/assets/logo.svg" x-content-type-options)" = "nosniff" ]; scheck $? "asset carries nosniff"
 [ "$(hdr "$SB/myspace/assets/logo.svg" content-security-policy)" = "sandbox" ]; scheck $? "hostile SVG asset is sandboxed (top-level neutralized)"
 [ "$(hdr "$SB/myspace/assets/app.js" content-type)" = "text/javascript; charset=utf-8" ]; scheck $? "asset MIME detected"
+# No wildcard CORS on user assets: a foreign web page the user has open must not
+# be able to `fetch()` and read a space's assets cross-origin.
+[ -z "$(hdr "$SB/myspace/assets/data.json" access-control-allow-origin)" ]; scheck $? "asset has NO Access-Control-Allow-Origin (no cross-origin read)"
 
 # Path-traversal probes — every one must 404 (never resolve outside the space).
 for p in \
@@ -106,11 +109,11 @@ done
 # The secret is never reachable by any name.
 ! curl -s "$SB/myspace/assets/../../secret.txt" | grep -q SECRET-OUTSIDE; scheck $? "secret file never served via traversal"
 
-# Egress boundary held: the artifact CSP names ONLY the loopback SSE path, never
-# a bare origin (which would re-open /api/*) and never a foreign host.
+# Egress boundary held: the artifact CSP keeps `connect-src 'none'` — live reload
+# is shell-side (its own connect-src 'self'), so the artifact stays fully closed.
 CSP="$(hdr "$SB/myspace/_c/index" content-security-policy)"
-echo "$CSP" | grep -q "connect-src http://127.0.0.1:$SPACE_PORT/_gp/reload http://localhost:$SPACE_PORT/_gp/reload;"; scheck $? "artifact connect-src scoped to SSE reload path only"
-! echo "$CSP" | grep -qE "connect-src [^;]*(\*|:$SPACE_PORT;| :$SPACE_PORT )"; scheck $? "artifact connect-src is not a wildcard/bare origin"
+echo "$CSP" | grep -q "connect-src 'none';"; scheck $? "artifact connect-src stays 'none' (fully closed)"
+! echo "$CSP" | grep -q "/_gp/reload"; scheck $? "SSE path is not named in the artifact CSP"
 
 kill "$SPACE_PID" 2>/dev/null || true
 sleep 0.3

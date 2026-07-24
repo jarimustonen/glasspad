@@ -19,18 +19,27 @@
 //!
 //! See `issues/html-artifact-host-rewrite/{design,plan,wave-plan}.md`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use super::{valid_name, RESERVED};
 
 /// Per-file byte ceiling. A single artifact/asset larger than this is a hard
 /// error — a local dev tool has no business streaming huge blobs, and an
-/// unbounded read is a trivial memory-exhaustion foot-gun.
+/// unbounded read is a trivial memory-exhaustion foot-gun. Enforced on the
+/// **actual bytes read**, not the pre-read `stat` length (which a concurrent
+/// write could grow).
 pub const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
 /// Per-space aggregate ceiling across every artifact + asset.
 pub const MAX_SPACE_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
+/// Maximum number of scanned entries (artifacts + assets). Bounds map/CPU blowup
+/// from a directory of many tiny files that slips under the byte ceilings.
+pub const MAX_ENTRIES: usize = 10_000;
+/// Manifest input ceiling before YAML parsing — small, to bound alias-expansion
+/// ("billion laughs") blast radius. `glasspad.yaml` is structure-only and tiny.
+pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024; // 64 KiB
 /// Upper bound on the resolved title length (in chars) inserted into the chrome.
 pub const MAX_TITLE_CHARS: usize = 200;
 /// The reserved subdirectory that holds a space's static assets. It is also a
@@ -111,6 +120,9 @@ pub enum ScanError {
     DuplicateSlug(String, PathBuf),
     FileTooLarge(PathBuf, u64),
     SpaceTooLarge(u64),
+    TooManyEntries(usize),
+    UnsupportedFileType(PathBuf),
+    ManifestTooLarge(PathBuf, u64),
     NotUtf8(PathBuf),
     BadAssetName(PathBuf),
     Manifest(PathBuf, String),
@@ -163,6 +175,20 @@ impl fmt::Display for ScanError {
             ScanError::SpaceTooLarge(n) => write!(
                 f,
                 "space totals {n} bytes, over the {MAX_SPACE_BYTES}-byte per-space limit"
+            ),
+            ScanError::TooManyEntries(n) => write!(
+                f,
+                "space has more than {MAX_ENTRIES} files (counted {n}); split it or prune assets"
+            ),
+            ScanError::UnsupportedFileType(p) => write!(
+                f,
+                "{} is not a regular file (FIFOs, sockets, and devices are not servable)",
+                p.display()
+            ),
+            ScanError::ManifestTooLarge(p, n) => write!(
+                f,
+                "{} is {n} bytes, over the {MAX_MANIFEST_BYTES}-byte manifest limit",
+                p.display()
             ),
             ScanError::NotUtf8(p) => write!(f, "{} is not valid UTF-8 (artifacts must be UTF-8 HTML)", p.display()),
             ScanError::BadAssetName(p) => write!(
@@ -235,7 +261,15 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
         }
 
         if name == MANIFEST_FILE {
+            // Bound the manifest tightly (stat first, then verify actual bytes) so
+            // an alias-bomb never reaches the YAML parser.
+            if ftype.is_file() && entry_len(&path) > MAX_MANIFEST_BYTES {
+                return Err(ScanError::ManifestTooLarge(path.clone(), entry_len(&path)));
+            }
             let raw = read_file_capped(&path, &mut total)?;
+            if raw.len() as u64 > MAX_MANIFEST_BYTES {
+                return Err(ScanError::ManifestTooLarge(path.clone(), raw.len() as u64));
+            }
             let text = String::from_utf8(raw).map_err(|_| ScanError::NotUtf8(path.clone()))?;
             apply_manifest(&text, &path, &mut space)?;
             continue;
@@ -251,6 +285,9 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
             }
             if space.artifacts.contains_key(stem) {
                 return Err(ScanError::DuplicateSlug(stem.to_string(), path.clone()));
+            }
+            if space.artifacts.len() + space.assets.len() >= MAX_ENTRIES {
+                return Err(ScanError::TooManyEntries(space.artifacts.len() + space.assets.len() + 1));
             }
             ensure_within(&canon_root, &path)?;
             let raw = read_file_capped(&path, &mut total)?;
@@ -299,7 +336,10 @@ fn scan_assets(
             }
             if !ftype.is_file() {
                 // FIFOs, sockets, devices — not servable content.
-                return Err(ScanError::BadAssetName(path));
+                return Err(ScanError::UnsupportedFileType(path));
+            }
+            if space.artifacts.len() + space.assets.len() >= MAX_ENTRIES {
+                return Err(ScanError::TooManyEntries(space.artifacts.len() + space.assets.len() + 1));
             }
             ensure_within(canon_root, &path)?;
             let rel = rel_key(canon_root, &path)?;
@@ -341,6 +381,12 @@ fn rel_key(canon_root: &Path, path: &Path) -> Result<String, ScanError> {
     Ok(segs.join("/"))
 }
 
+/// Best-effort file length via `lstat` (0 if it can't be read — the subsequent
+/// capped read is the real enforcement).
+fn entry_len(path: &Path) -> u64 {
+    std::fs::symlink_metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
 /// Assert a path's canonical form is contained within the canonical root. Defends
 /// against a symlink or `..` component slipping a file outside the space.
 fn ensure_within(canon_root: &Path, path: &Path) -> Result<(), ScanError> {
@@ -351,13 +397,33 @@ fn ensure_within(canon_root: &Path, path: &Path) -> Result<(), ScanError> {
     Ok(())
 }
 
-/// Read a file, enforcing the per-file cap and accumulating the per-space total.
+/// Read a file, enforcing the per-file cap on the **actual bytes read** (not a
+/// pre-read `stat`, which a concurrent write could grow), accumulating the real
+/// per-space total, and rejecting anything that isn't a regular file. Rejecting
+/// non-regular files by `lstat` **before** opening is what keeps a FIFO named
+/// `index.html` from blocking the scan forever (opening a FIFO blocks).
 fn read_file_capped(path: &Path, total: &mut u64) -> Result<Vec<u8>, ScanError> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| ScanError::Io(path.to_path_buf(), e))?;
     if meta.file_type().is_symlink() {
         return Err(ScanError::Symlink(path.to_path_buf()));
     }
-    let len = meta.len();
+    if !meta.is_file() {
+        return Err(ScanError::UnsupportedFileType(path.to_path_buf()));
+    }
+    // Read at most (per-file cap ∧ remaining per-space budget) + 1, then verify —
+    // the `+1` lets us detect an over-limit file without trusting the stat length.
+    let remaining = MAX_SPACE_BYTES.saturating_sub(*total);
+    let limit = MAX_FILE_BYTES.min(remaining);
+    let f = std::fs::File::open(path).map_err(|e| ScanError::Io(path.to_path_buf(), e))?;
+    // Re-check via the opened descriptor (defends the common swap-after-lstat case).
+    if !f.metadata().map_err(|e| ScanError::Io(path.to_path_buf(), e))?.is_file() {
+        return Err(ScanError::UnsupportedFileType(path.to_path_buf()));
+    }
+    let mut buf = Vec::new();
+    f.take(limit + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| ScanError::Io(path.to_path_buf(), e))?;
+    let len = buf.len() as u64;
     if len > MAX_FILE_BYTES {
         return Err(ScanError::FileTooLarge(path.to_path_buf(), len));
     }
@@ -365,22 +431,25 @@ fn read_file_capped(path: &Path, total: &mut u64) -> Result<Vec<u8>, ScanError> 
     if *total > MAX_SPACE_BYTES {
         return Err(ScanError::SpaceTooLarge(*total));
     }
-    std::fs::read(path).map_err(|e| ScanError::Io(path.to_path_buf(), e))
+    Ok(buf)
 }
 
 /// After all files are read, compute nav order (manifest, else lexicographic)
 /// and the home slug (`index` > `home` > first in nav order).
 fn finalize(space: &mut Space) {
-    // Manifest nav may have listed slugs; keep only ones that exist, then append
-    // any remaining artifacts in lexicographic order so nothing is hidden.
-    let mut nav: Vec<String> = space
-        .nav
-        .iter()
-        .filter(|s| space.artifacts.contains_key(*s))
-        .cloned()
-        .collect();
+    // Manifest nav may have listed slugs; keep only ones that exist, **deduped**
+    // (a manifest `nav: [a, a]` must not double the entry), then append any
+    // remaining artifacts in lexicographic order so nothing is hidden. A `HashSet`
+    // keeps this linear instead of O(artifacts × nav).
+    let mut nav: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for s in &space.nav {
+        if space.artifacts.contains_key(s) && seen.insert(s.clone()) {
+            nav.push(s.clone());
+        }
+    }
     for slug in space.artifacts.keys() {
-        if !nav.contains(slug) {
+        if seen.insert(slug.clone()) {
             nav.push(slug.clone());
         }
     }
@@ -510,13 +579,23 @@ pub fn resolve_title(html: &str) -> Option<String> {
 }
 
 /// Extract the text content of the first `<tag>…</tag>`. Not a regex: it walks the
-/// byte stream tracking tag boundaries so attributes, whitespace, and case in the
-/// opening tag don't fool it.
+/// byte stream tracking tag boundaries so attributes (incl. a `>` inside a quoted
+/// value), whitespace, case, HTML comments, and a look-alike close tag
+/// (`</titlebar>`) don't fool it. (It does not yet skip `<script>`/`<style>`
+/// raw-text bodies or distinguish SVG/MathML `<title>` — see the module notes;
+/// the value is inserted as text, so those are correctness-only gaps.)
 fn extract_element_text(html: &str, tag: &str) -> Option<String> {
     let lower = html.to_ascii_lowercase();
     let bytes = lower.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
+        // Skip HTML comments so `<!-- <title>x</title> -->` never matches. An
+        // unterminated comment swallows the rest of the document → no title.
+        if lower[i..].starts_with("<!--") {
+            let end = lower[i + 4..].find("-->")?;
+            i += 4 + end + 3;
+            continue;
+        }
         if bytes[i] != b'<' {
             i += 1;
             continue;
@@ -527,29 +606,70 @@ fn extract_element_text(html: &str, tag: &str) -> Option<String> {
             let j = after + tag.len();
             let delim = bytes.get(j).copied();
             if matches!(delim, Some(b' ') | Some(b'>') | Some(b'/') | Some(b'\t') | Some(b'\n') | Some(b'\r')) {
-                // Find the end of the opening tag.
-                if let Some(gt) = lower[j..].find('>') {
-                    let content_start = j + gt + 1;
-                    // Self-closing opening tag has no text content.
-                    if bytes.get(j + gt - 1) == Some(&b'/') {
-                        return None;
-                    }
-                    let close = format!("</{tag}");
-                    if let Some(rel) = lower[content_start..].find(&close) {
-                        let raw = &html[content_start..content_start + rel];
-                        let text = decode_entities(&collapse_ws(strip_tags(raw)));
-                        let text = text.trim().to_string();
-                        if text.is_empty() {
-                            return None;
-                        }
-                        return Some(bound_chars(&text, MAX_TITLE_CHARS));
-                    }
+                let (content_start, self_closing) = end_of_open_tag(bytes, j)?;
+                if self_closing {
+                    return None; // `<title/>` has no text content
+                }
+                let content_end = find_close_tag(&lower, content_start, tag)?;
+                let raw = &html[content_start..content_end];
+                // Decode entities BEFORE collapsing whitespace, so `&nbsp;` folds.
+                let text = collapse_ws(decode_entities(&strip_tags(raw))).trim().to_string();
+                if text.is_empty() {
                     return None;
                 }
-                return None;
+                return Some(bound_chars(&text, MAX_TITLE_CHARS));
             }
         }
         i = after;
+    }
+    None
+}
+
+/// Find the end of an opening tag, starting just after the tag name. Returns
+/// `(content_start, self_closing)`. A `>` inside a quoted attribute value does
+/// **not** terminate the tag.
+fn end_of_open_tag(bytes: &[u8], from: usize) -> Option<(usize, bool)> {
+    let mut i = from;
+    let mut quote: Option<u8> = None;
+    let mut last_non_ws = 0u8;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            Some(q) => {
+                if b == q {
+                    quote = None;
+                }
+            }
+            None => match b {
+                b'"' | b'\'' => quote = Some(b),
+                b'>' => return Some((i + 1, last_non_ws == b'/')),
+                _ => {}
+            },
+        }
+        if !b.is_ascii_whitespace() {
+            last_non_ws = b;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the matching `</tag>` at or after `start`, requiring the tag name be
+/// followed by a real delimiter so `</titlebar>` doesn't close `</title>`.
+/// Returns the byte index of the `<` of the close tag.
+fn find_close_tag(lower: &str, start: usize, tag: &str) -> Option<usize> {
+    let needle = format!("</{tag}");
+    let bytes = lower.as_bytes();
+    let mut from = start;
+    while let Some(rel) = lower[from..].find(&needle) {
+        let pos = from + rel;
+        let after = pos + needle.len();
+        match bytes.get(after) {
+            Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'/') | None => {
+                return Some(pos);
+            }
+            _ => from = after, // e.g. `</titlebar>` — keep looking
+        }
     }
     None
 }
@@ -683,6 +803,49 @@ mod tests {
             Some("Hi there".to_string())
         );
         assert_eq!(resolve_title("<title>caf&#233;</title>"), Some("café".to_string()));
+    }
+
+    #[test]
+    fn title_skips_comments_and_lookalike_close_tags() {
+        // A commented-out title must not win over the real one.
+        assert_eq!(
+            resolve_title("<!-- <title>Fake</title> --><title>Real</title>"),
+            Some("Real".to_string())
+        );
+        // `</titlebar>` must not close `<title>`.
+        assert_eq!(
+            resolve_title("<title>Kept</title>bar text"),
+            Some("Kept".to_string())
+        );
+        assert_eq!(
+            resolve_title("<title>Real <x>y</x></title>"),
+            Some("Real y".to_string())
+        );
+    }
+
+    #[test]
+    fn title_tolerates_gt_inside_quoted_attribute() {
+        assert_eq!(
+            resolve_title(r#"<title data-x="a>b">Real Title</title>"#),
+            Some("Real Title".to_string())
+        );
+    }
+
+    #[test]
+    fn title_self_closing_has_no_text() {
+        // `<title/>` yields nothing → fall through to h1.
+        assert_eq!(
+            resolve_title("<title/><h1>Heading</h1>"),
+            Some("Heading".to_string())
+        );
+    }
+
+    #[test]
+    fn title_nbsp_entity_collapses() {
+        assert_eq!(
+            resolve_title("<title>a&nbsp;&nbsp;b</title>"),
+            Some("a b".to_string())
+        );
     }
 
     #[test]
@@ -885,5 +1048,39 @@ mod fs_tests {
         d.write("index.html", b"<h1>x</h1>");
         d.write("glasspad.yaml", b"title: [unterminated\n");
         assert!(matches!(scan_dir(d.path()), Err(ScanError::Manifest(_, _))));
+    }
+
+    #[test]
+    fn oversized_manifest_is_hard_error() {
+        let d = TempDir::new();
+        d.write("index.html", b"<h1>x</h1>");
+        // Valid YAML, but far over the tight manifest cap — must never reach the
+        // parser (alias-bomb defense).
+        let big = format!("title: {}\n", "a".repeat((MAX_MANIFEST_BYTES + 10) as usize));
+        d.write("glasspad.yaml", big.as_bytes());
+        assert!(matches!(scan_dir(d.path()), Err(ScanError::ManifestTooLarge(_, _))));
+    }
+
+    #[test]
+    fn manifest_nav_dedupes_repeated_entries() {
+        let d = TempDir::new();
+        d.write("a.html", b"<h1>A</h1>");
+        d.write("b.html", b"<h1>B</h1>");
+        d.write("glasspad.yaml", b"nav: [a, a, b, a]\n");
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.nav, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_artifact_is_rejected_without_hanging() {
+        use std::os::unix::net::UnixListener;
+        let d = TempDir::new();
+        d.write("index.html", b"<h1>ok</h1>");
+        // A unix socket is a non-regular file; a FIFO would block on open, which is
+        // exactly why we reject via lstat first. A socket exercises the same guard
+        // without the test needing mkfifo.
+        let _sock = UnixListener::bind(d.path().join("weird.html")).unwrap();
+        assert!(matches!(scan_dir(d.path()), Err(ScanError::UnsupportedFileType(_))));
     }
 }

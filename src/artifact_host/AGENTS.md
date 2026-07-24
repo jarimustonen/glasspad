@@ -51,8 +51,10 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   and the `ArtifactHost` state (atomic snapshot swap + SSE reload broadcast).
   Space **asset** responses carry `nosniff` + `Content-Security-Policy: sandbox`
   so a hostile top-level SVG/HTML asset runs script-less in a null origin (the
-  `sandbox` directive is ignored for subresource loads, so JS/CSS/img/fonts still
-  load into an artifact) + `Access-Control-Allow-Origin: *` for module/font reads.
+  `sandbox` directive is ignored for subresource loads, so JS/CSS/img still load
+  into an artifact). **No `Access-Control-Allow-Origin`** on user assets — a
+  wildcard would let any foreign page `fetch()`-read a space's assets (the request
+  carries a legit loopback `Host`). Classic subresources need no CORS.
 - The directory watch is a **dependency-free 500 ms poll** (`server.rs`
   `spawn_watcher`/`fingerprint`) that rescans + atomically swaps + fires the SSE
   reload on change; a rescan that fails (e.g. a fresh collision) keeps the
@@ -63,12 +65,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
 - **`script-src` includes `'unsafe-eval'`** — Vega-Lite needs it; verified
   empirically (design.md §4). Acceptable only *because* egress + null-origin
   isolation are untouched. Do not add `allow-same-origin` to the artifact iframe.
-- **`connect-src` is the exfil boundary.** Wave 1 set it to `'none'`; Wave 2a
-  widened it to name **exactly the loopback SSE-reload path** on both origins
-  (`http://127.0.0.1:PORT/_gp/reload http://localhost:PORT/_gp/reload`) — a CSP
-  path-source, so `/api/*`, any other path, foreign hosts, and canaries all still
-  violate. Do **not** relax it to a bare origin (that re-opens `/api/*`) or a
-  foreign host. The security suite proves a self-host `/api` fetch still blocks.
+- **`connect-src 'none'` is the exfil boundary — keep it closed.** Live reload is
+  driven from the **trusted shell** (its `connect-src 'self'` permits the SSE
+  `EventSource`), so the *artifact* stays fully closed. Do not widen the artifact
+  `connect-src`. If Wave 3b's `bridge.js` needs in-frame reload, widen to the exact
+  `/_gp/reload` **path** (a CSP path-source) **plus a query-rejecting guard** —
+  never a bare origin (re-opens `/api/*`), never a foreign host.
 - The artifact iframe is `sandbox="allow-scripts allow-top-navigation-by-user-activation"`.
   No `allow-same-origin`.
 

@@ -14,6 +14,8 @@ commits:
   summary: Wave 1 review fixes — bridge/host-guard hardening, both-origin CSP, guard tests
 - hash: dfeb9a0
   summary: Wave 2b — real base.css/charts.js/manifest.json + vendored Vega under /_gp/v1/; fragment chart renders end-to-end in both themes
+- hash: f4b523a
+  summary: Wave 2a — space model + live directory serving (atomic snapshot, slug/reserved/collision + symlink/traversal rejection, MIME + size limits, SSE reload)
 ---
 
 # Rewrite Glasspad as an HTML-artifact host

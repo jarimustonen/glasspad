@@ -134,11 +134,15 @@ struct Hit {
     title: Option<String>,
 }
 
-/// Resolve an artifact. A space present in the live snapshot is served **only**
-/// from it (a real space never leaks the built-in `demo` probes); spaces absent
-/// from the snapshot fall back to the fixtures registry.
-fn find_artifact(host: &ArtifactHost, space: &str, slug: &str) -> Option<Hit> {
-    let snap = host.snapshot();
+// Each handler captures ONE `Arc<Snapshot>` up front and resolves everything
+// against it, so a mid-request watcher swap can never mix a title from one
+// snapshot with nav from another. A space present in the snapshot is served
+// **only** from it (a real space never leaks the built-in `demo` probes); spaces
+// absent from the snapshot fall back to the fixtures registry (the regression
+// suite). Live-slug misses do NOT fall through to fixtures.
+
+/// Resolve an artifact against a captured snapshot.
+fn find_artifact(snap: &Snapshot, space: &str, slug: &str) -> Option<Hit> {
     if let Some(sp) = snap.space(space) {
         return sp.artifact(slug).map(|a| Hit {
             html: a.html.clone(),
@@ -152,8 +156,7 @@ fn find_artifact(host: &ArtifactHost, space: &str, slug: &str) -> Option<Hit> {
 }
 
 /// Ordered slugs for a space's nav (live nav order, else the fixtures order).
-fn space_slugs(host: &ArtifactHost, space: &str) -> Vec<String> {
-    let snap = host.snapshot();
+fn space_slugs(snap: &Snapshot, space: &str) -> Vec<String> {
     if let Some(sp) = snap.space(space) {
         return sp.slugs();
     }
@@ -164,8 +167,7 @@ fn space_slugs(host: &ArtifactHost, space: &str) -> Vec<String> {
 }
 
 /// The home slug for a space (`index` > `home` > first in nav order).
-fn space_home(host: &ArtifactHost, space: &str) -> Option<String> {
-    let snap = host.snapshot();
+fn space_home(snap: &Snapshot, space: &str) -> Option<String> {
     if let Some(sp) = snap.space(space) {
         return sp.home.clone();
     }
@@ -202,7 +204,7 @@ async fn artifact_content(
     if !valid_space(&space) || !valid_name(&slug) {
         return not_found();
     }
-    let Some(hit) = find_artifact(&host, &space, &slug) else {
+    let Some(hit) = find_artifact(&host.snapshot(), &space, &slug) else {
         return not_found();
     };
     // The noeval knob only *tightens* the policy, and only in debug builds; the
@@ -229,10 +231,11 @@ async fn shell_page(
     if !valid_space(&space) || !valid_name(&slug) {
         return not_found();
     }
-    let Some(hit) = find_artifact(&host, &space, &slug) else {
+    let snap = host.snapshot();
+    let Some(hit) = find_artifact(&snap, &space, &slug) else {
         return not_found();
     };
-    render_shell(&host, &space, &slug, hit.title.as_deref())
+    render_shell(&snap, &space, &slug, hit.title.as_deref())
 }
 
 /// Space entry — the shell for the home artifact (`index`, else first slug).
@@ -243,16 +246,17 @@ async fn space_entry(
     if !valid_space(&space) {
         return not_found();
     }
-    let Some(home) = space_home(&host, &space) else {
+    let snap = host.snapshot();
+    let Some(home) = space_home(&snap, &space) else {
         return not_found();
     };
-    let title = find_artifact(&host, &space, &home).and_then(|h| h.title);
-    render_shell(&host, &space, &home, title.as_deref())
+    let title = find_artifact(&snap, &space, &home).and_then(|h| h.title);
+    render_shell(&snap, &space, &home, title.as_deref())
 }
 
-fn render_shell(host: &ArtifactHost, space: &str, slug: &str, title: Option<&str>) -> Response {
+fn render_shell(snap: &Snapshot, space: &str, slug: &str, title: Option<&str>) -> Response {
     let nonce = token::generate_token();
-    let slugs = space_slugs(host, space);
+    let slugs = space_slugs(snap, space);
     let refs: Vec<&str> = slugs.iter().map(|s| s.as_str()).collect();
     let body = shell::render(space, slug, title.unwrap_or(""), &refs, &nonce);
     let csp = headers::shell_csp(&nonce);
@@ -278,6 +282,14 @@ fn render_shell(host: &ArtifactHost, space: &str, slug: &str, title: Option<&str
 /// SVG/HTML asset opened *as a document* runs script-less in a null origin (the
 /// `sandbox` directive doesn't apply to subresource loads, so JS/CSS/img/fonts
 /// still load into an artifact).
+///
+/// **No `Access-Control-Allow-Origin`.** A wildcard here would let *any* web page
+/// the user has open `fetch()` a space's assets cross-origin (the request carries
+/// a legitimate loopback `Host`, so `host_guard` passes) — a real exfil channel
+/// that would defeat the egress boundary. Classic `<img>`/`<script src>`/`<link>`
+/// subresources need no CORS, so artifacts still use their assets; cross-origin
+/// fonts/modules/`fetch` from a null-origin artifact are intentionally NOT enabled
+/// here (that needs a capability-scoped design, not a blanket `*`).
 async fn space_asset(
     State(host): State<Arc<ArtifactHost>>,
     Path((space, path)): Path<(String, String)>,
@@ -300,13 +312,6 @@ async fn space_asset(
     hmap.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(asset.content_type),
-    );
-    // Modules, fonts, and `fetch` from the null-origin artifact are cross-origin
-    // to the asset host, so permit the read (no credentials); the asset is the
-    // agent's own local content and holds no secret.
-    hmap.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
     );
     // Neutralize a hostile top-level asset document; harmless for subresources.
     hmap.insert(
@@ -452,13 +457,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let csp = header(&resp, "content-security-policy");
         assert!(csp.starts_with("sandbox allow-scripts"), "sandbox missing: {csp}");
-        // Egress is bounded to exactly the loopback SSE-reload path — nothing else,
-        // and never a foreign host. `/api/*` and canaries stay blocked.
-        assert!(
-            csp.contains("connect-src http://127.0.0.1:3000/_gp/reload http://localhost:3000/_gp/reload"),
-            "connect-src not SSE-scoped: {csp}"
-        );
-        assert!(!csp.contains("connect-src *"), "connect-src wildcard: {csp}");
+        // Egress stays fully closed — reload is shell-side, so the artifact needs
+        // no connect authority. `/api/*`, canaries, and self all stay blocked.
+        assert!(csp.contains("connect-src 'none'"), "egress open: {csp}");
+        assert!(!csp.contains("/_gp/reload"), "SSE path leaked into artifact CSP: {csp}");
         assert!(csp.contains("http://127.0.0.1:3000"), "host not named: {csp}");
         assert!(csp.contains("'unsafe-eval'"), "eval frozen in: {csp}");
         assert_eq!(header(&resp, "x-content-type-options"), "nosniff");
@@ -567,6 +569,8 @@ mod tests {
         assert_eq!(header(&resp, "x-content-type-options"), "nosniff");
         // A hostile top-level asset document is sandboxed (script-less null origin).
         assert_eq!(header(&resp, "content-security-policy"), "sandbox");
+        // No wildcard CORS — a foreign origin must not be able to read the asset.
+        assert_eq!(header(&resp, "access-control-allow-origin"), "");
     }
 
     #[tokio::test]

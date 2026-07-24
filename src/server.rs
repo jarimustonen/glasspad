@@ -98,76 +98,99 @@ pub fn load_space(dir: &Path) -> Result<Snapshot, ScanError> {
     Ok(snap)
 }
 
-/// A dependency-free filesystem watcher: poll a cheap fingerprint of the tree
-/// (paths + mtimes + sizes) and, on any change, rescan into a fresh snapshot,
-/// swap it atomically, and fire the SSE reload. A rescan that fails (e.g. the
-/// user just introduced a slug collision) keeps the last-good snapshot serving.
+/// A dependency-free filesystem watcher: poll a cheap fingerprint of the scan
+/// surface and, on change, rescan into a fresh snapshot, swap it atomically, and
+/// fire the SSE reload. Runs the blocking fingerprint + scan on a blocking pool
+/// (never an async worker). A rescan that fails (e.g. the user just introduced a
+/// slug collision) keeps the last-good snapshot serving and is retried when the
+/// surface changes again; the same failure is logged only once.
 fn spawn_watcher(host: Arc<ArtifactHost>, dir: PathBuf) {
     tokio::spawn(async move {
-        let mut last = fingerprint(&dir);
+        // `loaded_fp` tracks the last *successfully loaded* state, so a failed
+        // scan is retried on the next tick instead of being silently skipped.
+        let mut loaded_fp = fp_blocking(dir.clone()).await;
+        let mut last_err_fp: Option<u64> = None;
         loop {
             tokio::time::sleep(WATCH_INTERVAL).await;
-            let fp = fingerprint(&dir);
-            if fp == last {
+            let fp = fp_blocking(dir.clone()).await;
+            if fp == loaded_fp {
                 continue;
             }
-            last = fp;
-            match load_space(&dir) {
-                Ok(snap) => {
+            let d = dir.clone();
+            match tokio::task::spawn_blocking(move || load_space(&d)).await {
+                Ok(Ok(snap)) => {
                     host.swap(snap);
                     host.notify_reload();
+                    loaded_fp = fp;
+                    last_err_fp = None;
                     eprintln!("glasspad: reloaded {}", dir.display());
                 }
-                Err(e) => {
-                    eprintln!(
-                        "glasspad: rescan of {} failed, keeping last good snapshot: {e}",
-                        dir.display()
-                    );
+                Ok(Err(e)) => {
+                    // Keep serving the last-good snapshot; retry when the surface
+                    // changes. Log each distinct failing state once (no 2 Hz spam).
+                    if last_err_fp != Some(fp) {
+                        eprintln!(
+                            "glasspad: rescan of {} failed, keeping last good snapshot: {e}",
+                            dir.display()
+                        );
+                        last_err_fp = Some(fp);
+                    }
                 }
+                Err(join) => eprintln!("glasspad: watcher task failed: {join}"),
             }
         }
     });
 }
 
-/// A cheap change-detection fingerprint over the whole tree: every entry's
-/// relative path, size, and mtime. Never follows symlinks (a symlink's own
-/// metadata is hashed, so swapping a file for a symlink is detected). Errors
-/// collapse to a sentinel so a transient read failure just triggers a rescan.
+/// Run `fingerprint` on the blocking pool.
+async fn fp_blocking(dir: PathBuf) -> u64 {
+    tokio::task::spawn_blocking(move || fingerprint(&dir))
+        .await
+        .unwrap_or(0)
+}
+
+/// A cheap change-detection fingerprint over **exactly the scan surface**: the
+/// top-level directory listing (so any added/removed/edited top-level file or the
+/// manifest is caught) plus the `assets/` subtree recursively. It deliberately
+/// does **not** descend into other subdirectories (`.git`, `node_modules`, build
+/// output) — the scanner ignores them, so walking them every tick would be wasted
+/// CPU. Never follows symlinks (a symlink's own metadata is hashed, so swapping a
+/// file for a symlink is detected).
 fn fingerprint(dir: &Path) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    let mut stack = vec![dir.to_path_buf()];
     let mut entries: Vec<(PathBuf, bool, u64, i128)> = Vec::new();
-    while let Some(cur) = stack.pop() {
-        let rd = match std::fs::read_dir(&cur) {
-            Ok(rd) => rd,
-            Err(_) => {
-                0u8.hash(&mut hasher);
-                continue;
-            }
-        };
-        for entry in rd.flatten() {
-            let path = entry.path();
-            let meta = match std::fs::symlink_metadata(&path) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let is_symlink = meta.file_type().is_symlink();
-            if meta.is_dir() && !is_symlink {
-                stack.push(path.clone());
-            }
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos() as i128)
-                .unwrap_or(-1);
-            entries.push((path, is_symlink, meta.len(), mtime));
-        }
-    }
-    // Sort for a stable, order-independent fingerprint.
+    collect_level(dir, false, &mut entries); // top level only
+    collect_level(&dir.join(space::ASSETS_DIR), true, &mut entries); // assets subtree
     entries.sort();
+    let mut hasher = DefaultHasher::new();
     entries.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Collect `(path, is_symlink, len, mtime_nanos)` for one directory. When
+/// `recurse` is set, descend into real subdirectories (used for `assets/`).
+fn collect_level(dir: &Path, recurse: bool, out: &mut Vec<(PathBuf, bool, u64, i128)>) {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let is_symlink = meta.file_type().is_symlink();
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos() as i128)
+            .unwrap_or(-1);
+        out.push((path.clone(), is_symlink, meta.len(), mtime));
+        if recurse && meta.is_dir() && !is_symlink {
+            collect_level(&path, true, out);
+        }
+    }
 }
 
 #[cfg(test)]
