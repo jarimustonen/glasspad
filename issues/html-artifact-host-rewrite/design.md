@@ -193,3 +193,24 @@ as an optional "static-safe" render mode.
 - A browser sandbox-escape bug — no separate origin locally to contain blast
   radius; acceptable for single-user localhost, and the flip to a separate origin
   is the mitigation if the tool ever grows a shared tier again.
+
+## 10. Wave 1 review — resolved decisions (2026-07-24, PO)
+
+Three design forks surfaced by the Wave 1 `/llm-review` (Gemini 3.1 Pro,
+GPT-5.6-sol, Opus 4.7, DeepSeek v4 Pro). Resolved by the product owner:
+
+- **D1 — `allow-top-navigation-by-user-activation` (sandbox token).** **KEEP.**
+  Click-gated top-nav residual, needed for Wave 3b full-document cross-nav
+  (`target=_top`). Revisit when Wave 3b wires that navigation; not a Wave 2
+  blocker.
+- **D2 — Legacy `/{id}` pad renderer coexisting unsandboxed same-origin.**
+  **REMOVE — the legacy v0.1 path is not used anywhere** (PO). Supersedes the
+  earlier "accept coexistence until Wave 5" stance: delete the legacy render
+  route + `/api/pads` handlers as confirmed dead code. Because this edits the
+  shared router / `main.rs` (a hot file Wave 2a is currently editing), it is
+  **sequenced after Wave 2 lands** — folded into / pulled ahead of Wave 5's
+  removals, not run in parallel with Wave 2.
+- **D3 — Artifact CSP names the whole loopback host, not just `/_gp/v1/`.**
+  **DEFER to Wave 2a's design** — weigh a separate asset origin (own port, no
+  dynamic routes) so the CSP can name just that host. Loopback-only, so the
+  residual is local-logs-only. No separate PO call needed.

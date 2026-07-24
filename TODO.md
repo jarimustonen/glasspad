@@ -56,14 +56,14 @@ wave plan's merge policy).
   55 Rust contract/guard tests. Vega-Lite resolved: `'unsafe-eval'` required and
   frozen into `script-src` (recorded `design.md §4`). `/llm-review` (Gemini 3.1
   Pro, GPT-5.6-sol, Opus 4.7, DeepSeek v4 Pro) + `/assess-findings`: 9 FIX
-  applied, 3 design forks open (see below). **3 PO decisions pending** (none
-  block Wave 2; item 1 blocks Wave 3b/4):
-  1. `allow-top-navigation-by-user-activation` — click-gated top-nav residual;
-     keep (needed for Wave 3b full-doc nav) vs route all cross-nav through bridge.
-  2. Legacy `/{id}` pad renderer coexists unsandboxed same-origin (Wave 5 removes
-     it) — accept coexistence through Waves 1–4 vs pull its sandboxing forward.
-  3. Artifact CSP names whole loopback host, not just `/_gp/v1/` — consider a
-     separate asset origin (Wave 2a architecture decision).
+  applied, 3 design forks **RESOLVED by PO (2026-07-24)** — see `design.md §10`:
+  1. `allow-top-navigation-by-user-activation` → **KEEP** (needed Wave 3b full-doc
+     nav); revisit at Wave 3b.
+  2. Legacy `/{id}` pad renderer + `/api/pads` → **REMOVE (unused)** — delete as
+     dead code. Sequenced **after Wave 2** (shares the router/`main.rs` hot file
+     with 2a); folded into / pulled ahead of Wave 5 removals.
+  3. Artifact CSP names whole loopback host → **DEFER to Wave 2a** (weigh a
+     separate asset origin).
 - [ ] **Phase 2 — Space model + live directory serving.** Snapshot scanner,
   slug grammar + collision/reserved-name rejection, asset routing + MIME + size
   limits, atomic rescan, filesystem watch + SSE reload.
@@ -74,9 +74,13 @@ wave plan's merge policy).
 - [ ] **Phase 5 — Nav + cross-links.** Parent-frame nav chrome; bridge intercepts
   same-space relative links.
 - [ ] **Phase 6 — Removals + migration.** Coupling audit of the "reused" server
-  pieces first; then delete `src/spec/*`, `src/client/dashboard.js`; move data
-  parsers to an optional `glasspad data` helper. **Only after Phase 1 tests pass
-  on the new path.** Update `skill.md`, `README.md`, `DESIGN.md` pointers.
+  pieces first; then delete `src/spec/*`, `src/client/dashboard.js`; **also delete
+  the legacy `/{id}` pad renderer + `/api/pads` handlers (PO confirmed unused —
+  decision D2)**; move data parsers to an optional `glasspad data` helper. **Only
+  after Phase 1 tests pass on the new path.** Update `skill.md`, `README.md`,
+  `DESIGN.md` pointers. NB: the legacy-route removal can be pulled ahead of the
+  full Wave 5 once Wave 2 lands (it only needs the router/`main.rs` free of the
+  parallel Wave 2a edit) — sequence it, never parallel with a router-touching wave.
 
 ## Backlog / parallel decisions (not blocking the rewrite)
 
