@@ -175,6 +175,13 @@ mod tests {
         assert!(is_fragment("plain text with no tags"));
         assert!(is_fragment("<htmlish>not really html</htmlish>")); // not a real <html> tag
         assert!(is_fragment("")); // empty is trivially a fragment
+        // A fragment that OPENS with a well-formed leading comment (a license
+        // banner, an authoring note) must stay a fragment: skipping the comment
+        // reveals a bare `<h1>`/`<div>`, not a doctype/html token. This is the
+        // mirror of the full-document `<!-- license --><!doctype html>` case — the
+        // comment tolerance must not tip a fragment into "served verbatim".
+        assert!(is_fragment("<!-- banner --><h1>Hi</h1>"));
+        assert!(is_fragment("\u{feff}  <!-- a --> <!-- b -->\n<div>card</div>"));
         // An unterminated leading comment leaves no real markup → fragment.
         assert!(is_fragment("<!-- never closed <html>"));
         // Look-alikes that are NOT a real doctype/html token must not slip through

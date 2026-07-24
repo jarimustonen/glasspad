@@ -7,7 +7,7 @@ use std::time::Duration;
 use axum::{middleware, Router};
 use tokio::net::TcpListener;
 
-use crate::artifact_host::space::{self, ScanError, Snapshot};
+use crate::artifact_host::space::{self, Artifact, ScanError, Snapshot, Space};
 use crate::artifact_host::{self, guards, ArtifactHost};
 
 /// How often the (dependency-free) filesystem watcher polls the served directory
@@ -37,44 +37,58 @@ pub fn build_app(port: u16) -> Router {
     build_app_with_host(port, Arc::new(ArtifactHost::new(port)))
 }
 
-/// Serve, optionally rendering a live directory as a space (Wave 2a). Wave 3a
-/// formalizes the CLI surface (`serve ./dir`, fragment detection, `--json`); this
-/// is the minimal wiring Phase 2 needs to prove live serving end-to-end.
-pub async fn run_dir(port: u16, dir: Option<PathBuf>) {
-    let host = Arc::new(ArtifactHost::new(port));
+/// The slug of the single artifact a `create`d space holds: its canonical home.
+pub const SINGLE_SLUG: &str = "index";
 
-    if let Some(dir) = dir {
-        // Initial scan is fail-fast: a malformed/colliding/reserved space is an
-        // error the user must fix, reported informatively (AI-first CLI contract).
-        match load_space(&dir) {
-            Ok(snap) => host.swap(snap),
-            Err(e) => {
-                eprintln!("glasspad: cannot serve {}: {e}", dir.display());
-                std::process::exit(1);
-            }
-        }
-        spawn_watcher(host.clone(), dir);
-    }
+/// Bind the loopback control plane. **Loopback-only** (design.md §5): binding a
+/// routable interface is not offered without an explicit unsafe opt-in (not
+/// implemented). Returns the bind error so the CLI can surface it as its error
+/// envelope (e.g. port already in use) rather than panicking.
+pub async fn bind_loopback(port: u16) -> std::io::Result<TcpListener> {
+    TcpListener::bind(("127.0.0.1", port)).await
+}
 
-    let app = build_app_with_host(port, host);
-
-    let addr = format!("127.0.0.1:{}", port);
-    eprintln!("glasspad serving on http://{}", addr);
-
-    // Loopback-only bind (design.md §5). Binding a routable interface is not
-    // offered without an explicit unsafe opt-in (not implemented yet).
-    let listener = TcpListener::bind(&addr).await.unwrap();
+/// Serve the app on an already-bound listener until the process is killed. Split
+/// from `bind_loopback` so the CLI can bind first (surfacing a bind failure as an
+/// error) and print its startup envelope only once the port is actually held.
+pub async fn serve_on(listener: TcpListener, app: Router) {
     axum::serve(listener, app).await.unwrap();
 }
 
-/// Scan `dir` into a one-space [`Snapshot`]. The space name is the directory's
-/// final component, validated against the space grammar + reserved list.
-pub fn load_space(dir: &Path) -> Result<Snapshot, ScanError> {
+/// Scan `dir` into a one-space [`Snapshot`], also returning the derived space
+/// name. The name is the directory's final component, validated against the space
+/// grammar + reserved list. Fail-fast: a malformed / colliding / reserved space
+/// is an error the caller reports informatively (AI-first CLI contract).
+pub fn scan_named(dir: &Path) -> Result<(String, Snapshot), ScanError> {
     let name = space::space_name_for(dir)?;
     let space = space::scan_dir(dir)?;
     let mut snap = Snapshot::empty();
-    snap.spaces.insert(name, space);
-    Ok(snap)
+    snap.spaces.insert(name.clone(), space);
+    Ok((name, snap))
+}
+
+/// Scan `dir` into a one-space [`Snapshot`] (the name is discarded — used by the
+/// watcher, which already knows the directory it is re-scanning).
+pub fn load_space(dir: &Path) -> Result<Snapshot, ScanError> {
+    Ok(scan_named(dir)?.1)
+}
+
+/// Build a one-artifact snapshot from a single file's HTML (the `create` model).
+/// The lone artifact is the space's home (`SINGLE_SLUG`); its title is resolved
+/// from the HTML (`<title>`/`<h1>`, parsed not regexed), falling back to the space
+/// name. Fragment-vs-full-document detection is **not** done here: the raw HTML is
+/// stored verbatim and the content route classifies + wraps it at serve time
+/// (`wrap::render_artifact`), so `create` and `serve` share one detector.
+pub fn one_artifact_snapshot(name: &str, html: String) -> Snapshot {
+    let title = space::resolve_title(&html).unwrap_or_else(|| name.to_string());
+    let mut sp = Space::default();
+    sp.artifacts
+        .insert(SINGLE_SLUG.to_string(), Artifact { html, title });
+    sp.nav = vec![SINGLE_SLUG.to_string()];
+    sp.home = Some(SINGLE_SLUG.to_string());
+    let mut snap = Snapshot::empty();
+    snap.spaces.insert(name.to_string(), sp);
+    snap
 }
 
 /// A dependency-free filesystem watcher: poll a cheap fingerprint of the scan
@@ -83,7 +97,7 @@ pub fn load_space(dir: &Path) -> Result<Snapshot, ScanError> {
 /// (never an async worker). A rescan that fails (e.g. the user just introduced a
 /// slug collision) keeps the last-good snapshot serving and is retried when the
 /// surface changes again; the same failure is logged only once.
-fn spawn_watcher(host: Arc<ArtifactHost>, dir: PathBuf) {
+pub fn spawn_watcher(host: Arc<ArtifactHost>, dir: PathBuf) {
     tokio::spawn(async move {
         // `loaded_fp` tracks the last *successfully loaded* state, so a failed
         // scan is retried on the next tick instead of being silently skipped.
@@ -119,6 +133,95 @@ fn spawn_watcher(host: Arc<ArtifactHost>, dir: PathBuf) {
             }
         }
     });
+}
+
+/// The single-file analogue of [`spawn_watcher`] (the `create` model): poll one
+/// file's `(len, mtime)` and, on change, re-read it into a fresh one-artifact
+/// snapshot, swap atomically, and fire the SSE reload. A read that fails (file
+/// removed, non-UTF-8, over the per-file cap) keeps the last-good snapshot serving
+/// and is logged once, so a single-file edit loop reloads the browser just like
+/// `serve ./dir` while a transient bad save never blanks the page.
+pub fn spawn_file_watcher(host: Arc<ArtifactHost>, file: PathBuf, name: String) {
+    tokio::spawn(async move {
+        let mut loaded_fp = file_fp_blocking(file.clone()).await;
+        let mut last_err_fp: Option<(u64, i128)> = None;
+        loop {
+            tokio::time::sleep(WATCH_INTERVAL).await;
+            let fp = file_fp_blocking(file.clone()).await;
+            if fp == loaded_fp {
+                continue;
+            }
+            let f = file.clone();
+            match tokio::task::spawn_blocking(move || read_artifact_file(&f)).await {
+                Ok(Ok(html)) => {
+                    host.swap(one_artifact_snapshot(&name, html));
+                    host.notify_reload();
+                    loaded_fp = fp;
+                    last_err_fp = None;
+                    eprintln!("glasspad: reloaded {}", file.display());
+                }
+                Ok(Err(e)) => {
+                    if last_err_fp != Some(fp) {
+                        eprintln!(
+                            "glasspad: reload of {} failed, keeping last good content: {e}",
+                            file.display()
+                        );
+                        last_err_fp = Some(fp);
+                    }
+                }
+                Err(join) => eprintln!("glasspad: file watcher task failed: {join}"),
+            }
+        }
+    });
+}
+
+/// Read a single artifact file for the `create` watcher: reject a non-regular
+/// file or one over the per-file cap **before** reading it all, then require
+/// UTF-8. Returns an informative message on failure (logged, not fatal — the
+/// watcher keeps the last-good snapshot). The initial `create` load does its own
+/// richer validation (see `cli`); this is the reload path.
+pub fn read_artifact_file(file: &Path) -> Result<String, String> {
+    let meta = std::fs::metadata(file).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a regular file", file.display()));
+    }
+    if meta.len() > space::MAX_FILE_BYTES {
+        return Err(format!(
+            "{} bytes, over the {}-byte per-file limit",
+            meta.len(),
+            space::MAX_FILE_BYTES
+        ));
+    }
+    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > space::MAX_FILE_BYTES {
+        return Err(format!("{} bytes, over the per-file limit", bytes.len()));
+    }
+    String::from_utf8(bytes).map_err(|_| format!("{} is not valid UTF-8", file.display()))
+}
+
+/// Run [`file_fp`] on the blocking pool.
+async fn file_fp_blocking(file: PathBuf) -> (u64, i128) {
+    tokio::task::spawn_blocking(move || file_fp(&file))
+        .await
+        .unwrap_or((0, -1))
+}
+
+/// A single file's change fingerprint: `(len, mtime_nanos)`. Follows symlinks
+/// (`metadata`, not `symlink_metadata`) — `create` serves the file the user named
+/// even if it is a symlink to their own file, so the watch tracks the target.
+fn file_fp(file: &Path) -> (u64, i128) {
+    match std::fs::metadata(file) {
+        Ok(m) => {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i128)
+                .unwrap_or(-1);
+            (m.len(), mtime)
+        }
+        Err(_) => (0, -1),
+    }
 }
 
 /// Run `fingerprint` on the blocking pool.

@@ -591,7 +591,12 @@ fn extract_element_text(html: &str, tag: &str) -> Option<String> {
     while i < bytes.len() {
         // Skip HTML comments so `<!-- <title>x</title> -->` never matches. An
         // unterminated comment swallows the rest of the document → no title.
-        if lower[i..].starts_with("<!--") {
+        // Compare on **bytes**, not `lower[i..]` (a str slice): `i` walks
+        // byte-by-byte and can land inside a multi-byte char (a leading BOM,
+        // an accented/emoji prefix before the first tag), where slicing a `str`
+        // at that index panics. Byte-prefix comparison is boundary-safe, and
+        // `-->`/tag names are ASCII so the match is identical.
+        if bytes[i..].starts_with(b"<!--") {
             let end = lower[i + 4..].find("-->")?;
             i += 4 + end + 3;
             continue;
@@ -867,6 +872,29 @@ mod tests {
         assert!(!t2.contains("<img"));
         assert!(!t2.contains("onerror")); // the <img …> was stripped entirely
         assert_eq!(t2, "x\"");
+    }
+
+    #[test]
+    fn title_tolerates_leading_bom_and_non_ascii_without_panicking() {
+        // Regression: the byte-walking scanner must not slice a `str` at a byte
+        // index inside a multi-byte char. A leading BOM (`create` / `serve` of a
+        // BOM-prefixed artifact) and a non-ASCII text prefix before the first tag
+        // both used to panic the server on scan.
+        assert_eq!(
+            resolve_title("\u{feff}<!doctype html><title>Home</title>"),
+            Some("Home".to_string())
+        );
+        assert_eq!(
+            resolve_title("café ☕ before any tag <h1>Heading</h1>"),
+            Some("Heading".to_string())
+        );
+        // A BOM directly before a comment then a title (comment-skip path).
+        assert_eq!(
+            resolve_title("\u{feff}<!-- ☕ --><title>Real</title>"),
+            Some("Real".to_string())
+        );
+        // Non-ASCII everywhere, no title/h1 → None, still no panic.
+        assert_eq!(resolve_title("\u{feff}just café ☕ text, no tags"), None);
     }
 
     #[test]

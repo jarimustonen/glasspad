@@ -1,25 +1,82 @@
 ---
 name: glasspad
-description: Show visual dashboards, charts, and tables to the user. Use when asked to visualize, plot, chart, dashboard, or "show me" data.
+description: Show rich visual HTML views (dashboards, charts, interactive UIs) to the user in their browser. Use when asked to visualize, plot, chart, dashboard, or "show me" something.
+cli_version: "0.2.0"
+schema_version: 1
 ---
 
-# Glasspad — Visual Output
+# Glasspad — Visual HTML Output
 
-Render data as visual dashboards the user can view in their browser.
-Write a YAML spec describing sections (charts, tables, stats) and pipe it to `glasspad create`.
-The server starts automatically.
+Render your own HTML as a live, safely-sandboxed page the user views in their
+browser. You author plain HTML; Glasspad serves it on loopback and reloads the
+browser when you edit the file. Every command takes paths as arguments, emits a
+stable `--json` envelope, and fails with an informative error (never a prompt).
 
-Run `glasspad docs` for full reference. Run `glasspad docs examples` for ready-to-use examples.
+## The model
 
-## Section types
+- A **space** is a directory of artifacts sharing a URL namespace: `/{space}/`.
+- An **artifact** is one HTML view, addressed by a **slug** = its filename stem
+  (`sales.html` → slug `sales`). You link between them with ordinary relative
+  links (`<a href="./detail">`).
+- Serving is live: edit a file on disk and the browser reloads. The directory is
+  the single source of truth — there is no upload/push step.
 
-- **chart** — bar, line, arc (pie). Uses Vega-Lite encoding: field + type (quantitative/nominal/ordinal/temporal).
-- **table** — columns with field/title + data rows.
-- **stats** — label/value KPI cards.
-- **list** — scrollable list with detail view (cards/rows/compact layouts).
-- **markdown** — rendered markdown content (inline or from dataset).
-- **pivot** — 2D aggregation matrix. Rows × columns → aggregated values (sum/count/avg/min/max/distinct). Supports row hierarchies with first-level subtotals, grand totals, sorting, and currency/percent formatting.
+## Authoring: write HTML
 
-## Layouts
+**Fragment (default).** Write body content; Glasspad wraps it in a themed
+skeleton (design tokens, correct light/dark theme, the nav bridge, opt-in base
+libraries):
 
-grid-2col (default), grid-3col, stack.
+```html
+<h1>Sales Q3</h1>
+<div id="chart"></div>
+<script>gp.chart('#chart', { /* vega-lite spec */ })</script>
+```
+
+**Full document.** If the file starts with `<!doctype html>` or `<html>` (after
+any BOM / whitespace / leading comments — detected tolerantly, not by a naive
+prefix), it is served **verbatim**; you own the whole page. Opt into in-space nav
+by including `/_gp/v1/bridge.js` yourself.
+
+Base libraries live under `/_gp/v1/*` (e.g. `base.css`, `charts.js` = a thin
+`gp.chart(el, spec)` over Vega-Lite). `assets/*` in a space are served by path.
+
+## Commands
+
+```bash
+glasspad serve ./myspace          # serve a directory live (the primary loop)
+glasspad create ./report.html     # one-artifact space from a single file
+glasspad open myspace             # open http://127.0.0.1:3000/myspace/ in the browser
+```
+
+- `serve`/`create` run until killed — start them in the background, then `open`.
+- Add `--json` to any command for a stable envelope. `serve`/`create` print a
+  startup line `{schema_version, serving, port, space, url, ...}` to stdout;
+  errors print `{schema_version, error:{code, message, ...}}` to stderr with a
+  non-zero exit (1 = your input to fix, 2 = system/IO).
+- `--port N` (default 3000). `create --name <space>` overrides the space name
+  (default: the file stem, which must be a valid name). `open --no-browser`
+  prints just the URL.
+
+## Typical flow
+
+```bash
+# One file:
+glasspad create ./report.html --json    # → {"url":"http://127.0.0.1:3000/report/", ...}
+glasspad open report
+
+# A directory of linked pages (index.html = home):
+glasspad serve ./dashboard --json &
+glasspad open dashboard
+# ...edit files; the browser reloads on save.
+```
+
+## Rules enforced on load (informative errors, no silent fixups)
+
+- Slug/space names: lowercase `[a-z0-9-]`, start alphanumeric, ≤64 chars.
+- Reserved names (`_gp`, `_c`, `assets`, `api`) and slug collisions are hard
+  errors. So are symlinks, path traversal, non-UTF-8 files, and oversize files.
+- Home artifact: `index.html` > `home.html` > first in nav order. Nav order comes
+  from an optional `glasspad.yaml` (`nav: [home, sales, detail]`), else
+  lexicographic. `glasspad.yaml` is structure only (title / theme / nav), never
+  content — usually absent.

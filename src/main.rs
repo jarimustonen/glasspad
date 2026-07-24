@@ -1,12 +1,12 @@
 // The DSL/spec, data parsers, and security primitives live in the library crate
 // (`glasspad::{spec,data,security}`) — kept intact for Wave 5. The binary reaches
 // them through the lib rather than re-compiling them: with the legacy pad path
-// removed (Wave 3, design.md §10 / D2), only `cli` (data parsers) and
-// `artifact_host` (security::token) still consume them, so re-`mod`-ing the full
-// DSL into the binary would only manufacture dead-code warnings.
+// removed (Wave 3, design.md §10 / D2), only `artifact_host` (security::token)
+// still consumes them from the binary side, so re-`mod`-ing the full DSL into the
+// binary would only manufacture dead-code warnings. (The `data`/`spec` parsers
+// stay exported from the lib for Wave 5's optional `glasspad data` helper.)
 mod artifact_host;
 mod cli;
-mod docs;
 mod server;
 
 use std::path::PathBuf;
@@ -14,43 +14,47 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "glasspad", about = "AI scratchpad for rich data views")]
+#[command(name = "glasspad", about = "AI scratchpad for rich HTML artifact views")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Emit machine-readable JSON (stable, versioned envelopes; errors to stderr).
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the glasspad server
+    /// Serve a directory live as a space (scan + watch + SSE). With no directory,
+    /// serves the built-in fixtures. Runs until killed.
     Serve {
+        /// Directory to serve as a space. Omit to serve only the built-in fixtures.
+        dir: Option<PathBuf>,
         #[arg(short, long, default_value = "3000")]
         port: u16,
-        /// Directory to serve live as a space (Wave 2a). Omit to serve only the
-        /// built-in fixtures; Wave 3a formalizes the full `serve ./dir` contract.
-        dir: Option<PathBuf>,
     },
-    /// Create a new pad from a file or stdin
+    /// Build a one-artifact space from a single file and serve it live.
     Create {
-        #[arg(short, long)]
-        file: Option<PathBuf>,
-        /// Attach a dataset: --data events=events.csv
-        #[arg(long = "data", value_parser = cli::parse_data_arg)]
-        data: Vec<(String, PathBuf)>,
+        /// The HTML file to serve (fragment or full document — auto-detected).
+        file: PathBuf,
+        /// Space name (default: the file stem). Must match the space grammar.
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
     },
-    /// List all pads
-    List,
-    /// Open a pad in the browser
+    /// Open a served space's URL in the browser.
     Open {
-        /// Pad ID
-        id: String,
+        /// Space name (the `{space}` in `/{space}/`).
+        space: String,
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+        /// Print the URL without launching a browser (pipe-friendly).
+        #[arg(long)]
+        no_browser: bool,
     },
-    /// Show documentation (spec, sections, charts, examples, api)
-    Docs {
-        /// Topic: spec, sections, charts, examples, api
-        topic: Option<String>,
-    },
-    /// Output or install the Claude Code skill
+    /// Output or install the Claude Code skill (the CLI's operating manual).
     Skill {
         /// Install to .claude/skills/. Project-level by default, --user for ~/.claude/
         #[arg(long)]
@@ -64,25 +68,12 @@ enum Commands {
 #[tokio::main]
 async fn main() {
     let args = Cli::parse();
+    let json = args.json;
 
     match args.command {
-        Commands::Serve { port, dir } => server::run_dir(port, dir).await,
-        Commands::Create { file, data } => cli::create(file, data, None).await,
-        Commands::List => cli::list(None).await,
-        Commands::Open { id } => cli::open(id, None).await,
-        Commands::Docs { topic } => match topic.as_deref() {
-            None => docs::print_index(),
-            Some("spec") => docs::print_spec(),
-            Some("sections") => docs::print_sections(),
-            Some("charts") => docs::print_charts(),
-            Some("examples") => docs::print_examples(),
-            Some("api") => docs::print_api(),
-            Some(other) => {
-                eprintln!("Unknown topic: {}", other);
-                eprintln!("Available: spec, sections, charts, examples, api");
-                std::process::exit(1);
-            }
-        },
+        Commands::Serve { dir, port } => cli::serve(dir, port, json).await,
+        Commands::Create { file, name, port } => cli::create(file, name, port, json).await,
+        Commands::Open { space, port, no_browser } => cli::open(space, port, json, no_browser),
         Commands::Skill { install_claude, user } => cli::skill(install_claude, user),
     }
 }

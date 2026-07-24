@@ -106,8 +106,10 @@ pub fn router(host: Arc<ArtifactHost>) -> Router {
 // --- Path/slug validation -------------------------------------------------
 
 /// Canonical slug/space grammar. Lowercase, digit, hyphen; must start with an
-/// alphanumeric; bounded length. Reserved names are rejected separately.
-fn valid_name(s: &str) -> bool {
+/// alphanumeric; bounded length. Reserved names are rejected separately. Public
+/// so the CLI (`glasspad create`/`open`) validates slugs/space names against the
+/// exact same grammar the router and scanner enforce.
+pub fn valid_name(s: &str) -> bool {
     let bytes = s.as_bytes();
     if bytes.is_empty() || bytes.len() > 64 {
         return false;
@@ -123,7 +125,9 @@ fn valid_name(s: &str) -> bool {
 
 pub const RESERVED: &[&str] = &["_gp", "_c", "assets", "api"];
 
-fn valid_space(s: &str) -> bool {
+/// A valid space name: the slug grammar plus a not-a-reserved-name check. Public
+/// so the CLI rejects the same names the router does, with one shared definition.
+pub fn valid_space(s: &str) -> bool {
     valid_name(s) && !RESERVED.contains(&s)
 }
 
