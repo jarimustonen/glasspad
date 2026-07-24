@@ -1,3 +1,4 @@
+mod artifact_host;
 mod cli;
 mod data;
 mod docs;

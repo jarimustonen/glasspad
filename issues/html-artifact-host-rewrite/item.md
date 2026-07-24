@@ -1,10 +1,10 @@
 ---
 created: 2026-07-22
-updated: 2026-07-23
+updated: 2026-07-24
 type: feature
 reporter: jari
 assignee: jari
-status: open
+status: in-progress
 priority: high
 slug: html-artifact-host-rewrite
 ---

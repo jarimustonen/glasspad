@@ -63,27 +63,55 @@ that exposes **no** mutation endpoints.
 ## 4. Egress-restricting CSP (the actual exfil boundary)
 
 Artifact responses carry a concrete, tested policy. `'self'` is useless under a
-null origin (it matches nothing), so directives **name the explicit host**:
+null origin (it matches nothing), so directives **name the explicit host**.
+**This is the frozen Phase-1 policy** (implemented in `src/artifact_host/headers.rs`,
+proven by `test-security.sh`):
 
 ```http
 Content-Security-Policy:
-  sandbox allow-scripts;
+  sandbox allow-scripts allow-top-navigation-by-user-activation;
   default-src 'none';
-  script-src 'unsafe-inline' http://127.0.0.1:PORT;
+  script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:PORT;
   style-src  'unsafe-inline' http://127.0.0.1:PORT;
   img-src    http://127.0.0.1:PORT data:;
   font-src   http://127.0.0.1:PORT;
-  connect-src 'none';            /* widened only for the SSE reload path */
+  connect-src 'none';            /* Wave 2a widens this to the named host for SSE — never to a foreign host */
   object-src 'none'; frame-src 'none'; worker-src 'none';
   base-uri 'none'; form-action 'none';
   frame-ancestors http://127.0.0.1:PORT;
 ```
 
+### Decision (Phase 1, frozen): `script-src` includes `'unsafe-eval'`
+
+**Verified empirically, not assumed.** The adversarial suite serves the same
+artifact twice — once under the frozen policy, once under a strictly-tighter
+`?csp=noeval` variant that drops only `'unsafe-eval'` — and observes the
+browser:
+
+- **With `'unsafe-eval'`:** `new Function("return 6*7")()` → `42`. Works.
+- **Without it:** the identical call throws
+  `EvalError: … 'unsafe-eval' is not an allowed source of script …`. Blocked.
+
+Vega-Lite compiles its expression language (filters, calculated fields,
+tooltips, signal expressions) with the `Function` constructor, so `gp.chart()`
+**cannot render** without `'unsafe-eval'`. It is therefore **frozen into the
+artifact `script-src`.**
+
+**Rationale it is acceptable (not a security regression):** the artifact already
+runs attacker-controlled inline script under `'unsafe-inline'`; `'unsafe-eval'`
+grants it *no new reach*. The containment boundary is not "can it run JS" (it
+always can) but **egress + origin isolation**, and those are untouched:
+`connect-src 'none'`, the explicit-host allowlist on every fetching directive,
+and the null origin all still hold — the suite confirms zero bytes reach the
+network canary with `'unsafe-eval'` on. The relaxation lives entirely *inside*
+the sandbox. Freezing it here is a settled implementation detail of the design's
+pre-authorization ("acceptable inside the sandbox"), not a new trade-off.
+
 Notes / open items resolved during Phase 1:
 
 - Inline JS/CSS require `'unsafe-inline'` (agents write inline) — stated, not
-  hidden. Vega-Lite may additionally require `'unsafe-eval'`; acceptable inside
-  the sandbox, but must be **verified** before the policy is frozen.
+  hidden. Vega-Lite additionally requires `'unsafe-eval'` — **verified and
+  frozen in** (above).
 - `/_gp/v1/*` needs `Access-Control-Allow-Origin: *` (no credentials) for the
   requests that are CORS-gated (modules, fonts, `fetch` of data); classic
   `<script src>`/`<link>` are not.

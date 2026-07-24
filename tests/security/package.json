@@ -1,0 +1,13 @@
+{
+  "name": "glasspad-security-suite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Wave 1 adversarial browser suite for the glasspad HTML-artifact host security gate.",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
