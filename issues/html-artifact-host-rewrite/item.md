@@ -12,6 +12,8 @@ commits:
   summary: Wave 1 security gate — sandbox host + CSP contract + adversarial suite
 - hash: 4969c2d
   summary: Wave 1 review fixes — bridge/host-guard hardening, both-origin CSP, guard tests
+- hash: dfeb9a0
+  summary: Wave 2b — real base.css/charts.js/manifest.json + vendored Vega under /_gp/v1/; fragment chart renders end-to-end in both themes
 ---
 
 # Rewrite Glasspad as an HTML-artifact host
