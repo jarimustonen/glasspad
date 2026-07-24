@@ -62,14 +62,19 @@ static FIXTURES: &[Fixture] = &[
     },
 ];
 
-/// Benign home artifact — renders text, loads a base lib over the named host
-/// (classic `<script src>`, which `script-src` permits), reports load success.
+/// Benign home artifact — links the real `base.css`, loads the real `charts.js`
+/// over the named host (classic `<script src>`, which `script-src` permits), and
+/// renders a real, data-backed Vega-Lite bar chart via `gp.chart()`. Reports
+/// load + render success to `window.__gpResult` (and the bridge). This is the
+/// Wave 2b end-to-end demonstration: a fragment-style artifact that charts.
 const HELLO: &str = r##"<!doctype html>
-<html><head><meta charset="utf-8"><title>Hello</title>
+<html data-theme="auto"><head><meta charset="utf-8"><title>Hello</title>
+<meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="/_gp/v1/base.css">
 </head><body>
-<h1>Glasspad artifact host — Wave 1</h1>
-<div id="chart">chart placeholder</div>
+<h1>Glasspad artifact host</h1>
+<p class="gp-muted">A real Vega-Lite chart, themed from the <code>--gp-*</code> tokens.</p>
+<div id="chart" class="gp-chart"></div>
 <script src="/_gp/v1/charts.js"></script>
 <script>
 (function () {
@@ -79,9 +84,33 @@ const HELLO: &str = r##"<!doctype html>
     selfScriptLoaded: (typeof window.gp === "object" && typeof window.gp.chart === "function"),
     chartRendered: false
   };
-  try { if (window.gp && window.gp.chart) { window.gp.chart("#chart", {mark:"bar"}); result.chartRendered = true; } } catch (e) { result.chartError = e.name; }
-  window.__gpResult = result;
-  try { parent.postMessage({ type: "gp-test-result", result: result }, "*"); } catch (e) {}
+  function report() {
+    window.__gpResult = result;
+    try { parent.postMessage({ type: "gp-test-result", result: result }, "*"); } catch (e) {}
+  }
+  var spec = {
+    mark: "bar",
+    data: { values: [
+      { label: "Mon", value: 12 }, { label: "Tue", value: 19 },
+      { label: "Wed", value: 7 },  { label: "Thu", value: 22 },
+      { label: "Fri", value: 15 }
+    ] },
+    encoding: {
+      x: { field: "label", type: "nominal", title: "Day" },
+      y: { field: "value", type: "quantitative", title: "Count" },
+      color: { field: "label", type: "nominal", legend: null }
+    }
+  };
+  try {
+    if (window.gp && window.gp.chart) {
+      window.gp.chart("#chart", spec).then(function () {
+        result.chartRendered = true; report();
+      }, function (e) {
+        result.chartError = (e && e.message) || String(e); report();
+      });
+    }
+  } catch (e) { result.chartError = e.name; }
+  report();
 })();
 </script>
 </body></html>
@@ -244,20 +273,38 @@ const NAV_EXFIL: &str = r#"<!doctype html>
 </body></html>
 "#;
 
-/// `/_gp/v1/*` stub assets. Wave 1 only needs enough for the probes; Waves 2b
-/// fills in the real `base.css` / `charts.js` / `manifest.json`.
+/// `/_gp/v1/*` pinned base libraries (Wave 2b).
+///
+/// The real `base.css` (the `--gp-*` design system), `charts.js` (`gp.chart()`
+/// over Vega-Lite), and `manifest.json`, plus the vendored Vega stack the chart
+/// helper lazily loads from this same host. Every file here is served **inside**
+/// the null-origin artifact sandbox; the caller attaches `nosniff` + CORS + the
+/// hardening headers (design.md §4). `probe.js` remains the Wave-1 exfil-probe
+/// stub (the adversarial suite loads it to prove the *allowed* channel works).
+///
+/// The Vega bundles are the exact pinned builds the old CDN path used
+/// (`vega@5.30.0` / `vega-lite@5.21.0` / `vega-embed@6.26.0`); their SRI hashes
+/// match `src/renderer.rs`. They are vendored under `assets/vendor/` because the
+/// artifact `script-src` names only the loopback host — no external CDN.
 pub fn gp_asset(path: &str) -> Option<(&'static str, &'static str)> {
+    const JS: &str = "text/javascript; charset=utf-8";
     // (content_type, body)
     match path {
         "base.css" => Some(("text/css; charset=utf-8", GP_BASE_CSS)),
-        "charts.js" => Some(("text/javascript; charset=utf-8", GP_CHARTS_JS)),
-        "probe.js" => Some(("text/javascript; charset=utf-8", GP_PROBE_JS)),
-        "manifest.json" => Some(("application/json", GP_MANIFEST)),
+        "charts.js" => Some((JS, GP_CHARTS_JS)),
+        "manifest.json" => Some(("application/json; charset=utf-8", GP_MANIFEST)),
+        "vega.min.js" => Some((JS, GP_VEGA)),
+        "vega-lite.min.js" => Some((JS, GP_VEGA_LITE)),
+        "vega-embed.min.js" => Some((JS, GP_VEGA_EMBED)),
+        "probe.js" => Some((JS, GP_PROBE_JS)),
         _ => None,
     }
 }
 
-const GP_BASE_CSS: &str = ":root{--gp-fg:#111}body{font-family:system-ui,sans-serif}\n";
-const GP_CHARTS_JS: &str = "window.gp=window.gp||{};gp.chart=function(sel,spec){var el=typeof sel==='string'?document.querySelector(sel):sel;if(el)el.textContent='[chart:'+(spec&&spec.mark||'?')+']';return true;};\n";
+const GP_BASE_CSS: &str = include_str!("assets/base.css");
+const GP_CHARTS_JS: &str = include_str!("assets/charts.js");
+const GP_MANIFEST: &str = include_str!("assets/manifest.json");
+const GP_VEGA: &str = include_str!("assets/vendor/vega.min.js");
+const GP_VEGA_LITE: &str = include_str!("assets/vendor/vega-lite.min.js");
+const GP_VEGA_EMBED: &str = include_str!("assets/vendor/vega-embed.min.js");
 const GP_PROBE_JS: &str = "window.__gpProbeLoaded=true;\n";
-const GP_MANIFEST: &str = "{\"version\":\"v1\",\"chart\":{\"signature\":\"gp.chart(elOrSelector, vegaLiteSpec)\"},\"stub\":true}\n";

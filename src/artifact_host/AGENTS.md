@@ -28,8 +28,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
 - `fixtures.rs` — Wave-1 built-in `demo` space of **deliberately hostile**
   artifacts (exfil / escape / eval / postMessage-abuse probes). Wave 2a replaces
   this static registry with a live directory scanner; the probes stay as the
-  regression suite. Also serves the `/_gp/v1/*` **stubs** (Wave 2b fills real
-  `base.css`/`charts.js`/`manifest.json`).
+  regression suite. Also serves the `/_gp/v1/*` base libraries (Wave 2b): the
+  real `base.css` (the `--gp-*` design system), `charts.js` (`gp.chart()` over
+  Vega-Lite), `manifest.json`, and the vendored Vega stack (`vega`/`vega-lite`/
+  `vega-embed`, pinned to the SRI-matched builds under `assets/`). The Vega
+  bundles are vendored, not CDN-loaded, because the artifact `script-src` names
+  only the loopback host — `charts.js` lazily loads them from `/_gp/v1/*`.
 - `mod.rs` — routes (`/{space}/`, `/{space}/{slug}`, `/{space}/_c/{slug}`,
   `/_gp/v1/*`), slug/space grammar + reserved-name rejection, and header wiring.
 

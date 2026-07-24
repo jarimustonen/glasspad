@@ -1,0 +1,44 @@
+{
+  "name": "glasspad-base",
+  "version": "v1",
+  "base": "/_gp/v1/",
+  "description": "Pinned base libraries served inside the null-origin artifact sandbox. Link base.css for the --gp-* design system (Glass Light / Glass Dark) and load charts.js for gp.chart() over Vega-Lite.",
+  "assets": {
+    "base.css": {
+      "type": "text/css",
+      "description": "The --gp-* design-system tokens (light/dark/auto) plus base element styles for fragment artifacts."
+    },
+    "charts.js": {
+      "type": "text/javascript",
+      "description": "Defines window.gp; lazily loads the Vega stack from this host and exposes gp.chart()."
+    }
+  },
+  "vendor": {
+    "vega": "5.30.0",
+    "vega-lite": "5.21.0",
+    "vega-embed": "6.26.0"
+  },
+  "api": {
+    "gp.chart": {
+      "signature": "gp.chart(elOrSelector, vegaLiteSpec, opts?) -> Promise<vegaEmbedResult>",
+      "description": "Render a Vega-Lite specification into a container, themed from the current --gp-* tokens. Re-renders automatically when the surrounding data-theme changes.",
+      "params": {
+        "elOrSelector": "Element | string — the container element, or a CSS selector for it.",
+        "vegaLiteSpec": "object — a Vega-Lite specification.",
+        "opts": {
+          "actions": "boolean (default false) — show the Vega-Embed actions menu.",
+          "renderer": "'svg' | 'canvas' (default 'svg').",
+          "theme": "boolean (default true) — apply the Glasspad --gp-* theme config.",
+          "reactiveTheme": "boolean (default true) — re-render on data-theme change."
+        }
+      },
+      "returns": "Promise resolving to the vega-embed result ({ view, spec, ... }). The chart's Vega view is also stashed on the container as el.__gpView.",
+      "constraints": "Specs must be self-contained: the sandbox sets connect-src 'none', so data.url / external images / remote fonts cannot load — use inline data.values.",
+      "example": "gp.chart('#chart', { mark: 'bar', data: { values: [{a:'A',b:4},{a:'B',b:7}] }, encoding: { x: {field:'a',type:'nominal'}, y: {field:'b',type:'quantitative'} } });"
+    },
+    "gp.themeConfig": {
+      "signature": "gp.themeConfig() -> object",
+      "description": "Build a Vega config object from the current --gp-* tokens (axis, legend, title colors and the categorical palette)."
+    }
+  }
+}

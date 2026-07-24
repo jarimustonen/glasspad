@@ -1,0 +1,327 @@
+/* Glasspad base stylesheet — /_gp/v1/base.css
+ *
+ * The `--gp-*` design system (DESIGN.md) plus a light reset and base element
+ * styles, served INSIDE the null-origin artifact sandbox. A fragment artifact
+ * links this once and inherits Glass Light / Glass Dark theming.
+ *
+ * Theme selection (mirrors src/client/dashboard.css):
+ *   :root / [data-theme="light"]  → Glass Light
+ *   [data-theme="dark"]           → Glass Dark
+ *   [data-theme="auto"]           → follows prefers-color-scheme
+ * The wrapper (Wave 3b) sets `data-theme` on <html> at wrap time (no FOUC);
+ * the bridge only handles later toggles.
+ */
+
+/* === Theme tokens === */
+
+/* Light theme (default) */
+:root,
+[data-theme="light"] {
+  --gp-bg: #fafbfc;
+  --gp-surface: #ffffff;
+  --gp-surface-alt: #f3f4f6;
+  --gp-surface-hover: #f9fafb;
+
+  --gp-text: #1a1b25;
+  --gp-text-secondary: #374151;
+  --gp-text-muted: #6b7280;
+  --gp-text-faint: #9ca3af;
+
+  --gp-accent: #2563eb;
+  --gp-accent-hover: #1d4ed8;
+  --gp-accent-soft: #eff6ff;
+  --gp-accent-border: #bfdbfe;
+  --gp-accent-tag: #dbeafe;
+  --gp-accent-text: #1e40af;
+
+  --gp-border: #e5e7eb;
+  --gp-border-subtle: #f3f4f6;
+  --gp-border-strong: #d1d5db;
+
+  --gp-error: #dc2626;
+  --gp-focus: #3b82f6;
+  --gp-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+
+  --gp-code-text: #d63384;
+  --gp-chart-axis: #888;
+  --gp-chart-grid: #e5e7eb;
+  --gp-chart-bg: transparent;
+  --gp-chart-cat: #4c78a8, #f58518, #e45756, #72b7b2, #54a24b, #eeca3b, #b279a2, #ff9da6, #9d755d, #bab0ac;
+}
+
+/* Dark theme tokens (explicit dark) */
+[data-theme="dark"] {
+  --gp-bg: #0f1117;
+  --gp-surface: #1a1b26;
+  --gp-surface-alt: #242530;
+  --gp-surface-hover: #2a2b38;
+
+  --gp-text: #e5e7eb;
+  --gp-text-secondary: #9ca3af;
+  --gp-text-muted: #6b7280;
+  --gp-text-faint: #4b5563;
+
+  --gp-accent: #6366f1;
+  --gp-accent-hover: #818cf8;
+  --gp-accent-soft: rgba(99, 102, 241, 0.1);
+  --gp-accent-border: rgba(99, 102, 241, 0.25);
+  --gp-accent-tag: rgba(99, 102, 241, 0.2);
+  --gp-accent-text: #a5b4fc;
+
+  --gp-border: rgba(255, 255, 255, 0.08);
+  --gp-border-subtle: rgba(255, 255, 255, 0.04);
+  --gp-border-strong: rgba(255, 255, 255, 0.12);
+
+  --gp-error: #ef4444;
+  --gp-focus: #6366f1;
+  --gp-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+  --gp-code-text: #f472b6;
+  --gp-chart-axis: #6b7280;
+  --gp-chart-grid: rgba(255, 255, 255, 0.06);
+  --gp-chart-bg: #1a1b26;
+  --gp-chart-cat: #60a5fa, #f472b6, #34d399, #fbbf24, #a78bfa, #fb923c, #2dd4bf, #f87171, #818cf8, #a3e635;
+}
+
+/* Auto theme: adopt dark tokens when the system prefers dark.
+   CSS cannot combine @media with a non-media selector, so this block
+   mirrors [data-theme="dark"] above (kept in sync with dashboard.css). */
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    --gp-bg: #0f1117;
+    --gp-surface: #1a1b26;
+    --gp-surface-alt: #242530;
+    --gp-surface-hover: #2a2b38;
+
+    --gp-text: #e5e7eb;
+    --gp-text-secondary: #9ca3af;
+    --gp-text-muted: #6b7280;
+    --gp-text-faint: #4b5563;
+
+    --gp-accent: #6366f1;
+    --gp-accent-hover: #818cf8;
+    --gp-accent-soft: rgba(99, 102, 241, 0.1);
+    --gp-accent-border: rgba(99, 102, 241, 0.25);
+    --gp-accent-tag: rgba(99, 102, 241, 0.2);
+    --gp-accent-text: #a5b4fc;
+
+    --gp-border: rgba(255, 255, 255, 0.08);
+    --gp-border-subtle: rgba(255, 255, 255, 0.04);
+    --gp-border-strong: rgba(255, 255, 255, 0.12);
+
+    --gp-error: #ef4444;
+    --gp-focus: #6366f1;
+    --gp-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+    --gp-code-text: #f472b6;
+    --gp-chart-axis: #6b7280;
+    --gp-chart-grid: rgba(255, 255, 255, 0.06);
+    --gp-chart-bg: #1a1b26;
+    --gp-chart-cat: #60a5fa, #f472b6, #34d399, #fbbf24, #a78bfa, #fb923c, #2dd4bf, #f87171, #818cf8, #a3e635;
+  }
+}
+
+/* === Base reset & body === */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  background: var(--gp-bg);
+  color: var(--gp-text);
+  padding: 1.5rem;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* === Typography === */
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--gp-text);
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0 0 0.5rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: 1.35rem;
+}
+
+h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--gp-text-secondary);
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+a {
+  color: var(--gp-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--gp-accent-hover);
+  text-decoration: underline;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--gp-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+small,
+.gp-muted {
+  color: var(--gp-text-muted);
+}
+
+strong {
+  font-weight: 600;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--gp-border);
+  margin: 1.5rem 0;
+}
+
+/* === Code === */
+
+code,
+pre,
+kbd,
+samp {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+code {
+  color: var(--gp-code-text);
+  background: var(--gp-surface-alt);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--gp-surface-alt);
+  border: 1px solid var(--gp-border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  color: var(--gp-text);
+}
+
+/* === Card surface === */
+
+.gp-card {
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: var(--gp-shadow);
+  min-width: 0;
+}
+
+/* === Stat tiles === */
+
+.gp-stat {
+  background: var(--gp-surface-alt);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.gp-stat-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--gp-text);
+}
+
+.gp-stat-label {
+  font-size: 0.8rem;
+  color: var(--gp-text-muted);
+}
+
+/* === Tables === */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--gp-border-subtle);
+}
+
+th {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--gp-text-muted);
+  border-bottom: 2px solid var(--gp-border);
+}
+
+tbody tr:hover {
+  background: var(--gp-surface-hover);
+}
+
+/* === Chart containers (gp.chart mount points) === */
+
+.gp-chart,
+[data-gp-chart] {
+  background: var(--gp-chart-bg);
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Vega-Embed injects a wrapper; keep it fluid and unobtrusive. */
+.gp-chart .vega-embed,
+[data-gp-chart] .vega-embed {
+  width: 100%;
+}
+
+.gp-chart .vega-embed summary,
+[data-gp-chart] .vega-embed summary {
+  color: var(--gp-text-faint);
+}
+
+/* Error surfaced by gp.chart when a spec fails to render. */
+.gp-chart-error {
+  color: var(--gp-error);
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+}
