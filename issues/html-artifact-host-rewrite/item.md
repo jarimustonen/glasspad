@@ -22,6 +22,8 @@ commits:
   summary: Wave 3a deferred /llm-review — CLI-contract + fragment-detector hardening
 - hash: '7017010'
   summary: Wave 4 nav chrome + same-space cross-nav (trusted parent), injection probe
+- hash: cc3ff85
+  summary: Wave 4 /llm-review fixes — injection-probe broadening, shell script-src nonce-only, same-slug no-op, bidi strip, a11y
 ---
 
 # Rewrite Glasspad as an HTML-artifact host
