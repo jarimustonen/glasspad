@@ -19,10 +19,10 @@ pub fn infer_cell_value(s: &str) -> CellValue {
     }
 
     // Number (integer or decimal, including negative)
-    if let Ok(n) = s.parse::<f64>() {
-        if n.is_finite() {
-            return CellValue::Number(n);
-        }
+    if let Ok(n) = s.parse::<f64>()
+        && n.is_finite()
+    {
+        return CellValue::Number(n);
     }
 
     // Temporal: strict ISO-8601 patterns
@@ -51,11 +51,7 @@ fn is_temporal(s: &str) -> bool {
     }
 
     // Month: 01-12
-    let month = match (bytes[5], bytes[6]) {
-        (b'0', b'1'..=b'9') => true,
-        (b'1', b'0'..=b'2') => true,
-        _ => false,
-    };
+    let month = matches!((bytes[5], bytes[6]), (b'0', b'1'..=b'9') | (b'1', b'0'..=b'2'));
     if !month {
         return false;
     }
@@ -65,13 +61,10 @@ fn is_temporal(s: &str) -> bool {
     }
 
     // Day: 01-31
-    let day = match (bytes[8], bytes[9]) {
-        (b'0', b'1'..=b'9') => true,
-        (b'1', b'0'..=b'9') => true,
-        (b'2', b'0'..=b'9') => true,
-        (b'3', b'0'..=b'1') => true,
-        _ => false,
-    };
+    let day = matches!(
+        (bytes[8], bytes[9]),
+        (b'0', b'1'..=b'9') | (b'1' | b'2', b'0'..=b'9') | (b'3', b'0'..=b'1')
+    );
     if !day {
         return false;
     }
@@ -214,6 +207,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // 3.14 is a decimal-parse sample, not π
     fn infer_decimals() {
         assert_eq!(infer_cell_value("3.14"), CellValue::Number(3.14));
         assert_eq!(infer_cell_value("-0.5"), CellValue::Number(-0.5));
@@ -289,21 +283,21 @@ mod tests {
 
     #[test]
     fn field_kind_all_numbers() {
-        let vals = vec![CellValue::Number(1.0), CellValue::Number(2.0)];
+        let vals = [CellValue::Number(1.0), CellValue::Number(2.0)];
         let refs: Vec<&CellValue> = vals.iter().collect();
         assert_eq!(infer_field_kind(&refs), FieldKind::Number);
     }
 
     #[test]
     fn field_kind_numbers_with_nulls() {
-        let vals = vec![CellValue::Number(1.0), CellValue::Null, CellValue::Number(3.0)];
+        let vals = [CellValue::Number(1.0), CellValue::Null, CellValue::Number(3.0)];
         let refs: Vec<&CellValue> = vals.iter().collect();
         assert_eq!(infer_field_kind(&refs), FieldKind::Number);
     }
 
     #[test]
     fn field_kind_temporal() {
-        let vals = vec![
+        let vals = [
             CellValue::String("2026-04-01".to_string()),
             CellValue::String("2026-04-02".to_string()),
         ];
@@ -313,14 +307,14 @@ mod tests {
 
     #[test]
     fn field_kind_mixed_becomes_string() {
-        let vals = vec![CellValue::Number(1.0), CellValue::Bool(true)];
+        let vals = [CellValue::Number(1.0), CellValue::Bool(true)];
         let refs: Vec<&CellValue> = vals.iter().collect();
         assert_eq!(infer_field_kind(&refs), FieldKind::String);
     }
 
     #[test]
     fn field_kind_all_nulls() {
-        let vals = vec![CellValue::Null, CellValue::Null];
+        let vals = [CellValue::Null, CellValue::Null];
         let refs: Vec<&CellValue> = vals.iter().collect();
         assert_eq!(infer_field_kind(&refs), FieldKind::String);
     }

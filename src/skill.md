@@ -47,9 +47,14 @@ Base libraries live under `/_gp/v1/*` (e.g. `base.css`, `charts.js` = a thin
 glasspad serve ./myspace          # serve a directory live (the primary loop)
 glasspad create ./report.html     # one-artifact space from a single file
 glasspad open myspace             # open http://127.0.0.1:3000/myspace/ in the browser
+glasspad data ./old.csv           # optional: parse a legacy CSV/JSON/mbox file to JSON rows
 ```
 
 - `serve`/`create` run until killed — start them in the background, then `open`.
+- `data <file>` is a standalone helper (never starts a server): it parses a
+  legacy `.csv` / `.json` / `.mbox` file and prints the rows as JSON on stdout,
+  so you can fold that data into an HTML artifact you author. `--format` forces
+  the parser; `--meta` also emits inferred per-field types.
 - Add `--json` to any command for a stable envelope. `serve`/`create` print a
   startup line `{schema_version, serving, port, space, url, ...}` to stdout;
   errors print `{schema_version, error:{code, message, ...}}` to stderr with a

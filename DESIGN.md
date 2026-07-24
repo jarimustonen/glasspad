@@ -1,8 +1,15 @@
 # Glasspad Design System
 
+> This is the design language glasspad's base stylesheet (`/_gp/v1/base.css`)
+> implements. Glasspad hosts HTML artifacts the agent authors; a fragment
+> artifact is wrapped in a themed shell that loads `base.css`, so these `--gp-*`
+> tokens and component patterns are the vocabulary you author against — not the
+> output of an automatic renderer. Full-document artifacts opt in by loading
+> `base.css` themselves.
+
 ## 1. Visual Theme & Atmosphere
 
-Glasspad is a precision instrument for data visualization — an AI-friendly scratchpad where dashboards, charts, tables, and rich content emerge with clarity and purpose. The design language draws from Linear's dark-mode precision, Notion's warm light-mode minimalism, and Vercel's typographic discipline.
+Glasspad is a precision instrument for data visualization — an AI-friendly scratchpad where dashboards, charts, tables, and rich content are shown with clarity and purpose. The design language draws from Linear's dark-mode precision, Notion's warm light-mode minimalism, and Vercel's typographic discipline.
 
 The system ships two themes: **Glass Light** and **Glass Dark**. Light mode uses a soft warm-white canvas (`#fafbfc`) with near-black text (`#1a1b25`), creating a paper-like reading experience suited to data-dense dashboards. Dark mode inverts to a deep blue-black (`#0f1117`) where content emerges through calibrated luminance steps, ideal for extended working sessions.
 
@@ -15,7 +22,7 @@ The color system is deliberately restrained: a single accent color (blue/indigo)
 - System font stack for zero-latency native feel
 - Single accent color per theme: blue (`#2563eb`) light / indigo (`#6366f1`) dark
 - Whisper-weight borders: `1px solid` at low opacity for structure without noise
-- Content-first: dashboard sections are the hero — chrome is invisible
+- Content-first: your artifact content is the hero — chrome is invisible
 - Data-dense layouts with generous internal padding on cards
 - Theme switching via `prefers-color-scheme` or explicit toggle with localStorage persistence
 
@@ -295,4 +302,6 @@ All theme tokens use the `--gp-` prefix:
 - `auto` (default): follows `prefers-color-scheme` media query
 - `light`: forces Glass Light theme
 - `dark`: forces Glass Dark theme
-- Set via `theme` field in the dashboard spec, rendered as `data-theme` attribute on `<html>`
+- The wrapper resolves the theme (optional `theme` in a space's `glasspad.yaml`,
+  else the user's toggle / system preference) and stamps it as the `data-theme`
+  attribute on `<html>`; the toggle persists the choice in `localStorage`.

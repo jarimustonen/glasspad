@@ -1,10 +1,9 @@
-// The DSL/spec, data parsers, and security primitives live in the library crate
-// (`glasspad::{spec,data,security}`) — kept intact for Wave 5. The binary reaches
-// them through the lib rather than re-compiling them: with the legacy pad path
-// removed (Wave 3, design.md §10 / D2), only `artifact_host` (security::token)
-// still consumes them from the binary side, so re-`mod`-ing the full DSL into the
-// binary would only manufacture dead-code warnings. (The `data`/`spec` parsers
-// stay exported from the lib for Wave 5's optional `glasspad data` helper.)
+// The tabular data parsers and security primitives live in the library crate
+// (`glasspad::{data,security}`). The binary reaches them through the lib: the
+// artifact host uses `security::token` for per-response nonces, and the optional
+// `glasspad data` subcommand uses `glasspad::data` to parse the legacy CSV / JSON
+// / mbox formats on demand. The section-DSL renderer that once consumed them was
+// removed in Wave 5 / Phase 6.
 mod artifact_host;
 mod cli;
 mod server;
@@ -57,6 +56,23 @@ enum Commands {
         #[arg(long)]
         no_browser: bool,
     },
+    /// Parse a legacy tabular file (CSV / JSON / mbox) to JSON rows on stdout.
+    ///
+    /// A standalone helper for the old data formats: it parses the file with the
+    /// same limits the pre-rewrite server used and prints the rows as JSON (the
+    /// data channel), so a caller can reuse those inputs when authoring an
+    /// HTML artifact. It never starts a server.
+    Data {
+        /// The data file to parse. Format is inferred from the extension
+        /// (.csv / .json / .mbox|.eml) unless `--format` overrides it.
+        file: PathBuf,
+        /// Force the input format instead of inferring from the extension.
+        #[arg(long, value_parser = ["csv", "json", "mbox"])]
+        format: Option<String>,
+        /// Also emit inferred per-field type metadata alongside the rows.
+        #[arg(long)]
+        meta: bool,
+    },
     /// Output or install the Claude Code skill (the CLI's operating manual).
     Skill {
         /// Install to .claude/skills/. Project-level by default, --user for ~/.claude/
@@ -77,6 +93,7 @@ async fn main() {
         Commands::Serve { dir, port } => cli::serve(dir, port, json).await,
         Commands::Create { file, name, port } => cli::create(file, name, port, json).await,
         Commands::Open { space, port, no_browser } => cli::open(space, port, json, no_browser),
+        Commands::Data { file, format, meta } => cli::data(file, format, meta, json),
         Commands::Skill { install_claude, user } => cli::skill(install_claude, user),
     }
 }

@@ -98,6 +98,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // 3.14 is a decimal-format sample, not π
     fn cell_value_number_decimal() {
         let v = CellValue::Number(3.14);
         assert_eq!(v.to_string(), "3.14");

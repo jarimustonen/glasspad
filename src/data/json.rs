@@ -194,7 +194,7 @@ mod tests {
         let result = parse_json_str(json);
         // serde_json may reject this at parse level or produce infinity
         assert!(result.is_err() || {
-            let rows = result.unwrap();
+            let _rows = result.unwrap();
             // If it parsed, the value should have been rejected as non-finite
             false
         });

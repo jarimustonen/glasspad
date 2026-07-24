@@ -182,6 +182,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // -3.14 is a decimal-parse sample, not π
     fn parse_csv_negative_numbers() {
         let csv = "val\n-42\n-3.14\n";
         let rows = parse_csv_str(csv).unwrap();

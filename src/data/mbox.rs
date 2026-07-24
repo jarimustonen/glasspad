@@ -36,15 +36,13 @@ fn parse_mbox_impl(bytes: &[u8]) -> Result<Dataset, MboxError> {
     // Try mbox format first (uses MessageIterator)
     let mut rows = Dataset::new();
     let parser = MessageParser::default();
-    let mut count = 0;
 
-    for raw_message in MessageIterator::new(std::io::Cursor::new(bytes)) {
+    for (count, raw_message) in MessageIterator::new(std::io::Cursor::new(bytes)).enumerate() {
         let raw = raw_message.map_err(|e| MboxError::ParseError(format!("{:?}", e)))?;
         let msg = parser
             .parse(raw.contents())
             .ok_or_else(|| MboxError::ParseError(format!("Failed to parse message #{}", count + 1)))?;
         rows.push(message_to_row(&msg, count));
-        count += 1;
     }
 
     // If no mbox messages, try as single EML
@@ -99,10 +97,10 @@ fn message_to_row(msg: &mail_parser::Message<'_>, idx: usize) -> Row {
 
     // Body — check actual content-type of the first HTML part
     // mail-parser auto-converts text→html, so we verify the original is truly HTML
-    let has_native_html = msg.html_body.first().map_or(false, |&part_id| {
-        msg.part(part_id).map_or(false, |part| {
+    let has_native_html = msg.html_body.first().is_some_and(|&part_id| {
+        msg.part(part_id).is_some_and(|part| {
             part.content_type()
-                .map_or(false, |ct| ct.ctype() == "text" && ct.subtype().unwrap_or("") == "html")
+                .is_some_and(|ct| ct.ctype() == "text" && ct.subtype().unwrap_or("") == "html")
         })
     });
     let (body, body_format) = if has_native_html {
