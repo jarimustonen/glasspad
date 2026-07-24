@@ -16,6 +16,8 @@ commits:
   summary: Wave 2b — real base.css/charts.js/manifest.json + vendored Vega under /_gp/v1/; fragment chart renders end-to-end in both themes
 - hash: f4b523a
   summary: Wave 2a — space model + live directory serving (atomic snapshot, slug/reserved/collision + symlink/traversal rejection, MIME + size limits, SSE reload)
+- hash: 5fc6154
+  summary: Wave 2a /llm-review FIX findings (CORS asset leak, connect-src back to 'none', capped reads, watcher retry, snapshot-per-request, entry/manifest caps, title parser)
 ---
 
 # Rewrite Glasspad as an HTML-artifact host
