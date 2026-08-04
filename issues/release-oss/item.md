@@ -11,7 +11,7 @@ priority: high
 ## Description
 
 Ship glasspad **0.2.0** as a proper open-source project. The v0.2 rewrite
-(HTML-artifact host) is complete and green on `master`; this epic turns it into
+(HTML-artifact host) is complete and green on `main`; this epic turns it into
 a released, installable, public OSS project.
 
 **PO decision (2026-07-25):** publish across **all three** channels — not one.

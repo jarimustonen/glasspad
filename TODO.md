@@ -12,7 +12,7 @@ chrome + base libraries. The old ~6000-line section-DSL path is gone.
 
 - **Scope: localhost-only.** No team/cloud, accounts, or persistence backends.
   **No MCP** — glasspad is a CLI tool (`serve`/`create`/`open`/`data`/`skill`).
-- **Green baseline on `master`:** `./test-security.sh` = 41 browser checks +
+- **Green baseline on `main`:** `./test-security.sh` = 41 browser checks +
   Wave 2a probes; `cargo build`/`clippy --all-targets`/`test` all clean.
 
 **Last stint (2026-07-25) cleared the deck for release:**
