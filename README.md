@@ -1,5 +1,10 @@
 # glasspad
 
+<!-- oss-readme:badges-start -->
+[![CI](https://github.com/jarimustonen/glasspad/actions/workflows/ci.yml/badge.svg)](https://github.com/jarimustonen/glasspad/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<!-- oss-readme:badges-end -->
+
 AI-friendly scratchpad for rich visual views. A lightweight, loopback-only web
 service that lets AI agents (Claude Code, OpenClaw, etc.) show visual content —
 dashboards, charts, interactive UIs — to the user in their browser.
@@ -18,6 +23,16 @@ or a **full document** served verbatim), addressed by a slug and linked to its
 siblings with ordinary relative links. Edit a file and the browser reloads —
 the directory is the single source of truth, so there is no upload/push step.
 
+## Installation
+
+<!-- oss-readme:install-start -->
+```bash
+cargo install glasspad
+```
+<!-- oss-readme:install-end -->
+
+## Usage
+
 ```bash
 glasspad serve ./myspace       # serve a directory of artifacts live
 glasspad create ./report.html  # one-artifact space from a single file
@@ -31,3 +46,9 @@ See [`src/skill.md`](src/skill.md) for the agent-facing guide and
 ## Status
 
 🚧 Early development
+
+## License
+
+<!-- oss-readme:license-start -->
+Licensed under the [MIT License](LICENSE).
+<!-- oss-readme:license-end -->
