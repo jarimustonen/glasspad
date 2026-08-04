@@ -24,7 +24,7 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
-use super::{valid_name, RESERVED};
+use super::{RESERVED, valid_name};
 
 /// Per-file byte ceiling. A single artifact/asset larger than this is a hard
 /// error — a local dev tool has no business streaming huge blobs, and an
@@ -190,7 +190,11 @@ impl fmt::Display for ScanError {
                 "{} is {n} bytes, over the {MAX_MANIFEST_BYTES}-byte manifest limit",
                 p.display()
             ),
-            ScanError::NotUtf8(p) => write!(f, "{} is not valid UTF-8 (artifacts must be UTF-8 HTML)", p.display()),
+            ScanError::NotUtf8(p) => write!(
+                f,
+                "{} is not valid UTF-8 (artifacts must be UTF-8 HTML)",
+                p.display()
+            ),
             ScanError::BadAssetName(p) => write!(
                 f,
                 "invalid asset path {}: each segment must be [A-Za-z0-9._-], no '.'/'..'/empty segments",
@@ -245,12 +249,16 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
 
     for entry in &entries {
         let path = entry.path();
-        let ftype = entry.file_type().map_err(|e| ScanError::Io(path.clone(), e))?;
+        let ftype = entry
+            .file_type()
+            .map_err(|e| ScanError::Io(path.clone(), e))?;
         if ftype.is_symlink() {
             return Err(ScanError::Symlink(path));
         }
         let name = entry.file_name();
-        let name = name.to_str().ok_or_else(|| ScanError::BadAssetName(path.clone()))?;
+        let name = name
+            .to_str()
+            .ok_or_else(|| ScanError::BadAssetName(path.clone()))?;
 
         if ftype.is_dir() {
             if name == ASSETS_DIR {
@@ -287,7 +295,9 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
                 return Err(ScanError::DuplicateSlug(stem.to_string(), path.clone()));
             }
             if space.artifacts.len() + space.assets.len() >= MAX_ENTRIES {
-                return Err(ScanError::TooManyEntries(space.artifacts.len() + space.assets.len() + 1));
+                return Err(ScanError::TooManyEntries(
+                    space.artifacts.len() + space.assets.len() + 1,
+                ));
             }
             ensure_within(&canon_root, &path)?;
             let raw = read_file_capped(&path, &mut total)?;
@@ -326,7 +336,9 @@ fn scan_assets(
         entries.sort_by_key(|e| e.file_name());
         for entry in &entries {
             let path = entry.path();
-            let ftype = entry.file_type().map_err(|e| ScanError::Io(path.clone(), e))?;
+            let ftype = entry
+                .file_type()
+                .map_err(|e| ScanError::Io(path.clone(), e))?;
             if ftype.is_symlink() {
                 return Err(ScanError::Symlink(path));
             }
@@ -339,7 +351,9 @@ fn scan_assets(
                 return Err(ScanError::UnsupportedFileType(path));
             }
             if space.artifacts.len() + space.assets.len() >= MAX_ENTRIES {
-                return Err(ScanError::TooManyEntries(space.artifacts.len() + space.assets.len() + 1));
+                return Err(ScanError::TooManyEntries(
+                    space.artifacts.len() + space.assets.len() + 1,
+                ));
             }
             ensure_within(canon_root, &path)?;
             let rel = rel_key(canon_root, &path)?;
@@ -368,7 +382,9 @@ fn rel_key(canon_root: &Path, path: &Path) -> Result<String, ScanError> {
     for comp in rel.components() {
         match comp {
             Component::Normal(os) => {
-                let s = os.to_str().ok_or_else(|| ScanError::BadAssetName(path.to_path_buf()))?;
+                let s = os
+                    .to_str()
+                    .ok_or_else(|| ScanError::BadAssetName(path.to_path_buf()))?;
                 if !valid_asset_segment(s) {
                     return Err(ScanError::BadAssetName(path.to_path_buf()));
                 }
@@ -384,7 +400,9 @@ fn rel_key(canon_root: &Path, path: &Path) -> Result<String, ScanError> {
 /// Best-effort file length via `lstat` (0 if it can't be read — the subsequent
 /// capped read is the real enforcement).
 fn entry_len(path: &Path) -> u64 {
-    std::fs::symlink_metadata(path).map(|m| m.len()).unwrap_or(0)
+    std::fs::symlink_metadata(path)
+        .map(|m| m.len())
+        .unwrap_or(0)
 }
 
 /// Assert a path's canonical form is contained within the canonical root. Defends
@@ -416,7 +434,11 @@ fn read_file_capped(path: &Path, total: &mut u64) -> Result<Vec<u8>, ScanError> 
     let limit = MAX_FILE_BYTES.min(remaining);
     let f = std::fs::File::open(path).map_err(|e| ScanError::Io(path.to_path_buf(), e))?;
     // Re-check via the opened descriptor (defends the common swap-after-lstat case).
-    if !f.metadata().map_err(|e| ScanError::Io(path.to_path_buf(), e))?.is_file() {
+    if !f
+        .metadata()
+        .map_err(|e| ScanError::Io(path.to_path_buf(), e))?
+        .is_file()
+    {
         return Err(ScanError::UnsupportedFileType(path.to_path_buf()));
     }
     let mut buf = Vec::new();
@@ -474,8 +496,8 @@ fn apply_manifest(text: &str, path: &Path, space: &mut Space) -> Result<(), Scan
         #[serde(default)]
         nav: Vec<String>,
     }
-    let m: Manifest =
-        serde_yaml::from_str(text).map_err(|e| ScanError::Manifest(path.to_path_buf(), e.to_string()))?;
+    let m: Manifest = serde_yaml::from_str(text)
+        .map_err(|e| ScanError::Manifest(path.to_path_buf(), e.to_string()))?;
     if let Some(t) = m.title {
         let t = strip_unsafe_display_chars(&decode_entities(t.trim()));
         let t = t.trim();
@@ -611,7 +633,10 @@ fn extract_element_text(html: &str, tag: &str) -> Option<String> {
         if lower[after..].starts_with(tag) {
             let j = after + tag.len();
             let delim = bytes.get(j).copied();
-            if matches!(delim, Some(b' ') | Some(b'>') | Some(b'/') | Some(b'\t') | Some(b'\n') | Some(b'\r')) {
+            if matches!(
+                delim,
+                Some(b' ') | Some(b'>') | Some(b'/') | Some(b'\t') | Some(b'\n') | Some(b'\r')
+            ) {
                 let (content_start, self_closing) = end_of_open_tag(bytes, j)?;
                 if self_closing {
                     return None; // `<title/>` has no text content
@@ -621,9 +646,10 @@ fn extract_element_text(html: &str, tag: &str) -> Option<String> {
                 // Decode entities BEFORE collapsing whitespace, so `&nbsp;` folds;
                 // then strip invisible/bidi chars that could reorder or spoof the
                 // visible label (it lands in the trusted nav + `document.title`).
-                let text = strip_unsafe_display_chars(&collapse_ws(decode_entities(&strip_tags(raw))))
-                    .trim()
-                    .to_string();
+                let text =
+                    strip_unsafe_display_chars(&collapse_ws(decode_entities(&strip_tags(raw))))
+                        .trim()
+                        .to_string();
                 if text.is_empty() {
                     return None;
                 }
@@ -675,7 +701,8 @@ fn find_close_tag(lower: &str, start: usize, tag: &str) -> Option<usize> {
         let pos = from + rel;
         let after = pos + needle.len();
         match bytes.get(after) {
-            Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'/') | None => {
+            Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'/')
+            | None => {
                 return Some(pos);
             }
             _ => from = after, // e.g. `</titlebar>` — keep looking
@@ -825,7 +852,10 @@ mod tests {
             Some("Mixed Case".to_string())
         );
         // A tag that merely starts with the name must not match (`<titlebar>`).
-        assert_eq!(resolve_title("<titlebar>x</titlebar><title>Real</title>"), Some("Real".to_string()));
+        assert_eq!(
+            resolve_title("<titlebar>x</titlebar><title>Real</title>"),
+            Some("Real".to_string())
+        );
     }
 
     #[test]
@@ -838,7 +868,10 @@ mod tests {
             resolve_title("<h1>Hi <span class=x>there</span></h1>"),
             Some("Hi there".to_string())
         );
-        assert_eq!(resolve_title("<title>caf&#233;</title>"), Some("café".to_string()));
+        assert_eq!(
+            resolve_title("<title>caf&#233;</title>"),
+            Some("café".to_string())
+        );
     }
 
     #[test]
@@ -888,7 +921,10 @@ mod tests {
     fn title_length_bounded() {
         let long = "x".repeat(500);
         let html = format!("<title>{long}</title>");
-        assert_eq!(resolve_title(&html).unwrap().chars().count(), MAX_TITLE_CHARS);
+        assert_eq!(
+            resolve_title(&html).unwrap().chars().count(),
+            MAX_TITLE_CHARS
+        );
     }
 
     #[test]
@@ -946,13 +982,22 @@ mod tests {
             Some("oknow".to_string())
         );
         // A title that is ONLY invisible chars collapses to nothing → None.
-        assert_eq!(resolve_title("<title>\u{202e}\u{200b}\u{feff}</title>"), None);
+        assert_eq!(
+            resolve_title("<title>\u{202e}\u{200b}\u{feff}</title>"),
+            None
+        );
     }
 
     #[test]
     fn asset_request_key_rejects_traversal() {
-        assert_eq!(asset_key_for_request("data.json"), Some("assets/data.json".to_string()));
-        assert_eq!(asset_key_for_request("sub/logo.svg"), Some("assets/sub/logo.svg".to_string()));
+        assert_eq!(
+            asset_key_for_request("data.json"),
+            Some("assets/data.json".to_string())
+        );
+        assert_eq!(
+            asset_key_for_request("sub/logo.svg"),
+            Some("assets/sub/logo.svg".to_string())
+        );
         assert_eq!(asset_key_for_request(""), None);
         assert_eq!(asset_key_for_request("../secret"), None);
         assert_eq!(asset_key_for_request("a/../../etc/passwd"), None);
@@ -966,9 +1011,15 @@ mod tests {
     #[test]
     fn mime_detection() {
         assert_eq!(mime_for(Path::new("a.css")), "text/css; charset=utf-8");
-        assert_eq!(mime_for(Path::new("a.JS")), "text/javascript; charset=utf-8");
+        assert_eq!(
+            mime_for(Path::new("a.JS")),
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(mime_for(Path::new("a.svg")), "image/svg+xml");
-        assert_eq!(mime_for(Path::new("a.unknownext")), "application/octet-stream");
+        assert_eq!(
+            mime_for(Path::new("a.unknownext")),
+            "application/octet-stream"
+        );
         assert_eq!(mime_for(Path::new("noext")), "application/octet-stream");
     }
 
@@ -994,7 +1045,8 @@ mod fs_tests {
     impl TempDir {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let p = std::env::temp_dir().join(format!("glasspad-space-{}-{}", std::process::id(), n));
+            let p =
+                std::env::temp_dir().join(format!("glasspad-space-{}-{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TempDir(p)
         }
@@ -1030,14 +1082,20 @@ mod fs_tests {
         assert_eq!(space.home.as_deref(), Some("index"));
         assert_eq!(space.nav, vec!["index".to_string(), "sales".to_string()]);
         assert!(space.asset("assets/data.json").is_some());
-        assert_eq!(space.asset("assets/sub/logo.svg").unwrap().content_type, "image/svg+xml");
+        assert_eq!(
+            space.asset("assets/sub/logo.svg").unwrap().content_type,
+            "image/svg+xml"
+        );
     }
 
     #[test]
     fn reserved_slug_is_hard_error() {
         let d = TempDir::new();
         d.write("api.html", b"x"); // `api` is reserved
-        assert!(matches!(scan_dir(d.path()), Err(ScanError::ReservedSlug(_, _))));
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::ReservedSlug(_, _))
+        ));
     }
 
     #[test]
@@ -1052,14 +1110,20 @@ mod fs_tests {
         let d = TempDir::new();
         d.write("page.html", b"x");
         d.write("page.htm", b"y"); // same stem → collision
-        assert!(matches!(scan_dir(d.path()), Err(ScanError::DuplicateSlug(_, _))));
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::DuplicateSlug(_, _))
+        ));
     }
 
     #[test]
     fn oversize_file_is_hard_error() {
         let d = TempDir::new();
         d.write("index.html", &vec![b'a'; (MAX_FILE_BYTES + 1) as usize]);
-        assert!(matches!(scan_dir(d.path()), Err(ScanError::FileTooLarge(_, _))));
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::FileTooLarge(_, _))
+        ));
     }
 
     #[test]
@@ -1087,7 +1151,8 @@ mod fs_tests {
     fn symlinked_asset_is_rejected() {
         let d = TempDir::new();
         d.write("index.html", b"<h1>ok</h1>");
-        let secret = std::env::temp_dir().join(format!("glasspad-asset-secret-{}", std::process::id()));
+        let secret =
+            std::env::temp_dir().join(format!("glasspad-asset-secret-{}", std::process::id()));
         std::fs::write(&secret, b"leak").unwrap();
         std::fs::create_dir_all(d.path().join("assets")).unwrap();
         std::os::unix::fs::symlink(&secret, d.path().join("assets/leak.txt")).unwrap();
@@ -1136,9 +1201,15 @@ mod fs_tests {
         d.write("index.html", b"<h1>x</h1>");
         // Valid YAML, but far over the tight manifest cap — must never reach the
         // parser (alias-bomb defense).
-        let big = format!("title: {}\n", "a".repeat((MAX_MANIFEST_BYTES + 10) as usize));
+        let big = format!(
+            "title: {}\n",
+            "a".repeat((MAX_MANIFEST_BYTES + 10) as usize)
+        );
         d.write("glasspad.yaml", big.as_bytes());
-        assert!(matches!(scan_dir(d.path()), Err(ScanError::ManifestTooLarge(_, _))));
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::ManifestTooLarge(_, _))
+        ));
     }
 
     #[test]
@@ -1161,6 +1232,9 @@ mod fs_tests {
         // exactly why we reject via lstat first. A socket exercises the same guard
         // without the test needing mkfifo.
         let _sock = UnixListener::bind(d.path().join("weird.html")).unwrap();
-        assert!(matches!(scan_dir(d.path()), Err(ScanError::UnsupportedFileType(_))));
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::UnsupportedFileType(_))
+        ));
     }
 }

@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{middleware, Router};
+use axum::{Router, middleware};
 use tokio::net::TcpListener;
 
 use crate::artifact_host::space::{self, Artifact, ScanError, Snapshot, Space};
-use crate::artifact_host::{self, guards, ArtifactHost};
+use crate::artifact_host::{self, ArtifactHost, guards};
 
 /// How often the (dependency-free) filesystem watcher polls the served directory
 /// for changes. 500 ms is imperceptible for a local edit-reload loop and avoids
@@ -203,7 +203,10 @@ pub fn read_artifact_file(file: &Path) -> Result<String, String> {
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     if bytes.len() as u64 > space::MAX_FILE_BYTES {
-        return Err(format!("over the {}-byte per-file limit", space::MAX_FILE_BYTES));
+        return Err(format!(
+            "over the {}-byte per-file limit",
+            space::MAX_FILE_BYTES
+        ));
     }
     String::from_utf8(bytes).map_err(|_| format!("{} is not valid UTF-8", file.display()))
 }

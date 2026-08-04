@@ -11,8 +11,15 @@ pub enum CsvError {
     Io(std::io::Error),
     Limit(LimitError),
     DuplicateHeader(String),
-    EmptyHeader { position: usize },
-    CellTooLarge { row: usize, field: String, size: usize, max: usize },
+    EmptyHeader {
+        position: usize,
+    },
+    CellTooLarge {
+        row: usize,
+        field: String,
+        size: usize,
+        max: usize,
+    },
 }
 
 impl std::fmt::Display for CsvError {
@@ -22,9 +29,20 @@ impl std::fmt::Display for CsvError {
             CsvError::Io(e) => write!(f, "I/O error: {}", e),
             CsvError::Limit(e) => write!(f, "{}", e),
             CsvError::DuplicateHeader(h) => write!(f, "Duplicate CSV header: \"{}\"", h),
-            CsvError::EmptyHeader { position } => write!(f, "Empty CSV header at position {}", position),
-            CsvError::CellTooLarge { row, field, size, max } => {
-                write!(f, "Row {} field \"{}\": cell is {} bytes, max is {}", row, field, size, max)
+            CsvError::EmptyHeader { position } => {
+                write!(f, "Empty CSV header at position {}", position)
+            }
+            CsvError::CellTooLarge {
+                row,
+                field,
+                size,
+                max,
+            } => {
+                write!(
+                    f,
+                    "Row {} field \"{}\": cell is {} bytes, max is {}",
+                    row, field, size, max
+                )
             }
         }
     }
@@ -151,7 +169,10 @@ mod tests {
     fn parse_csv_with_types() {
         let csv = "datetime,path,count\n2026-04-04T18:00:00Z,/en/,5\n";
         let rows = parse_csv_str(csv).unwrap();
-        assert_eq!(rows[0]["datetime"], CellValue::String("2026-04-04T18:00:00Z".to_string()));
+        assert_eq!(
+            rows[0]["datetime"],
+            CellValue::String("2026-04-04T18:00:00Z".to_string())
+        );
         assert_eq!(rows[0]["count"], CellValue::Number(5.0));
     }
 
@@ -166,7 +187,10 @@ mod tests {
     fn parse_csv_quoted_fields() {
         let csv = "name,desc\n\"Alice\",\"Has a, comma\"\n";
         let rows = parse_csv_str(csv).unwrap();
-        assert_eq!(rows[0]["desc"], CellValue::String("Has a, comma".to_string()));
+        assert_eq!(
+            rows[0]["desc"],
+            CellValue::String("Has a, comma".to_string())
+        );
     }
 
     #[test]
@@ -206,10 +230,15 @@ mod tests {
 
     #[test]
     fn too_many_columns_rejected() {
-        let headers: Vec<String> = (0..=limits::MAX_COLUMNS).map(|i| format!("c{}", i)).collect();
+        let headers: Vec<String> = (0..=limits::MAX_COLUMNS)
+            .map(|i| format!("c{}", i))
+            .collect();
         let csv = format!("{}\n", headers.join(","));
         let result = parse_csv_str(&csv);
-        assert!(matches!(result, Err(CsvError::Limit(LimitError::TooManyColumns { .. }))));
+        assert!(matches!(
+            result,
+            Err(CsvError::Limit(LimitError::TooManyColumns { .. }))
+        ));
     }
 
     #[test]
@@ -231,7 +260,10 @@ mod tests {
     fn byte_size_limit_enforced() {
         let csv = "a\n1\n";
         let result = parse_csv(csv.as_bytes(), 2); // too small
-        assert!(matches!(result, Err(CsvError::Limit(LimitError::PayloadTooLarge { .. }))));
+        assert!(matches!(
+            result,
+            Err(CsvError::Limit(LimitError::PayloadTooLarge { .. }))
+        ));
     }
 
     #[test]

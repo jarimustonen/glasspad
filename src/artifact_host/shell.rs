@@ -54,10 +54,11 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
     // Nav as an array of {slug, title} objects, in server-resolved order. Titles
     // are artifact-derived; the JSON-for-script encoding below neutralizes any
     // markup, and the client inserts each one via textContent (never innerHTML).
-    let nav_json_value = json!(nav
-        .iter()
-        .map(|(s, t)| json!({ "slug": s, "title": t }))
-        .collect::<Vec<_>>());
+    let nav_json_value = json!(
+        nav.iter()
+            .map(|(s, t)| json!({ "slug": s, "title": t }))
+            .collect::<Vec<_>>()
+    );
     let known: Vec<&str> = nav.iter().map(|(s, _)| *s).collect();
 
     let space_json = json_for_script(&json!(space));
@@ -352,7 +353,9 @@ mod tests {
     #[test]
     fn shell_has_null_origin_sandbox() {
         let html = render("demo", "index", "", &nav_of(&["index"]), "n0nce");
-        assert!(html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#));
+        assert!(
+            html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
+        );
         assert!(!html.contains("allow-same-origin"));
     }
 
@@ -432,7 +435,13 @@ mod tests {
         let html = render("demo", "a\"><script>x", "", &nav_of(&["a"]), "n");
         assert!(!html.contains("<script>x"));
         // A hostile *title* likewise cannot break out (escaped + JSON-encoded).
-        let html2 = render("demo", "index", "</title><script>evil()</script>", &nav_of(&["index"]), "n");
+        let html2 = render(
+            "demo",
+            "index",
+            "</title><script>evil()</script>",
+            &nav_of(&["index"]),
+            "n",
+        );
         assert!(!html2.contains("<script>evil()"));
     }
 
@@ -459,7 +468,13 @@ mod tests {
         // (so it can't close the <script>) and must NOT appear as raw markup
         // anywhere in the document — the client inserts it via textContent.
         let hostile = r#"<img src=x onerror=alert(1)>"#;
-        let html = render("demo", "index", "Home", &[("index", "Home"), ("evil", hostile)], "n");
+        let html = render(
+            "demo",
+            "index",
+            "Home",
+            &[("index", "Home"), ("evil", hostile)],
+            "n",
+        );
         // Raw, executable markup for the title is absent everywhere in the document.
         assert!(!html.contains("<img src=x onerror"));
         // The encoded form is present in the NAV data literal.
@@ -485,7 +500,13 @@ mod tests {
         // fully neutralized in the NAV data literal — mixed-case `</ScRiPt>`, the
         // `<`/`>`/`&` bytes, and U+2028/U+2029.
         let hostile = "</ScRiPt><b>&\u{2028}\u{2029}";
-        let html = render("demo", "index", "Home", &[("index", "Home"), ("evil", hostile)], "n");
+        let html = render(
+            "demo",
+            "index",
+            "Home",
+            &[("index", "Home"), ("evil", hostile)],
+            "n",
+        );
         // No raw `</script>` (any case) survives to close the shell's own script.
         assert!(!html.to_ascii_lowercase().contains("</script><b>"));
         let nav_line = html.lines().find(|l| l.contains("var NAV =")).unwrap();
@@ -504,7 +525,11 @@ mod tests {
         // the nav loop is a no-op and paintActive iterates nothing.
         let html = render("demo", "index", "", &[], "n");
         assert!(html.contains(r#"<nav class="gp-nav" id="gp-nav""#));
-        assert!(html.contains(r#"var NAV = [];"#) || html.contains("var NAV = [ ]") || html.contains("var NAV = []"));
+        assert!(
+            html.contains(r#"var NAV = [];"#)
+                || html.contains("var NAV = [ ]")
+                || html.contains("var NAV = []")
+        );
     }
 
     #[test]

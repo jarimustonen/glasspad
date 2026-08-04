@@ -17,7 +17,11 @@ fn bin() -> Command {
 /// randomness source.
 fn temp_file(tag: &str, ext: &str, content: &[u8]) -> std::path::PathBuf {
     let mut p = std::env::temp_dir();
-    p.push(format!("glasspad-data-test-{}-{}.{ext}", std::process::id(), tag));
+    p.push(format!(
+        "glasspad-data-test-{}-{}.{ext}",
+        std::process::id(),
+        tag
+    ));
     let mut f = std::fs::File::create(&p).unwrap();
     f.write_all(content).unwrap();
     p

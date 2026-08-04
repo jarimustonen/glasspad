@@ -13,7 +13,10 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "glasspad", about = "AI scratchpad for rich HTML artifact views")]
+#[command(
+    name = "glasspad",
+    about = "AI scratchpad for rich HTML artifact views"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -92,8 +95,15 @@ async fn main() {
     match args.command {
         Commands::Serve { dir, port } => cli::serve(dir, port, json).await,
         Commands::Create { file, name, port } => cli::create(file, name, port, json).await,
-        Commands::Open { space, port, no_browser } => cli::open(space, port, json, no_browser),
+        Commands::Open {
+            space,
+            port,
+            no_browser,
+        } => cli::open(space, port, json, no_browser),
         Commands::Data { file, format, meta } => cli::data(file, format, meta, json),
-        Commands::Skill { install_claude, user } => cli::skill(install_claude, user, json),
+        Commands::Skill {
+            install_claude,
+            user,
+        } => cli::skill(install_claude, user, json),
     }
 }

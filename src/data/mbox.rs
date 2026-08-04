@@ -32,24 +32,21 @@ pub fn parse_mbox_str(data: &str) -> Result<Dataset, MboxError> {
 
 /// Parse mbox data (RFC 4155) or a single EML file into a Dataset.
 fn parse_mbox_impl(bytes: &[u8]) -> Result<Dataset, MboxError> {
-
     // Try mbox format first (uses MessageIterator)
     let mut rows = Dataset::new();
     let parser = MessageParser::default();
 
     for (count, raw_message) in MessageIterator::new(std::io::Cursor::new(bytes)).enumerate() {
         let raw = raw_message.map_err(|e| MboxError::ParseError(format!("{:?}", e)))?;
-        let msg = parser
-            .parse(raw.contents())
-            .ok_or_else(|| MboxError::ParseError(format!("Failed to parse message #{}", count + 1)))?;
+        let msg = parser.parse(raw.contents()).ok_or_else(|| {
+            MboxError::ParseError(format!("Failed to parse message #{}", count + 1))
+        })?;
         rows.push(message_to_row(&msg, count));
     }
 
     // If no mbox messages, try as single EML
     if rows.is_empty() {
-        let msg = parser
-            .parse(bytes)
-            .ok_or(MboxError::NoMessages)?;
+        let msg = parser.parse(bytes).ok_or(MboxError::NoMessages)?;
         // Verify it has at least a subject or from header
         if msg.subject().is_none() && msg.from().is_none() {
             return Err(MboxError::NoMessages);
@@ -72,7 +69,10 @@ fn message_to_row(msg: &mail_parser::Message<'_>, idx: usize) -> Row {
     row.insert("id".into(), CellValue::String(id));
 
     // Date
-    let date = msg.date().map(|d| CellValue::String(d.to_rfc3339())).unwrap_or(CellValue::Null);
+    let date = msg
+        .date()
+        .map(|d| CellValue::String(d.to_rfc3339()))
+        .unwrap_or(CellValue::Null);
     row.insert("date".into(), date);
 
     // From
@@ -80,16 +80,43 @@ fn message_to_row(msg: &mail_parser::Message<'_>, idx: usize) -> Row {
         .from()
         .map(|a| extract_first_address(a))
         .unwrap_or_default();
-    row.insert("from".into(), if from_addr.is_empty() { CellValue::Null } else { CellValue::String(from_addr) });
-    row.insert("from_name".into(), if from_name.is_empty() { CellValue::Null } else { CellValue::String(from_name) });
+    row.insert(
+        "from".into(),
+        if from_addr.is_empty() {
+            CellValue::Null
+        } else {
+            CellValue::String(from_addr)
+        },
+    );
+    row.insert(
+        "from_name".into(),
+        if from_name.is_empty() {
+            CellValue::Null
+        } else {
+            CellValue::String(from_name)
+        },
+    );
 
     // To, CC, BCC — use null for absent fields
     fn str_or_null(s: String) -> CellValue {
-        if s.is_empty() { CellValue::Null } else { CellValue::String(s) }
+        if s.is_empty() {
+            CellValue::Null
+        } else {
+            CellValue::String(s)
+        }
     }
-    row.insert("to".into(), str_or_null(msg.to().map(extract_all_addresses).unwrap_or_default()));
-    row.insert("cc".into(), str_or_null(msg.cc().map(extract_all_addresses).unwrap_or_default()));
-    row.insert("bcc".into(), str_or_null(msg.bcc().map(extract_all_addresses).unwrap_or_default()));
+    row.insert(
+        "to".into(),
+        str_or_null(msg.to().map(extract_all_addresses).unwrap_or_default()),
+    );
+    row.insert(
+        "cc".into(),
+        str_or_null(msg.cc().map(extract_all_addresses).unwrap_or_default()),
+    );
+    row.insert(
+        "bcc".into(),
+        str_or_null(msg.bcc().map(extract_all_addresses).unwrap_or_default()),
+    );
 
     // Subject
     let subject = msg.subject().unwrap_or("(no subject)").to_string();
@@ -129,8 +156,14 @@ fn message_to_row(msg: &mail_parser::Message<'_>, idx: usize) -> Row {
             format!("{} ({})", name, size_str)
         })
         .collect();
-    row.insert("has_attachments".into(), CellValue::Bool(!attachments.is_empty()));
-    row.insert("attachments".into(), CellValue::String(attachments.join(", ")));
+    row.insert(
+        "has_attachments".into(),
+        CellValue::Bool(!attachments.is_empty()),
+    );
+    row.insert(
+        "attachments".into(),
+        CellValue::String(attachments.join(", ")),
+    );
 
     // Thread ID
     let thread_id = msg
@@ -143,7 +176,14 @@ fn message_to_row(msg: &mail_parser::Message<'_>, idx: usize) -> Row {
                 .and_then(|v| v.first().map(|s| s.to_string()))
         })
         .unwrap_or_default();
-    row.insert("thread_id".into(), if thread_id.is_empty() { CellValue::Null } else { CellValue::String(thread_id) });
+    row.insert(
+        "thread_id".into(),
+        if thread_id.is_empty() {
+            CellValue::Null
+        } else {
+            CellValue::String(thread_id)
+        },
+    );
 
     // Defaults (not available from raw mbox — consumer can enrich)
     row.insert("is_read".into(), CellValue::Bool(false));
@@ -160,7 +200,10 @@ fn extract_first_address(addr: &Address<'_>) -> (String, String) {
         Address::List(list) => {
             if let Some(a) = list.first() {
                 let email = a.address().unwrap_or("").to_string();
-                let name = a.name().unwrap_or_else(|| a.address().unwrap_or("")).to_string();
+                let name = a
+                    .name()
+                    .unwrap_or_else(|| a.address().unwrap_or(""))
+                    .to_string();
                 (email, name)
             } else {
                 (String::new(), String::new())
@@ -169,7 +212,10 @@ fn extract_first_address(addr: &Address<'_>) -> (String, String) {
         Address::Group(groups) => {
             if let Some(a) = groups.iter().flat_map(|g| &g.addresses).next() {
                 let email = a.address().unwrap_or("").to_string();
-                let name = a.name().unwrap_or_else(|| a.address().unwrap_or("")).to_string();
+                let name = a
+                    .name()
+                    .unwrap_or_else(|| a.address().unwrap_or(""))
+                    .to_string();
                 (email, name)
             } else {
                 (String::new(), String::new())
@@ -181,7 +227,9 @@ fn extract_first_address(addr: &Address<'_>) -> (String, String) {
 /// Extract all addresses as comma-separated string (email preferred, name as fallback).
 fn extract_all_addresses(addr: &Address<'_>) -> String {
     fn addr_str(a: &mail_parser::Addr<'_>) -> Option<String> {
-        a.address().map(|s| s.to_string()).or_else(|| a.name().map(|s| s.to_string()))
+        a.address()
+            .map(|s| s.to_string())
+            .or_else(|| a.name().map(|s| s.to_string()))
     }
     match addr {
         Address::List(list) => list
@@ -225,10 +273,16 @@ Don't forget the meeting at 2 PM.\r\n";
         let rows = parse_mbox_str(mbox).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["subject"], CellValue::String("Hello".into()));
-        assert_eq!(rows[0]["from"], CellValue::String("alice@example.com".into()));
+        assert_eq!(
+            rows[0]["from"],
+            CellValue::String("alice@example.com".into())
+        );
         assert_eq!(rows[0]["from_name"], CellValue::String("Alice".into()));
         assert_eq!(rows[0]["body_format"], CellValue::String("text".into()));
-        assert_eq!(rows[1]["subject"], CellValue::String("Meeting tomorrow".into()));
+        assert_eq!(
+            rows[1]["subject"],
+            CellValue::String("Meeting tomorrow".into())
+        );
     }
 
     #[test]

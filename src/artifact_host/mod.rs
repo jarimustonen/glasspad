@@ -31,18 +31,18 @@ use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
 
 use axum::{
+    Router,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{
-        sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
     },
     routing::get,
-    Router,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use glasspad::security::token;
 use space::Snapshot;
@@ -69,7 +69,10 @@ impl ArtifactHost {
 
     /// Cheap, lock-brief read of the current immutable snapshot.
     pub fn snapshot(&self) -> Arc<Snapshot> {
-        self.snapshot.read().expect("snapshot lock poisoned").clone()
+        self.snapshot
+            .read()
+            .expect("snapshot lock poisoned")
+            .clone()
     }
 
     /// Atomically install a freshly-built snapshot. Readers in flight keep the
@@ -275,10 +278,7 @@ async fn shell_page(
 }
 
 /// Space entry — the shell for the home artifact (`index`, else first slug).
-async fn space_entry(
-    State(host): State<Arc<ArtifactHost>>,
-    Path(space): Path<String>,
-) -> Response {
+async fn space_entry(State(host): State<Arc<ArtifactHost>>, Path(space): Path<String>) -> Response {
     if !valid_space(&space) {
         return not_found();
     }
@@ -385,9 +385,9 @@ async fn gp_asset(Path(path): Path<String>) -> Response {
     // closes encoded-traversal and any future normalization surprise up front;
     // the exact-match `gp_asset` lookup below is the real allowlist.
     if path.is_empty()
-        || !path
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'_'))
+        || !path.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'_')
+        })
     {
         return not_found();
     }
@@ -456,7 +456,9 @@ mod tests {
     }
 
     async fn body_string(resp: axum::http::Response<Body>) -> String {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         String::from_utf8_lossy(&bytes).into_owned()
     }
 
@@ -492,12 +494,21 @@ mod tests {
         let resp = get("/demo/_c/index").await;
         assert_eq!(resp.status(), StatusCode::OK);
         let csp = header(&resp, "content-security-policy");
-        assert!(csp.starts_with("sandbox allow-scripts"), "sandbox missing: {csp}");
+        assert!(
+            csp.starts_with("sandbox allow-scripts"),
+            "sandbox missing: {csp}"
+        );
         // Egress stays fully closed — reload is shell-side, so the artifact needs
         // no connect authority. `/api/*`, canaries, and self all stay blocked.
         assert!(csp.contains("connect-src 'none'"), "egress open: {csp}");
-        assert!(!csp.contains("/_gp/reload"), "SSE path leaked into artifact CSP: {csp}");
-        assert!(csp.contains("http://127.0.0.1:3000"), "host not named: {csp}");
+        assert!(
+            !csp.contains("/_gp/reload"),
+            "SSE path leaked into artifact CSP: {csp}"
+        );
+        assert!(
+            csp.contains("http://127.0.0.1:3000"),
+            "host not named: {csp}"
+        );
         assert!(csp.contains("'unsafe-eval'"), "eval frozen in: {csp}");
         assert_eq!(header(&resp, "x-content-type-options"), "nosniff");
         assert_eq!(header(&resp, "referrer-policy"), "no-referrer");
@@ -508,7 +519,10 @@ mod tests {
     async fn content_route_noeval_knob_only_tightens() {
         let resp = get("/demo/_c/eval?csp=noeval").await;
         let csp = header(&resp, "content-security-policy");
-        assert!(!csp.contains("'unsafe-eval'"), "noeval must drop eval: {csp}");
+        assert!(
+            !csp.contains("'unsafe-eval'"),
+            "noeval must drop eval: {csp}"
+        );
         assert!(csp.starts_with("sandbox allow-scripts")); // still sandboxed
     }
 
@@ -517,11 +531,19 @@ mod tests {
         let resp = get("/demo/index").await;
         assert_eq!(resp.status(), StatusCode::OK);
         let csp = header(&resp, "content-security-policy");
-        assert!(csp.contains("require-trusted-types-for 'script'"), "TT off: {csp}");
-        assert!(!csp.contains("sandbox allow-scripts"), "shell must NOT self-sandbox");
+        assert!(
+            csp.contains("require-trusted-types-for 'script'"),
+            "TT off: {csp}"
+        );
+        assert!(
+            !csp.contains("sandbox allow-scripts"),
+            "shell must NOT self-sandbox"
+        );
         assert_eq!(header(&resp, "x-frame-options"), "DENY");
         let html = body_string(resp).await;
-        assert!(html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#));
+        assert!(
+            html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
+        );
         assert!(!html.contains("allow-same-origin"));
     }
 
@@ -563,7 +585,11 @@ mod tests {
         assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
         assert!(csp.contains("connect-src 'none'"));
         let body = body_string(resp).await;
-        assert!(body.starts_with("<!doctype html>"), "not wrapped: {}", &body[..40.min(body.len())]);
+        assert!(
+            body.starts_with("<!doctype html>"),
+            "not wrapped: {}",
+            &body[..40.min(body.len())]
+        );
         assert!(body.contains(r#"<script src="/_gp/v1/bridge.js" defer></script>"#));
         assert!(body.contains(r#"<link rel="stylesheet" href="/_gp/v1/base.css">"#));
         assert!(body.contains("Nav A")); // fragment body preserved
@@ -575,7 +601,10 @@ mod tests {
         // `index` (HELLO) is a full document → NOT wrapped, no injected bridge.
         let resp = get("/demo/_c/index").await;
         let body = body_string(resp).await;
-        assert!(!body.contains("/_gp/v1/bridge.js"), "full doc must not get a bridge");
+        assert!(
+            !body.contains("/_gp/v1/bridge.js"),
+            "full doc must not get a bridge"
+        );
     }
 
     #[tokio::test]
@@ -592,9 +621,18 @@ mod tests {
     #[tokio::test]
     async fn reserved_and_bad_names_404() {
         assert_eq!(get("/api/index").await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get("/demo/_c/Bad%20Slug").await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get("/demo/nonexistent").await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get("/_gp/v1/../secret").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            get("/demo/_c/Bad%20Slug").await.status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get("/demo/nonexistent").await.status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get("/_gp/v1/../secret").await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     // --- Wave 2a: live space serving ------------------------------------
@@ -611,15 +649,24 @@ mod tests {
         let mut s = Space::default();
         s.artifacts.insert(
             "index".to_string(),
-            Artifact { html: "<!doctype html><h1>Live home</h1>".into(), title: "Live Home".into() },
+            Artifact {
+                html: "<!doctype html><h1>Live home</h1>".into(),
+                title: "Live Home".into(),
+            },
         );
         s.artifacts.insert(
             "sales".to_string(),
-            Artifact { html: "<!doctype html><h1>Sales</h1>".into(), title: "Sales".into() },
+            Artifact {
+                html: "<!doctype html><h1>Sales</h1>".into(),
+                title: "Sales".into(),
+            },
         );
         s.assets.insert(
             "assets/data.json".to_string(),
-            Asset { content_type: "application/json; charset=utf-8", bytes: b"{\"ok\":true}".to_vec() },
+            Asset {
+                content_type: "application/json; charset=utf-8",
+                bytes: b"{\"ok\":true}".to_vec(),
+            },
         );
         s.nav = vec!["index".into(), "sales".into()];
         s.home = Some("index".into());
@@ -633,7 +680,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(body_string(resp).await.contains("Live home"));
         // A live space that lacks a slug 404s — it must NOT leak demo fixtures.
-        assert_eq!(get_on(host, "/myspace/_c/exfil").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            get_on(host, "/myspace/_c/exfil").await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]
@@ -661,12 +711,30 @@ mod tests {
     async fn asset_route_rejects_traversal_and_unknown() {
         let host = host_with_space("myspace", demo_like_space());
         // Real asset present.
-        assert_eq!(get_on(host.clone(), "/myspace/assets/data.json").await.status(), StatusCode::OK);
+        assert_eq!(
+            get_on(host.clone(), "/myspace/assets/data.json")
+                .await
+                .status(),
+            StatusCode::OK
+        );
         // Traversal attempts never resolve to a key in the pre-scanned map.
-        assert_eq!(get_on(host.clone(), "/myspace/assets/..%2f..%2fetc%2fpasswd").await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get_on(host.clone(), "/myspace/assets/nope.json").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            get_on(host.clone(), "/myspace/assets/..%2f..%2fetc%2fpasswd")
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get_on(host.clone(), "/myspace/assets/nope.json")
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
         // Unknown space → 404 (no fixtures have assets either).
-        assert_eq!(get_on(host, "/demo/assets/x.js").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            get_on(host, "/demo/assets/x.js").await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]
@@ -676,7 +744,13 @@ mod tests {
         let host = Arc::new(ArtifactHost::new(3000));
         let mk = |body: &str| {
             let mut s = Space::default();
-            s.artifacts.insert("index".into(), Artifact { html: body.to_string(), title: "t".into() });
+            s.artifacts.insert(
+                "index".into(),
+                Artifact {
+                    html: body.to_string(),
+                    title: "t".into(),
+                },
+            );
             s.nav = vec!["index".into()];
             s.home = Some("index".into());
             let mut snap = Snapshot::empty();
@@ -697,7 +771,12 @@ mod tests {
         };
         for _ in 0..2000 {
             let snap = host.snapshot();
-            let html = &snap.space("myspace").unwrap().artifact("index").unwrap().html;
+            let html = &snap
+                .space("myspace")
+                .unwrap()
+                .artifact("index")
+                .unwrap()
+                .html;
             assert!(html == a || html == b, "torn snapshot: {html:?}");
         }
         writer.join().unwrap();

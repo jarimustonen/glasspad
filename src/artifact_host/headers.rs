@@ -14,7 +14,7 @@
 //!
 //! See `issues/html-artifact-host-rewrite/design.md` §3–§6.
 
-use axum::http::{header, HeaderName, HeaderValue};
+use axum::http::{HeaderName, HeaderValue, header};
 
 /// `Permissions-Policy` deny-list applied to every artifact and asset response.
 /// Every powerful feature is denied to the (empty) allow-list `()`.
@@ -149,7 +149,9 @@ mod tests {
         // explicit loopback origins — BOTH spellings the shell is reachable at.
         assert!(csp.contains("http://127.0.0.1:3000"));
         assert!(csp.contains("http://localhost:3000"));
-        assert!(csp.contains("script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:3000 http://localhost:3000"));
+        assert!(csp.contains(
+            "script-src 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:3000 http://localhost:3000"
+        ));
         assert!(csp.contains("frame-ancestors http://127.0.0.1:3000 http://localhost:3000"));
         assert!(!csp.contains("'self'"));
     }

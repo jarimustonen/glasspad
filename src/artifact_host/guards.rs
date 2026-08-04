@@ -13,7 +13,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -43,7 +43,11 @@ fn host_allowed(host: &str, port: u16) -> bool {
 /// allowlist fails closed: browsers always send a `Host`/`:authority`, and the
 /// CLI's `reqwest`/`curl` set it automatically — so nothing legitimate is lost.
 pub async fn host_guard(State(port): State<u16>, req: Request, next: Next) -> Response {
-    match req.headers().get(header::HOST).and_then(|v| v.to_str().ok()) {
+    match req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+    {
         Some(host) if host_allowed(host, port) => next.run(req).await,
         Some(_) => (StatusCode::MISDIRECTED_REQUEST, "bad Host header").into_response(),
         None => (StatusCode::BAD_REQUEST, "missing or invalid Host header").into_response(),
@@ -60,12 +64,11 @@ pub async fn host_guard(State(port): State<u16>, req: Request, next: Next) -> Re
 /// the Wave 3a artifact-host control/mutation surface will re-attach. `#[allow]`
 /// keeps it warning-free until then; do not weaken its logic.
 #[allow(dead_code)]
-pub async fn control_origin_guard(
-    State(port): State<u16>,
-    req: Request,
-    next: Next,
-) -> Response {
-    if let Some(origin) = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok())
+pub async fn control_origin_guard(State(port): State<u16>, req: Request, next: Next) -> Response {
+    if let Some(origin) = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
         && !origin_allowed(origin, port)
     {
         return (StatusCode::FORBIDDEN, "cross-origin request rejected").into_response();

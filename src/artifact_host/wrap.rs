@@ -63,7 +63,11 @@ impl Theme {
 /// tag; a bare `<h1>`/`<div>`/text start is a fragment.
 pub fn is_full_document(html: &str) -> bool {
     let rest = skip_prelude(html);
-    let lower_head: String = rest.chars().take(16).collect::<String>().to_ascii_lowercase();
+    let lower_head: String = rest
+        .chars()
+        .take(16)
+        .collect::<String>()
+        .to_ascii_lowercase();
     starts_with_doctype(&lower_head) || starts_with_html_tag(&lower_head)
 }
 
@@ -79,7 +83,13 @@ pub fn is_fragment(html: &str) -> bool {
 fn is_tag_delim(next: Option<char>) -> bool {
     matches!(
         next,
-        None | Some(' ') | Some('>') | Some('\t') | Some('\n') | Some('\x0c') | Some('\r') | Some('/')
+        None | Some(' ')
+            | Some('>')
+            | Some('\t')
+            | Some('\n')
+            | Some('\x0c')
+            | Some('\r')
+            | Some('/')
     )
 }
 
@@ -173,19 +183,27 @@ mod tests {
 
     #[test]
     fn full_documents_are_detected() {
-        assert!(is_full_document("<!doctype html><html><body>x</body></html>"));
+        assert!(is_full_document(
+            "<!doctype html><html><body>x</body></html>"
+        ));
         assert!(is_full_document("<!DOCTYPE HTML>\n<html>…"));
         assert!(is_full_document("<html><head></head></html>"));
         assert!(is_full_document("<html lang=\"en\">…"));
         // Leading BOM + whitespace + a comment must not fool detection.
         assert!(is_full_document("\u{feff}  \n<!doctype html><html>…"));
-        assert!(is_full_document("<!-- license header -->\n<!doctype html><html>…"));
+        assert!(is_full_document(
+            "<!-- license header -->\n<!doctype html><html>…"
+        ));
         assert!(is_full_document("  <!-- a --> <!-- b --> <html>…"));
         assert!(is_full_document("<!doctype html>")); // bare doctype, no trailing markup
         // A leading XML/XHTML prolog must be skipped, not mistaken for a fragment:
         // `<?xml …?><!doctype html>` is a full document (else it gets double-wrapped).
-        assert!(is_full_document("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html><html>…"));
-        assert!(is_full_document("\u{feff}<?xml version=\"1.0\"?><!-- c --><html>…"));
+        assert!(is_full_document(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE html><html>…"
+        ));
+        assert!(is_full_document(
+            "\u{feff}<?xml version=\"1.0\"?><!-- c --><html>…"
+        ));
         // Form feed (an HTML ASCII whitespace) is a valid tag-name delimiter.
         assert!(is_full_document("<html\u{c}lang=\"en\">…"));
         assert!(is_full_document("<!doctype\u{c}html>"));
@@ -204,7 +222,9 @@ mod tests {
         // mirror of the full-document `<!-- license --><!doctype html>` case — the
         // comment tolerance must not tip a fragment into "served verbatim".
         assert!(is_fragment("<!-- banner --><h1>Hi</h1>"));
-        assert!(is_fragment("\u{feff}  <!-- a --> <!-- b -->\n<div>card</div>"));
+        assert!(is_fragment(
+            "\u{feff}  <!-- a --> <!-- b -->\n<div>card</div>"
+        ));
         // An unterminated leading comment leaves no real markup → fragment.
         assert!(is_fragment("<!-- never closed <html>"));
         // A PI-like prolog that is NOT followed by a doctype/html token is still a
@@ -225,8 +245,14 @@ mod tests {
         // bridge.js is injected in <head>, BEFORE the untrusted fragment bytes.
         assert!(out.contains(r#"<script src="/_gp/v1/bridge.js" defer></script>"#));
         let head_end = out.find("</head>").unwrap();
-        assert!(out.find("bridge.js").unwrap() < head_end, "bridge.js must be in <head>");
-        assert!(out.find("<h1>hi</h1>").unwrap() > head_end, "fragment body after </head>");
+        assert!(
+            out.find("bridge.js").unwrap() < head_end,
+            "bridge.js must be in <head>"
+        );
+        assert!(
+            out.find("<h1>hi</h1>").unwrap() > head_end,
+            "fragment body after </head>"
+        );
         assert!(out.contains("<h1>hi</h1>"));
         assert!(out.starts_with("<!doctype html>"));
     }

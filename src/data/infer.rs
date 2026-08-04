@@ -51,7 +51,10 @@ fn is_temporal(s: &str) -> bool {
     }
 
     // Month: 01-12
-    let month = matches!((bytes[5], bytes[6]), (b'0', b'1'..=b'9') | (b'1', b'0'..=b'2'));
+    let month = matches!(
+        (bytes[5], bytes[6]),
+        (b'0', b'1'..=b'9') | (b'1', b'0'..=b'2')
+    );
     if !month {
         return false;
     }
@@ -183,12 +186,18 @@ mod tests {
     #[test]
     fn whitespace_around_number_is_string() {
         // " 42 " is a string because we don't trim
-        assert_eq!(infer_cell_value(" 42 "), CellValue::String(" 42 ".to_string()));
+        assert_eq!(
+            infer_cell_value(" 42 "),
+            CellValue::String(" 42 ".to_string())
+        );
     }
 
     #[test]
     fn whitespace_around_bool_is_string() {
-        assert_eq!(infer_cell_value(" true "), CellValue::String(" true ".to_string()));
+        assert_eq!(
+            infer_cell_value(" true "),
+            CellValue::String(" true ".to_string())
+        );
     }
 
     #[test]
@@ -220,13 +229,22 @@ mod tests {
 
     #[test]
     fn infer_infinity_nan_as_string() {
-        assert_eq!(infer_cell_value("inf"), CellValue::String("inf".to_string()));
-        assert_eq!(infer_cell_value("NaN"), CellValue::String("NaN".to_string()));
+        assert_eq!(
+            infer_cell_value("inf"),
+            CellValue::String("inf".to_string())
+        );
+        assert_eq!(
+            infer_cell_value("NaN"),
+            CellValue::String("NaN".to_string())
+        );
     }
 
     #[test]
     fn infer_iso_date() {
-        assert_eq!(infer_cell_value("2026-04-06"), CellValue::String("2026-04-06".to_string()));
+        assert_eq!(
+            infer_cell_value("2026-04-06"),
+            CellValue::String("2026-04-06".to_string())
+        );
     }
 
     #[test]
@@ -247,7 +265,10 @@ mod tests {
 
     #[test]
     fn reject_invalid_month() {
-        assert_eq!(infer_cell_value("2026-13-01"), CellValue::String("2026-13-01".to_string()));
+        assert_eq!(
+            infer_cell_value("2026-13-01"),
+            CellValue::String("2026-13-01".to_string())
+        );
         // Month 13 → not temporal, but it's still a string
         // Check that is_temporal rejects it
         assert!(!is_temporal("2026-13-01"));
@@ -277,8 +298,14 @@ mod tests {
 
     #[test]
     fn infer_plain_strings() {
-        assert_eq!(infer_cell_value("hello"), CellValue::String("hello".to_string()));
-        assert_eq!(infer_cell_value("/blog/post"), CellValue::String("/blog/post".to_string()));
+        assert_eq!(
+            infer_cell_value("hello"),
+            CellValue::String("hello".to_string())
+        );
+        assert_eq!(
+            infer_cell_value("/blog/post"),
+            CellValue::String("/blog/post".to_string())
+        );
     }
 
     #[test]
@@ -290,7 +317,11 @@ mod tests {
 
     #[test]
     fn field_kind_numbers_with_nulls() {
-        let vals = [CellValue::Number(1.0), CellValue::Null, CellValue::Number(3.0)];
+        let vals = [
+            CellValue::Number(1.0),
+            CellValue::Null,
+            CellValue::Number(3.0),
+        ];
         let refs: Vec<&CellValue> = vals.iter().collect();
         assert_eq!(infer_field_kind(&refs), FieldKind::Number);
     }
@@ -327,9 +358,7 @@ mod tests {
                 ("a".to_string(), CellValue::Number(1.0)),
                 ("b".to_string(), CellValue::Number(2.0)),
             ]),
-            BTreeMap::from([
-                ("b".to_string(), CellValue::Number(3.0)),
-            ]),
+            BTreeMap::from([("b".to_string(), CellValue::Number(3.0))]),
         ];
         let meta = infer_dataset_meta(&rows);
         assert_eq!(meta.fields["a"], FieldKind::Number); // Number + Null = Number

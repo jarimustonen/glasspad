@@ -20,10 +20,18 @@ impl std::fmt::Display for JsonDataError {
                 write!(f, "Row {} is not a JSON object", index)
             }
             JsonDataError::NestedValue { index, field } => {
-                write!(f, "Row {} field '{}': nested objects/arrays not supported", index, field)
+                write!(
+                    f,
+                    "Row {} field '{}': nested objects/arrays not supported",
+                    index, field
+                )
             }
             JsonDataError::InvalidNumber { index, field } => {
-                write!(f, "Row {} field '{}': number cannot be represented as f64", index, field)
+                write!(
+                    f,
+                    "Row {} field '{}': number cannot be represented as f64",
+                    index, field
+                )
             }
             JsonDataError::Limit(e) => write!(f, "{}", e),
         }
@@ -34,19 +42,22 @@ impl std::error::Error for JsonDataError {}
 
 /// Convert a serde_json::Value (scalar) to CellValue.
 /// JSON types are preserved — strings are NOT re-inferred.
-fn json_value_to_cell(value: &serde_json::Value, index: usize, field: &str) -> Result<CellValue, JsonDataError> {
+fn json_value_to_cell(
+    value: &serde_json::Value,
+    index: usize,
+    field: &str,
+) -> Result<CellValue, JsonDataError> {
     match value {
         serde_json::Value::Null => Ok(CellValue::Null),
         serde_json::Value::Bool(b) => Ok(CellValue::Bool(*b)),
-        serde_json::Value::Number(n) => {
-            n.as_f64()
-                .filter(|v| v.is_finite())
-                .map(CellValue::Number)
-                .ok_or(JsonDataError::InvalidNumber {
-                    index,
-                    field: field.to_string(),
-                })
-        }
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .filter(|v| v.is_finite())
+            .map(CellValue::Number)
+            .ok_or(JsonDataError::InvalidNumber {
+                index,
+                field: field.to_string(),
+            }),
         serde_json::Value::String(s) => Ok(CellValue::String(s.clone())),
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
             Err(JsonDataError::NestedValue {
@@ -59,8 +70,7 @@ fn json_value_to_cell(value: &serde_json::Value, index: usize, field: &str) -> R
 
 /// Parse a JSON array of objects into a Dataset.
 pub fn parse_json_str(s: &str) -> Result<Dataset, JsonDataError> {
-    let value: serde_json::Value =
-        serde_json::from_str(s).map_err(JsonDataError::Json)?;
+    let value: serde_json::Value = serde_json::from_str(s).map_err(JsonDataError::Json)?;
 
     parse_json_value(&value)
 }
@@ -158,12 +168,18 @@ mod tests {
 
     #[test]
     fn reject_non_array() {
-        assert!(matches!(parse_json_str(r#"{"not": "array"}"#), Err(JsonDataError::NotAnArray)));
+        assert!(matches!(
+            parse_json_str(r#"{"not": "array"}"#),
+            Err(JsonDataError::NotAnArray)
+        ));
     }
 
     #[test]
     fn reject_non_object_row() {
-        assert!(matches!(parse_json_str(r#"[1, 2, 3]"#), Err(JsonDataError::RowNotObject { index: 0 })));
+        assert!(matches!(
+            parse_json_str(r#"[1, 2, 3]"#),
+            Err(JsonDataError::RowNotObject { index: 0 })
+        ));
     }
 
     #[test]
@@ -193,10 +209,12 @@ mod tests {
         let json = r#"[{"val": 1e9999}]"#;
         let result = parse_json_str(json);
         // serde_json may reject this at parse level or produce infinity
-        assert!(result.is_err() || {
-            let _rows = result.unwrap();
-            // If it parsed, the value should have been rejected as non-finite
-            false
-        });
+        assert!(
+            result.is_err() || {
+                let _rows = result.unwrap();
+                // If it parsed, the value should have been rejected as non-finite
+                false
+            }
+        );
     }
 }

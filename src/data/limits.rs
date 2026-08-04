@@ -25,11 +25,7 @@ impl std::fmt::Display for LimitError {
                 write!(f, "Pad has {} datasets, max is {}", count, max)
             }
             LimitError::PayloadTooLarge { size, max } => {
-                write!(
-                    f,
-                    "Payload is {} bytes, max is {} bytes",
-                    size, max
-                )
+                write!(f, "Payload is {} bytes, max is {} bytes", size, max)
             }
         }
     }

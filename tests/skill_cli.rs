@@ -93,7 +93,11 @@ fn user_install_json_envelope() {
         .output()
         .unwrap();
 
-    assert!(out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["scope"], "user");
     assert_eq!(v["created"], true);
@@ -125,8 +129,14 @@ fn project_install_text_line_unchanged() {
 
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.starts_with("Installed skill to "), "stdout: {stdout}");
-    assert!(stdout.contains("skills/glasspad/SKILL.md"), "stdout: {stdout}");
+    assert!(
+        stdout.starts_with("Installed skill to "),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("skills/glasspad/SKILL.md"),
+        "stdout: {stdout}"
+    );
     // The plain-text success path is exactly one line and nothing on stderr.
     assert_eq!(stdout.lines().count(), 1, "stdout: {stdout}");
     assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);

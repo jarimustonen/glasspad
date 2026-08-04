@@ -26,7 +26,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::artifact_host::space::{self, ScanError};
-use crate::artifact_host::{self, wrap, ArtifactHost};
+use crate::artifact_host::{self, ArtifactHost, wrap};
 use crate::server;
 
 /// The `--json` schema version (AI-first §10). Bump on any breaking change to an
@@ -147,7 +147,14 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
-        exit_error(json, 2, "serve_failed", &format!("server stopped with an error: {e}"), None, None);
+        exit_error(
+            json,
+            2,
+            "serve_failed",
+            &format!("server stopped with an error: {e}"),
+            None,
+            None,
+        );
     }
 }
 
@@ -237,7 +244,14 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) 
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
-        exit_error(json, 2, "serve_failed", &format!("server stopped with an error: {e}"), None, None);
+        exit_error(
+            json,
+            2,
+            "serve_failed",
+            &format!("server stopped with an error: {e}"),
+            None,
+            None,
+        );
     }
 }
 
@@ -397,7 +411,14 @@ fn resolve_space_name(file: &Path, name_override: Option<&str>, json: bool) -> S
     // names are a *deny* list — surfacing them under `expected` (an allowlist, per
     // AI-first §10) would mislead a caller into retrying with a reserved name. The
     // message already spells out the grammar + reserved set.
-    exit_error(json, 1, "invalid_space_name", &message, Some(&raw_name), None);
+    exit_error(
+        json,
+        1,
+        "invalid_space_name",
+        &message,
+        Some(&raw_name),
+        None,
+    );
 }
 
 /// Read at most `max + 1` bytes of `file` into memory (a bounded allocation). The
@@ -455,7 +476,11 @@ pub fn open(space: String, port: u16, json: bool, no_browser: bool) {
         );
     }
     let url = format!("http://127.0.0.1:{port}/{space}/");
-    let launched = if no_browser { false } else { launch_browser(&url) };
+    let launched = if no_browser {
+        false
+    } else {
+        launch_browser(&url)
+    };
 
     // A requested-but-failed launch must not look like a deliberate `--no-browser`:
     // surface it as a non-fatal warning (§4/§10) so the caller can tell them apart.
@@ -552,14 +577,16 @@ pub fn data(file: PathBuf, format: Option<String>, meta: bool, json: bool) {
     // Errors carry a stable `(code, message)` so a UTF-8 failure keeps its own
     // `not_utf8` code instead of collapsing into the generic `parse_failed`.
     let parsed: Result<Dataset, (&'static str, String)> = match fmt.as_str() {
-        "csv" => glasspad::data::csv::parse_csv(std::io::Cursor::new(&bytes), limits::MAX_CSV_BYTES)
-            .map_err(|e| ("parse_failed", e.to_string())),
-        "mbox" => {
-            glasspad::data::mbox::parse_mbox_bytes(&bytes).map_err(|e| ("parse_failed", e.to_string()))
+        "csv" => {
+            glasspad::data::csv::parse_csv(std::io::Cursor::new(&bytes), limits::MAX_CSV_BYTES)
+                .map_err(|e| ("parse_failed", e.to_string()))
         }
+        "mbox" => glasspad::data::mbox::parse_mbox_bytes(&bytes)
+            .map_err(|e| ("parse_failed", e.to_string())),
         "json" => match std::str::from_utf8(&bytes) {
-            Ok(s) => glasspad::data::json::parse_json_str(s)
-                .map_err(|e| ("parse_failed", e.to_string())),
+            Ok(s) => {
+                glasspad::data::json::parse_json_str(s).map_err(|e| ("parse_failed", e.to_string()))
+            }
             Err(_) => Err((
                 "not_utf8",
                 format!("{} is not valid UTF-8 (JSON must be UTF-8)", file.display()),
@@ -789,7 +816,14 @@ pub fn skill(install_claude: bool, user: bool, json: bool) {
 
         let dir = base.join("skills/glasspad");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            exit_error(json, 2, "io_error", &format!("cannot create {}: {e}", dir.display()), None, None);
+            exit_error(
+                json,
+                2,
+                "io_error",
+                &format!("cannot create {}: {e}", dir.display()),
+                None,
+                None,
+            );
         }
         let path = dir.join("SKILL.md");
         // `created` tracks the SKILL.md file specifically (not the dir tree, which
@@ -797,22 +831,45 @@ pub fn skill(install_claude: bool, user: bool, json: bool) {
         // fresh install (created=true) from an in-place refresh apart from any
         // racing installer — a plain exists()+write would misreport under a race.
         use std::io::Write as _;
-        let created = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        let created = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(mut f) => {
                 if let Err(e) = f.write_all(skill_content.as_bytes()) {
-                    exit_error(json, 2, "io_error", &format!("cannot write {}: {e}", path.display()), None, None);
+                    exit_error(
+                        json,
+                        2,
+                        "io_error",
+                        &format!("cannot write {}: {e}", path.display()),
+                        None,
+                        None,
+                    );
                 }
                 true
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Err(e) = std::fs::write(&path, skill_content) {
-                    exit_error(json, 2, "io_error", &format!("cannot write {}: {e}", path.display()), None, None);
+                    exit_error(
+                        json,
+                        2,
+                        "io_error",
+                        &format!("cannot write {}: {e}", path.display()),
+                        None,
+                        None,
+                    );
                 }
                 false
             }
-            Err(e) => {
-                exit_error(json, 2, "io_error", &format!("cannot write {}: {e}", path.display()), None, None)
-            }
+            Err(e) => exit_error(
+                json,
+                2,
+                "io_error",
+                &format!("cannot write {}: {e}", path.display()),
+                None,
+                None,
+            ),
         };
 
         if json {
@@ -849,7 +906,9 @@ mod tests {
         assert!(wrap::is_fragment("<h1>hi</h1>"));
         assert!(!wrap::is_fragment("<!doctype html><html></html>"));
         // BOM + whitespace + leading comment before a real doctype → full document.
-        assert!(!wrap::is_fragment("\u{feff}  <!-- x -->\n<!DOCTYPE HTML><html>…"));
+        assert!(!wrap::is_fragment(
+            "\u{feff}  <!-- x -->\n<!DOCTYPE HTML><html>…"
+        ));
     }
 
     #[test]
@@ -865,7 +924,11 @@ mod tests {
     fn one_artifact_title_falls_back_to_space_name() {
         let snap = server::one_artifact_snapshot("myspace", "<p>no title here</p>".into());
         assert_eq!(
-            snap.space("myspace").unwrap().artifact(server::SINGLE_SLUG).unwrap().title,
+            snap.space("myspace")
+                .unwrap()
+                .artifact(server::SINGLE_SLUG)
+                .unwrap()
+                .title,
             "myspace"
         );
     }
