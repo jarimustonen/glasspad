@@ -1,7 +1,15 @@
 [package]
 name = "glasspad"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+description = "AI-friendly, loopback-only HTML-artifact host: serves agent-authored HTML in null-origin sandboxed iframes for dashboards, charts, and interactive UIs."
+license = "MIT"
+repository = "https://github.com/jarimustonen/glasspad"
+homepage = "https://github.com/jarimustonen/glasspad"
+readme = "README.md"
+keywords = ["html", "artifact", "sandbox", "dashboard", "cli"]
+categories = ["command-line-utilities", "web-programming", "visualization"]
+exclude = ["issues/", "history/", ".worktree/", "test-*.sh", "*.png", "AGENTS*.md"]
 
 [dependencies]
 axum = "0.8"
