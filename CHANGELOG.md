@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.2.1] - 2026-08-05
+
+Distribution-only release — no changes to glasspad itself; adds prebuilt-binary and
+Homebrew install channels on top of 0.2.0.
+
+### Added
+
+- **Homebrew tap** — `brew install jarimustonen/glasspad/glasspad` (macOS / Linux), the
+  recommended cross-machine install.
+- **Prebuilt binaries** on every GitHub Release for macOS (Apple Silicon) and Linux
+  (arm64, x86_64), with SHA-256 checksums and GitHub build-provenance attestations, plus a
+  `curl`-to-shell installer script — all produced by `cargo-dist`.
+
 ## [0.2.0] - 2026-08-04
 
 Initial public release. glasspad is a loopback-only **HTML-artifact host**: the

@@ -2,6 +2,7 @@
 
 <!-- oss-readme:badges-start -->
 [![CI](https://github.com/jarimustonen/glasspad/actions/workflows/ci.yml/badge.svg)](https://github.com/jarimustonen/glasspad/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/glasspad.svg)](https://crates.io/crates/glasspad)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 <!-- oss-readme:badges-end -->
 
@@ -26,6 +27,18 @@ the directory is the single source of truth, so there is no upload/push step.
 ## Installation
 
 <!-- oss-readme:install-start -->
+**Homebrew** (macOS / Linux — the recommended cross-machine install):
+
+```bash
+brew install jarimustonen/glasspad/glasspad
+```
+
+**Prebuilt binaries** — download for your platform from the
+[latest GitHub Release](https://github.com/jarimustonen/glasspad/releases/latest)
+(each carries a checksum and build-provenance attestation), or via the release installer script.
+
+**From crates.io** (builds from source):
+
 ```bash
 cargo install glasspad
 ```

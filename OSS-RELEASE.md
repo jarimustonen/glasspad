@@ -5,6 +5,8 @@ maturity: mvp
 ecosystems: [rust]
 targets:
   - {ecosystem: rust, package: glasspad, registry: crates.io, adapter: cargo-publish}
+  - {ecosystem: rust, package: glasspad, registry: gh-releases, adapter: cargo-dist}
+  - {ecosystem: rust, package: glasspad, registry: homebrew, adapter: homebrew-tap}
 versioning: semver
 changelog:
   mode: curated
@@ -16,7 +18,7 @@ release:
 contribution_provenance: none
 provenance_level: none
 dependency_bot: dependabot
-health_badges: [ci, license]
+health_badges: [ci, registry, license]
 license: MIT
 docs_site: none
 ---
@@ -33,9 +35,12 @@ docs_site: none
   badge/producer floor is satisfied.
 - **ecosystems: [rust]** — sole manifest is `Cargo.toml` (`glasspad` 0.1.0), a CLI binary.
   Not `[rust, binary]`: `binary` is only for repos with no package ecosystem.
-- **targets** — one: crates.io via `cargo publish` (the crate is unpublished). A prebuilt-
-  binary `gh-releases` target (adapter `cargo-dist`) is a natural second target for a CLI
-  once you want distributed binaries; deferred as premature for a spike.
+- **targets** — three: crates.io via `cargo publish`; prebuilt binaries via `gh-releases` +
+  `cargo-dist`; and a Homebrew tap (`jarimustonen/homebrew-glasspad`) via `homebrew-tap`.
+  Homebrew is a **required** channel — it is how glasspad is installed across machines
+  (`brew install jarimustonen/glasspad/glasspad`). `cargo-dist` (`dist-workspace.toml` →
+  `.github/workflows/release.yml`) drives binaries + tap on tag push; the same GitHub Release
+  triggers the crates.io publish.
 - **versioning: semver** — default. It is pre-1.0 (0.1.0) with no declared major cap; if you
   intend to stay 0.x deliberately, switch to `zerover`.
 - **changelog.mode: curated** — single contributor in `git shortlog`, so no fragment
@@ -50,8 +55,8 @@ docs_site: none
   no Trusted-Publishing equivalent, so this resolves to GH `attest`) once you add a
   publishing workflow.
 - **dependency_bot: dependabot** — mvp default; `/oss-ci` emits `.github/dependabot.yml`.
-- **health_badges: [ci, license]** — `ci` producer is the workflow `/oss-ci` adds in this
-  sequence. `registry` deliberately omitted until the first crates.io publish (it would 404).
+- **health_badges: [ci, registry, license]** — `ci` producer is `ci.yml`; `registry` is the
+  crates.io version badge (crate published as of 0.2.0); `license` is MIT.
 - **license: MIT** — chosen by the maintainer (over the Rust `MIT OR Apache-2.0` dual-license
   norm). No license was declared anywhere before, so `/oss-readme` materializes the LICENSE
   file from this field; it becomes the project's public license.

@@ -91,12 +91,21 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
   `infra/secrets/crates-io.yaml`) — same mechanism as ossctl/issuectl. (A local
   `cargo publish` 403'd on a stale `~/.cargo/credentials.toml`; CI is the correct path.)
 
-### Still open (channels & polish — not release-blockers)
+### Channel (c) — Homebrew + binaries, wired 2026-08-05 (cut as 0.2.1)
+- ✅ **cargo-dist** set up (`dist-workspace.toml` → `.github/workflows/release.yml`), matching
+  ossctl/issuectl/orchestratectl. Targets: macOS arm64 (self-hosted `hauis`) + Linux
+  arm64/x86_64 (gnu). Installers: shell + homebrew. Build-provenance attestations on.
+- ✅ **Tap repo** `jarimustonen/homebrew-glasspad` created; contract targets + README
+  install/badges updated (`brew install jarimustonen/glasspad/glasspad`).
+- ⏳ **Gate:** `HOMEBREW_TAP_TOKEN` repo secret must be set on `glasspad` (the cross-repo tap
+  PAT, same as issuectl/orchestratectl) before tagging — I cannot provision it (not in SOPS).
+- ▶️ **On token set:** tag `v0.2.1` → `release.yml` builds binaries + pushes the Homebrew
+  formula, and the resulting GitHub Release triggers `publish-crates.yml` (crates.io 0.2.1).
+
+### Still open (polish — not release-blockers)
 - **Confirm placeholders:** LICENSE holder ("Jari Mustonen"), SECURITY/CoC contact
-  (`jari@itsellesi.fi`) — cosmetic; correctable in 0.2.1.
-- **Channel (c)** — Homebrew tap + prebuilt GitHub-release binaries (`cargo-dist` /
-  `gh-releases` target) **not** done; the contract targets crates.io only.
-- **Round-it-out items** (`glasspad stop`, `GLASSPAD_PORT`, PID file) — deferred to 0.2.1.
+  (`jari@itsellesi.fi`) — cosmetic.
+- **Round-it-out items** (`glasspad stop`, `GLASSPAD_PORT`, PID file) — deferred to 0.2.2.
 
 ## Notes
 - No MCP — the `mcp-integration` epic was closed obsolete (2026-07-24). glasspad
