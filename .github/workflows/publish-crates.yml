@@ -1,0 +1,44 @@
+name: Publish to crates.io
+
+# Triggers when a GitHub Release is published, so crates.io publishing happens in
+# CI with no dependency on a local token. Requires a CARGO_REGISTRY_TOKEN repo
+# secret with publish scope
+# (set once: `gh secret set CARGO_REGISTRY_TOKEN --repo jarimustonen/glasspad`,
+# sourced from infra/secrets/crates-io.yaml — same as ossctl / issuectl).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Run cargo publish --dry-run instead of publishing"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: cargo publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify
+        run: cargo build --release
+
+      - name: Publish (dry-run)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --dry-run
+
+      - name: Publish
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run != 'true') }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
