@@ -81,16 +81,22 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
 - ✅ **CI** — `.github/workflows/ci.yml` (fmt/clippy/test) + `.github/dependabot.yml`.
 - ✅ **Default branch** renamed `master → main` (local; remote flip pending push).
 
-### Remaining before the release is live (human / explicit-go)
-- **Push** `main` + flip the GitHub default branch + delete `origin/master`.
-- **Run `./test-security.sh`** as the final pre-tag regression gate.
-- **Cut the release:** `git tag v0.2.0` → `cargo publish` (irreversible) → GitHub Release.
-- **Confirm placeholders:** LICENSE copyright holder ("Jari Mustonen"), SECURITY/CoC
-  contact (`jari@itsellesi.fi`).
-- **Channel (c)** — Homebrew tap + prebuilt GitHub-release binaries (`cargo-dist`) is
-  **not** done; the contract targets crates.io only. Add a `gh-releases` target when wanted.
-- **Round-it-out items** (`glasspad stop`, `GLASSPAD_PORT`, PID file) — still deferred;
-  decide 0.2.0 vs 0.2.1.
+### 🚀 0.2.0 SHIPPED (2026-08-05)
+- ✅ **Pushed** `main`, flipped GitHub default → `main`, deleted `origin/master`.
+- ✅ **`./test-security.sh`** green (41 + Wave 2a) as the pre-tag gate.
+- ✅ **Tagged `v0.2.0`** + **GitHub Release** created (CHANGELOG notes).
+- ✅ **Published to crates.io** — `glasspad 0.2.0` is **live** (`cargo install glasspad`).
+  Publish ran **in CI** via `.github/workflows/publish-crates.yml` on release-published,
+  using the `CARGO_REGISTRY_TOKEN` repo secret (provisioned from
+  `infra/secrets/crates-io.yaml`) — same mechanism as ossctl/issuectl. (A local
+  `cargo publish` 403'd on a stale `~/.cargo/credentials.toml`; CI is the correct path.)
+
+### Still open (channels & polish — not release-blockers)
+- **Confirm placeholders:** LICENSE holder ("Jari Mustonen"), SECURITY/CoC contact
+  (`jari@itsellesi.fi`) — cosmetic; correctable in 0.2.1.
+- **Channel (c)** — Homebrew tap + prebuilt GitHub-release binaries (`cargo-dist` /
+  `gh-releases` target) **not** done; the contract targets crates.io only.
+- **Round-it-out items** (`glasspad stop`, `GLASSPAD_PORT`, PID file) — deferred to 0.2.1.
 
 ## Notes
 - No MCP — the `mcp-integration` epic was closed obsolete (2026-07-24). glasspad
