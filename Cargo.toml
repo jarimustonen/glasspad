@@ -28,3 +28,8 @@ rand = "0.8"
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
+
+# The profile that 'dist' (cargo-dist) will build with.
+[profile.dist]
+inherits = "release"
+lto = "thin"
