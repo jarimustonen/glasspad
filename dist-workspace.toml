@@ -36,9 +36,12 @@ hosting = "github"
 # id-token / attestations permissions to the publishing job.
 github-attestations = true
 
-# macOS (aarch64-apple-darwin) builds on GitHub-hosted Apple-silicon runners.
-# The sibling repos route this to the self-hosted `hauis` runner (because hosted
-# macOS was effectively unavailable when they were private/Free); glasspad is a
-# PUBLIC repo, so hosted macOS minutes are free and available, and hosted runners
-# avoid hauis's recurring checkout-gitconfig-pollution failure. Re-add a
-# `[dist.github-custom-runners]` override here if hauis is preferred later.
+# Route the macOS build to the self-hosted `hauis` runner (Apple Silicon), matching
+# the sibling repos. The two Linux targets stay on GitHub-hosted ubuntu runners.
+# Gotcha (infra/machines/hauis.md): a job's actions/checkout writes an auth
+# extraheader into the symlinked global ~/.gitconfig; overlapping/cancelled mac
+# jobs on this single runner can leave a stale header → next checkout gets a git
+# 400. Mitigation: cut a release tag ONCE and let it finish (don't re-tag while a
+# mac job is in flight); do NOT set GIT_CONFIG_GLOBAL in the runner's .env.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "self-hosted"
