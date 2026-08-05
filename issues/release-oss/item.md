@@ -91,16 +91,21 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
   `infra/secrets/crates-io.yaml`) — same mechanism as ossctl/issuectl. (A local
   `cargo publish` 403'd on a stale `~/.cargo/credentials.toml`; CI is the correct path.)
 
-### Channel (c) — Homebrew + binaries, wired 2026-08-05 (cut as 0.2.1)
-- ✅ **cargo-dist** set up (`dist-workspace.toml` → `.github/workflows/release.yml`), matching
-  ossctl/issuectl/orchestratectl. Targets: macOS arm64 (self-hosted `hauis`) + Linux
-  arm64/x86_64 (gnu). Installers: shell + homebrew. Build-provenance attestations on.
-- ✅ **Tap repo** `jarimustonen/homebrew-glasspad` created; contract targets + README
-  install/badges updated (`brew install jarimustonen/glasspad/glasspad`).
-- ⏳ **Gate:** `HOMEBREW_TAP_TOKEN` repo secret must be set on `glasspad` (the cross-repo tap
-  PAT, same as issuectl/orchestratectl) before tagging — I cannot provision it (not in SOPS).
-- ▶️ **On token set:** tag `v0.2.1` → `release.yml` builds binaries + pushes the Homebrew
-  formula, and the resulting GitHub Release triggers `publish-crates.yml` (crates.io 0.2.1).
+### 🚀 0.2.1 SHIPPED — all three channels live (2026-08-05)
+- ✅ **crates.io** `glasspad 0.2.1`, **GitHub Release v0.2.1** (macOS arm64 + Linux
+  arm64/x86_64 binaries, checksums, build-provenance attestations, installer script), and
+  **Homebrew** `brew install jarimustonen/glasspad/glasspad` (formula in
+  `jarimustonen/homebrew-glasspad`).
+- ✅ **cargo-dist** wired (`dist-workspace.toml` → `release.yml`); macOS on self-hosted
+  `hauis`; `HOMEBREW_TAP_TOKEN` set (via `gh auth token`).
+- Bumps hit along the way (all fixed): missing `[profile.dist]`; unused `reqwest` pulling
+  `openssl-sys` (broke arm64-linux cross-compile) → removed; hauis git-400 from overlapping
+  mac jobs (rapid re-tag) → cleaned + run-once; empty tap repo (no `main`) → initialized;
+  repo made **public** (needed for attestations); crates trigger moved to tag-push (the
+  GITHUB_TOKEN release event never fired `publish-crates.yml`).
+- **Release recipe now:** `git push origin vX.Y.Z` → release.yml (binaries + Homebrew) +
+  publish-crates.yml (crates.io), both on the tag push. Cut a tag once; don't re-tag while a
+  hauis mac job is in flight.
 
 ### Still open (polish — not release-blockers)
 - **Confirm placeholders:** LICENSE holder ("Jari Mustonen"), SECURITY/CoC contact
