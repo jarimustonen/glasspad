@@ -6,6 +6,9 @@ status: in-progress
 priority: high
 related: ['@markdown-template-render']
 blocked_by: ['@markdown-template-render']
+commits:
+- hash: 657010d
+  summary: hosted share-server run mode + publish client
 ---
 
 # Hosted share-server run mode (public read, multi-agent ingest)
