@@ -75,7 +75,16 @@ fn self_contained_build_json_envelope_and_offline_libs() {
     assert_eq!(v["base_libs_bundled"], true);
     assert_eq!(v["home"], "index");
     assert_eq!(v["index"], "index.html");
-    assert_eq!(v["warnings"], serde_json::json!([]));
+    assert_eq!(v["dry_run"], false);
+    // A standing security/nav caveat is always present.
+    let warnings = v["warnings"].as_array().unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("not sandboxed")
+                || w.as_str().unwrap().contains("NOT sandboxed")),
+        "warnings: {warnings:?}"
+    );
     // Both artifacts are reported.
     let arts = v["artifacts"].as_array().unwrap();
     assert!(arts.iter().any(|s| s == "index"));
@@ -188,6 +197,31 @@ fn reserved_slug_is_refused_like_the_server_path() {
     assert_eq!(err["error"]["code"], "reserved_slug");
     // Nothing was written — the refusal happens before any output.
     assert!(!out.exists(), "no output on a refused scan");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn output_inside_the_source_space_is_refused() {
+    let root = temp_dir("out-in-space");
+    let space = root.join("sales");
+    std::fs::create_dir_all(&space).unwrap();
+    populate_space(&space);
+    // out nested inside the source space → refused (would pollute the next scan).
+    let out = space.join("dist");
+
+    let res = bin()
+        .arg("--json")
+        .arg("build")
+        .arg(&space)
+        .arg(&out)
+        .output()
+        .unwrap();
+
+    assert_eq!(res.status.code(), Some(1));
+    let err: serde_json::Value = serde_json::from_slice(&res.stderr).unwrap();
+    assert_eq!(err["error"]["code"], "output_inside_space");
+    assert!(!out.exists(), "nothing written when output is refused");
 
     let _ = std::fs::remove_dir_all(&root);
 }

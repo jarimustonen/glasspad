@@ -4,6 +4,9 @@ updated: 2026-08-06
 type: feature
 status: in-progress
 priority: low
+commits:
+- hash: a1548b5
+  summary: 'feat(build): glasspad build — static self-contained render of a space'
 ---
 
 # glasspad build: static self-contained render (optional)

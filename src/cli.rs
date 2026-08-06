@@ -841,12 +841,39 @@ pub fn build(
     let home = space.home.clone();
     let slugs = space.slugs();
 
+    // Refuse an output that would overwrite or pollute the source space: writing
+    // INTO (or AT) the scanned directory would either clobber source files or seed
+    // the next scan with generated `.html`/`_gp` output. Checked before planning so
+    // it surfaces in --dry-run too (a read-only, non-mutating validation, §11).
+    guard_out_not_in_space(&space_dir, &out, json);
+
     // Plan every output file (pure — no filesystem writes yet).
     let files = build::plan(space, home.as_deref(), mode);
     let index = files
         .iter()
         .any(|f| f.rel_path == "index.html")
         .then(|| "index.html".to_string());
+
+    // Non-fatal caveats every build carries (AI-first §10 warnings go in the
+    // stdout payload / on stderr in text mode). The security note is standing: the
+    // static output is NOT the live host's sandbox.
+    let mut warnings: Vec<String> = vec![
+        "static output is NOT sandboxed like the live host (no null-origin iframe, no \
+         per-response CSP) and has no trusted nav shell: cross-artifact bridge navigation \
+         and extensionless relative links (href=\"other-slug\") do not resolve — link with \
+         an explicit .html. Build only spaces you trust; serve the output at a web root \
+         (or open index.html) so the base libs resolve."
+            .to_string(),
+    ];
+    if slugs.is_empty() {
+        warnings
+            .push("the space contains no artifacts: the build produced no entry page.".to_string());
+    }
+
+    // Validate the output directory (read-only: metadata + read_dir). Done for BOTH
+    // dry-run and the real run so --dry-run performs the same non-mutating checks
+    // the real run does (§11). Pass --force to preview/allow a non-empty target.
+    guard_out_dir(&out, force, json);
 
     if dry_run {
         emit_build_report(
@@ -859,12 +886,10 @@ pub fn build(
             &files,
             home.as_deref(),
             index.as_deref(),
+            &warnings,
         );
         return;
     }
-
-    // Refuse to clobber a non-empty output directory unless --force (§3).
-    guard_out_dir(&out, force, json);
 
     if let Err(e) = build::write_files(&out, &files) {
         exit_error(
@@ -889,7 +914,61 @@ pub fn build(
         &files,
         home.as_deref(),
         index.as_deref(),
+        &warnings,
     );
+}
+
+/// Reject an output directory that equals or is nested inside the source space.
+/// Both are resolved to absolute paths (`out` via its nearest existing ancestor,
+/// since it need not exist yet) so the check is robust to `.`/`..`/symlink
+/// spellings. This is independent of `--force`: writing at/into the source would
+/// overwrite artifacts or seed the next scan with generated output.
+fn guard_out_not_in_space(space_dir: &Path, out: &Path, json: bool) {
+    let space_abs = std::fs::canonicalize(space_dir).unwrap_or_else(|_| space_dir.to_path_buf());
+    let out_abs = abs_via_nearest_ancestor(out);
+    if out_abs == space_abs || out_abs.starts_with(&space_abs) {
+        exit_error(
+            json,
+            1,
+            "output_inside_space",
+            &format!(
+                "output {} is the source space {} (or nested inside it); choose an output \
+                 directory outside the space so the build cannot overwrite or re-scan its own output",
+                out.display(),
+                space_dir.display()
+            ),
+            Some(&out.display().to_string()),
+            None,
+        );
+    }
+}
+
+/// Resolve `path` to an absolute path even when it does not exist yet:
+/// canonicalize the deepest existing ancestor and re-append the non-existent tail.
+/// Used to compare a not-yet-created output dir against the (existing) source root.
+fn abs_via_nearest_ancestor(path: &Path) -> PathBuf {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        if let Ok(canon) = std::fs::canonicalize(&cur) {
+            let mut result = canon;
+            for seg in tail.iter().rev() {
+                result.push(seg);
+            }
+            return result;
+        }
+        match cur.file_name() {
+            Some(name) => tail.push(name.to_os_string()),
+            None => break,
+        }
+        if !cur.pop() {
+            break;
+        }
+    }
+    // Nothing on the path existed (or a rootless relative path): best-effort absolute.
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Refuse to write into an existing non-empty `<out>` unless `--force`. A path that
@@ -900,11 +979,30 @@ fn guard_out_dir(out: &Path, force: bool, json: bool) {
     match std::fs::metadata(out) {
         Ok(m) if m.is_dir() => {
             if !force {
-                let empty = std::fs::read_dir(out)
-                    .map(|mut it| it.next().is_none())
-                    .unwrap_or(false);
-                if !empty {
-                    exit_error(
+                // A read failure here is a SYSTEM error (exit 2), not "empty"; a
+                // first entry that errors is likewise an I/O failure, not "non-empty".
+                let mut it = match std::fs::read_dir(out) {
+                    Ok(it) => it,
+                    Err(e) => exit_error(
+                        json,
+                        2,
+                        "io_error",
+                        &format!("cannot read output directory {}: {e}", out.display()),
+                        None,
+                        None,
+                    ),
+                };
+                match it.next() {
+                    None => {} // empty → fine
+                    Some(Err(e)) => exit_error(
+                        json,
+                        2,
+                        "io_error",
+                        &format!("cannot read output directory {}: {e}", out.display()),
+                        None,
+                        None,
+                    ),
+                    Some(Ok(_)) => exit_error(
                         json,
                         1,
                         "output_not_empty",
@@ -915,7 +1013,7 @@ fn guard_out_dir(out: &Path, force: bool, json: bool) {
                         ),
                         Some(&out.display().to_string()),
                         None,
-                    );
+                    ),
                 }
             }
         }
@@ -958,10 +1056,15 @@ fn emit_build_report(
     files: &[build::OutFile],
     home: Option<&str>,
     index: Option<&str>,
+    warnings: &[String],
 ) {
     if json {
+        // `built`/`dry_run` are both present in every payload (one true, one false)
+        // so an AI consumer reads a stable shape without mode-dependent field probing.
         let mut payload = json!({
             "schema_version": SCHEMA_VERSION,
+            "built": !dry,
+            "dry_run": dry,
             "space": name,
             "out": out.display().to_string(),
             "mode": mode.as_str(),
@@ -971,10 +1074,9 @@ fn emit_build_report(
             "pages": slugs.len(),
             "files": files.len(),
             "base_libs_bundled": mode == LibMode::SelfContained,
+            "warnings": warnings,
         });
-        let obj = payload.as_object_mut().expect("object literal");
         if dry {
-            obj.insert("dry_run".into(), json!(true));
             let would: Vec<serde_json::Value> = files
                 .iter()
                 .map(|f| {
@@ -986,13 +1088,16 @@ fn emit_build_report(
                     })
                 })
                 .collect();
-            obj.insert("would".into(), json!(would));
-        } else {
-            obj.insert("built".into(), json!(true));
-            obj.insert("warnings".into(), json!([]));
+            payload
+                .as_object_mut()
+                .expect("object literal")
+                .insert("would".into(), json!(would));
         }
         emit_json_line(&payload);
     } else if dry {
+        for w in warnings {
+            eprintln!("warning: {w}");
+        }
         eprintln!(
             "glasspad build (dry run): would write {} file(s) for space '{name}' ({}) to {}",
             files.len(),
@@ -1003,6 +1108,9 @@ fn emit_build_report(
             eprintln!("  {} ({} bytes)", f.rel_path, f.bytes.len());
         }
     } else {
+        for w in warnings {
+            eprintln!("warning: {w}");
+        }
         // Bare output path on stdout (composable); human summary on stderr.
         println!("{}", out.display());
         eprintln!(

@@ -6,15 +6,25 @@
 //! written), then each artifact is wrapped through the **same render seam** the
 //! content route uses (`wrap::render_artifact`): a fragment is wrapped into a
 //! themed document with `base.css` linked + `bridge.js` injected; a full document
-//! is emitted verbatim. The renderer is **not** forked — the build produces the
-//! same wrapped bytes the server would serve, written to files instead.
+//! is emitted verbatim. The renderer is **not** forked — each page is byte-for-byte
+//! the **content-route** document the server would serve at `/{space}/_c/{slug}`
+//! (modulo the self-contained base-lib path localization).
 //!
-//! There is no server, no bind, and no per-response CSP header here: a static file
-//! carries no HTTP headers, so the null-origin sandbox contract the live host
-//! enforces does not apply to build output. That is an accepted property of static
-//! render — the output is for an **offline docsite / external preview transport**,
-//! where the input-side guarantees (the scanner refusing hostile inputs) are what
-//! carry over, not the response-side CSP/sandbox.
+//! **What the build does NOT reproduce.** The live host frames that content in a
+//! **trusted parent shell** (nav chrome + a null-origin sandboxed iframe) and sets a
+//! per-response CSP; a static file carries no HTTP headers and there is no shell. So
+//! build output (a) runs **unsandboxed** as a top-level document — an artifact's own
+//! script runs with the deploy origin's authority, so build only spaces you trust;
+//! and (b) has **no cross-artifact nav** — `bridge.js` (injected into fragments) is
+//! inert without a parent shell, and an author's extensionless same-space link
+//! (`href="other-slug"`) does not resolve to `other-slug.html`.
+//!
+//! These are surfaced as build `warnings[]` (see `cli::build`). The output is meant
+//! for an **offline docsite / external preview transport** — the input-side
+//! guarantees (the scanner refusing hostile *filesystem* structure) carry over, but
+//! it does NOT sanitize artifact HTML and does NOT reproduce the response-side
+//! sandbox/CSP. A cleaner future path is to also emit the trusted shell for full
+//! nav fidelity (flagged as a follow-up).
 //!
 //! ## Base-lib handling (self-contained vs shared-libs)
 //!
@@ -80,16 +90,31 @@ pub fn wrapped_page(artifact_html: &str, mode: LibMode) -> String {
 }
 
 /// Rewrite the two base-lib refs `wrap::wrap_fragment` injects from the absolute
-/// server path (`/_gp/v1/…`) to a **relative** one (`_gp/v1/…`). Applied only to
-/// wrapped **fragments** (where these exact tags are first-party wrap output, never
-/// author bytes), so it can never touch an artifact author's intentionally-absolute
-/// reference. The match is exact against `wrap`'s emitted tags; the build's tests
-/// assert the rewrite actually fired, so a change to `wrap`'s tag formatting fails
-/// loudly rather than silently leaving an unresolvable path.
+/// server path (`/_gp/v1/…`) to a **relative** one (`_gp/v1/…`). The rewrite is
+/// **scoped to the `<head>` region** `wrap` emits — everything before the first
+/// `</head>` — where the fragment body (untrusted author bytes, inserted after
+/// `</head>`) can never appear. So an author who literally writes
+/// `href="/_gp/v1/base.css"` inside their fragment body is left untouched; only
+/// `wrap`'s own injected head tags are localized.
+///
+/// The match is still an exact string against `wrap`'s emitted tags; the build's
+/// tests assert the rewrite actually fired (and that a body occurrence is *not*
+/// rewritten), so a change to `wrap`'s tag formatting fails loudly rather than
+/// silently leaving an unresolvable path. (An ideal seam would parameterize the
+/// base path in `wrap` itself — flagged as a follow-up; `wrap` is the frozen
+/// security seam, so this head-scoped post-process avoids touching it.)
 fn localize_base_libs(wrapped: String) -> String {
-    wrapped
+    // Split at the end of the injected head so only first-party scaffold bytes are
+    // rewritten; the fragment body after `</head>` is passed through verbatim.
+    let split = wrapped
+        .find("</head>")
+        .map(|i| i + "</head>".len())
+        .unwrap_or(wrapped.len());
+    let (head, body) = wrapped.split_at(split);
+    let head = head
         .replace("href=\"/_gp/v1/base.css\"", "href=\"_gp/v1/base.css\"")
-        .replace("src=\"/_gp/v1/bridge.js\"", "src=\"_gp/v1/bridge.js\"")
+        .replace("src=\"/_gp/v1/bridge.js\"", "src=\"_gp/v1/bridge.js\"");
+    head + body
 }
 
 /// A minimal `index.html` that redirects to `home` (used when the space's home
@@ -126,12 +151,19 @@ pub fn plan(space: &Space, home: Option<&str>, mode: LibMode) -> Vec<OutFile> {
         });
     }
 
-    // A canonical `index.html` entry point. If an artifact is literally named
-    // `index`, its own page already is `index.html`; otherwise emit a redirect to
-    // the resolved home so opening the output directory lands somewhere sensible.
+    // A canonical `index.html` entry point. The scanner resolves `home` as
+    // `index` > `home` > first-in-nav, so `home == "index"` **iff** an `index`
+    // artifact exists — in which case that artifact's own page already is
+    // `index.html` (no redirect). For any other home we emit a redirect to it;
+    // `home != "index"` therefore guarantees no `index` artifact and thus no
+    // collision at `index.html` (and no self-redirect loop).
     if let Some(home) = home
-        && !space.artifacts.contains_key("index")
+        && home != "index"
     {
+        debug_assert!(
+            space.artifacts.contains_key(home),
+            "resolved home {home:?} must be a real artifact slug"
+        );
         files.push(OutFile {
             rel_path: "index.html".to_string(),
             bytes: index_redirect(home).into_bytes(),
@@ -147,15 +179,18 @@ pub fn plan(space: &Space, home: Option<&str>, mode: LibMode) -> Vec<OutFile> {
     }
 
     // Self-contained: bundle the pinned base libs so the output resolves them with
-    // no running host. `gp_asset` is the single source of truth for their bytes.
+    // no running host. `gp_asset` is the single source of truth for their bytes; a
+    // `BASE_LIB_NAMES` entry that fails to resolve is a build-integrity bug (the two
+    // lists must agree), so fail loud rather than silently omit a lib the report
+    // then claims was bundled.
     if mode == LibMode::SelfContained {
         for name in fixtures::BASE_LIB_NAMES {
-            if let Some((_, body)) = fixtures::gp_asset(name) {
-                files.push(OutFile {
-                    rel_path: format!("_gp/v1/{name}"),
-                    bytes: body.as_bytes().to_vec(),
-                });
-            }
+            let (_, body) = fixtures::gp_asset(name)
+                .unwrap_or_else(|| panic!("BASE_LIB_NAMES entry {name:?} has no gp_asset body"));
+            files.push(OutFile {
+                rel_path: format!("_gp/v1/{name}"),
+                bytes: body.as_bytes().to_vec(),
+            });
         }
     }
 
@@ -164,16 +199,23 @@ pub fn plan(space: &Space, home: Option<&str>, mode: LibMode) -> Vec<OutFile> {
 
 /// Write a planned file set under `out`, creating parent directories as needed.
 /// `out` is created if absent. Each `rel_path` is a build-produced relative,
-/// `..`-free, `/`-separated path (see [`OutFile`]), joined onto `out` with the
-/// platform separator — no traversal is possible from these first-party paths.
+/// `/`-separated path (see [`OutFile`]); it is nonetheless **re-validated here**
+/// segment by segment — empty, `.`, `..`, absolute, and backslash-bearing segments
+/// are rejected — so this public entry point can never write outside `out`, even if
+/// a future caller (or a scanner regression that leaks a `..` asset key) hands it a
+/// malformed path. Each validated segment is joined with the platform separator so
+/// the relative path maps to the right nested location on any platform.
 pub fn write_files(out: &Path, files: &[OutFile]) -> std::io::Result<()> {
     std::fs::create_dir_all(out)?;
     for f in files {
-        // Join each `/`-separated segment so the relative path maps to the right
-        // nested location on any platform (a bare `join` of `"a/b"` is fine on
-        // unix; doing it segment-wise is correct everywhere).
         let mut path = out.to_path_buf();
         for seg in f.rel_path.split('/') {
+            if seg.is_empty() || seg == "." || seg == ".." || seg.contains('\\') {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("refusing unsafe output path segment in {:?}", f.rel_path),
+                ));
+            }
             path.push(seg);
         }
         if let Some(parent) = path.parent() {
@@ -244,6 +286,40 @@ mod tests {
         // …and the absolute server path is gone (so file:// resolves them).
         assert!(!page.contains(r#"href="/_gp/v1/base.css""#));
         assert!(!page.contains(r#"src="/_gp/v1/bridge.js""#));
+    }
+
+    #[test]
+    fn localize_does_not_touch_author_body_bytes() {
+        // A fragment whose BODY literally contains the injected-tag strings must be
+        // left untouched: only the first-party `<head>` scaffold is localized. This
+        // proves the "can never touch an author's absolute ref" claim.
+        let fragment = "<h1>Docs</h1><p>Load it with <code>href=\"/_gp/v1/base.css\"</code></p>\
+             <script src=\"/_gp/v1/bridge.js\"></script>";
+        let page = wrapped_page(fragment, LibMode::SelfContained);
+        // The head's injected refs are localized…
+        let head = &page[..page.find("</head>").unwrap()];
+        assert!(head.contains(r#"href="_gp/v1/base.css""#));
+        assert!(head.contains(r#"src="_gp/v1/bridge.js""#));
+        // …but the author's body copies of the same strings survive verbatim.
+        let body = &page[page.find("</head>").unwrap()..];
+        assert!(body.contains(r#"href="/_gp/v1/base.css""#));
+        assert!(body.contains(r#"src="/_gp/v1/bridge.js""#));
+    }
+
+    #[test]
+    fn write_files_refuses_unsafe_path_segments() {
+        let out =
+            std::env::temp_dir().join(format!("glasspad-build-unsafe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        for bad in ["../escape.html", "a//b.html", "./x.html", "a/../../x"] {
+            let files = vec![OutFile {
+                rel_path: bad.to_string(),
+                bytes: b"x".to_vec(),
+            }];
+            let err = write_files(&out, &files).expect_err("must reject unsafe path");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        }
+        let _ = std::fs::remove_dir_all(&out);
     }
 
     #[test]
