@@ -103,6 +103,9 @@ type RenderFp = (FileFp, Option<FileFp>);
 /// The template a `render` session re-applies on every (re)render. A built-in is a
 /// static fragment; a file is re-read each render so editing it reloads the browser
 /// (the same live-edit loop `serve`/`create` give a directory / single file).
+/// `Clone` is a pointer copy for `Builtin(&'static str)` and a `PathBuf` allocation
+/// for `File`, cloned into the watcher's `spawn_blocking` closures.
+#[derive(Clone)]
 pub enum RenderTemplate {
     Builtin(&'static str),
     File(PathBuf),
@@ -126,22 +129,45 @@ impl RenderTemplate {
     }
 }
 
-/// Render `md_path` (markdown) through `template` into an artifact body. Used by
-/// both the initial `render` load and the watcher reload, so the two share one
-/// renderer. Returns an informative message on failure (a bad read or a template
-/// missing/duplicating `{{content}}`) — the caller decides fatal-vs-log.
+/// Cap the rendered artifact body so a `render` artifact obeys the same per-file
+/// resource bound the directory scanner and `create` enforce (`MAX_FILE_BYTES`).
+/// Markdown/template *inputs* are each capped at that limit, but rendering can
+/// amplify markup, so the generated body is checked too — otherwise a `render`d
+/// artifact could exceed the space model's per-artifact invariant. Returns the
+/// over-limit message on failure so both the initial CLI load (fatal) and the
+/// watcher (keep last-good) can report it.
+pub fn enforce_body_cap(body: String) -> Result<String, String> {
+    if body.len() as u64 > space::MAX_FILE_BYTES {
+        return Err(format!(
+            "rendered output is {} bytes, over the {}-byte per-artifact limit",
+            body.len(),
+            space::MAX_FILE_BYTES
+        ));
+    }
+    Ok(body)
+}
+
+/// Render `md_path` (markdown) through `template` into an artifact body, bounded by
+/// [`enforce_body_cap`]. Used by both the initial `render` load and the watcher
+/// reload, so the two share one renderer. Returns an informative message on failure
+/// (a bad read, a template missing/duplicating `{{content}}`, or an over-limit
+/// rendered body) — the caller decides fatal-vs-log.
 pub fn build_render_body(md_path: &Path, template: &RenderTemplate) -> Result<String, String> {
     let md = read_artifact_file(md_path)?;
     let tstr = template.read()?;
-    render::render_to_body(&md, &tstr).map_err(|e| e.to_string())
+    let body = render::render_to_body(&md, &tstr).map_err(|e| e.to_string())?;
+    enforce_body_cap(body)
 }
 
 /// The `render` analogue of [`spawn_file_watcher`]: poll the markdown file **and**
 /// (for a file template) the template file, and on a change to either, re-render
 /// into a fresh one-artifact snapshot, swap atomically, and fire the SSE reload. A
-/// render that fails (a removed/oversize/non-UTF-8 source, or a template that lost
-/// its `{{content}}` mid-edit) keeps the last-good snapshot serving and is logged
-/// once, so a transient bad save never blanks the page.
+/// render that fails (a removed/oversize/non-UTF-8 source, an over-limit rendered
+/// body, or a template that lost its `{{content}}` mid-edit) keeps the last-good
+/// snapshot serving and is logged once, so a transient bad save never blanks the
+/// page. A persistently-failing source state is attempted **once** (not re-rendered
+/// every tick): `last_err_fp` gates the work, not just the log, so an invalid 8 MiB
+/// template does not re-parse at 2 Hz until the next edit changes the fingerprint.
 pub fn spawn_render_watcher(
     host: Arc<ArtifactHost>,
     md_path: PathBuf,
@@ -155,10 +181,12 @@ pub fn spawn_render_watcher(
         loop {
             tokio::time::sleep(WATCH_INTERVAL).await;
             let fp = render_fp_blocking(md_path.clone(), tpath.clone()).await;
-            if fp == loaded_fp {
+            // Skip an unchanged good state AND a state we already tried and failed —
+            // the latter won't succeed without a further edit (which moves the fp).
+            if fp == loaded_fp || last_err_fp == Some(fp) {
                 continue;
             }
-            let (md, tpl) = (md_path.clone(), template_clone(&template));
+            let (md, tpl) = (md_path.clone(), template.clone());
             match tokio::task::spawn_blocking(move || build_render_body(&md, &tpl)).await {
                 Ok(Ok(body)) => {
                     host.swap(one_artifact_snapshot(&name, body));
@@ -168,28 +196,19 @@ pub fn spawn_render_watcher(
                     eprintln!("glasspad: re-rendered {}", md_path.display());
                 }
                 Ok(Err(e)) => {
-                    if last_err_fp != Some(fp) {
-                        eprintln!(
-                            "glasspad: re-render of {} failed, keeping last good content: {e}",
-                            md_path.display()
-                        );
-                        last_err_fp = Some(fp);
-                    }
+                    // The top-of-loop guard already skips a repeat of this fp, so this
+                    // logs exactly once per distinct failing state, then waits for the
+                    // next edit rather than re-rendering the same failure every tick.
+                    eprintln!(
+                        "glasspad: re-render of {} failed, keeping last good content: {e}",
+                        md_path.display()
+                    );
+                    last_err_fp = Some(fp);
                 }
                 Err(join) => eprintln!("glasspad: render watcher task failed: {join}"),
             }
         }
     });
-}
-
-/// Clone a [`RenderTemplate`] for a `spawn_blocking` closure (it is not `Clone`
-/// because `&'static str` and `PathBuf` differ; a tiny explicit clone keeps the
-/// enum free of a derive that would imply the static variant allocates).
-fn template_clone(t: &RenderTemplate) -> RenderTemplate {
-    match t {
-        RenderTemplate::Builtin(s) => RenderTemplate::Builtin(s),
-        RenderTemplate::File(p) => RenderTemplate::File(p.clone()),
-    }
 }
 
 /// Fingerprint the render source(s): the markdown file's `(len, mtime)` plus, for a
@@ -403,6 +422,43 @@ mod tests {
 
     fn app() -> Router {
         build_app(3000)
+    }
+
+    #[test]
+    fn enforce_body_cap_bounds_rendered_output() {
+        // A body at/under the per-artifact cap passes; over it is rejected so a
+        // `render`d artifact never exceeds the `MAX_FILE_BYTES` invariant that the
+        // scanner and `create` hold for on-disk files.
+        let ok = "x".repeat(1024);
+        assert_eq!(enforce_body_cap(ok.clone()).unwrap(), ok);
+        let too_big = "x".repeat((space::MAX_FILE_BYTES + 1) as usize);
+        let err = enforce_body_cap(too_big).unwrap_err();
+        assert!(err.contains("over the"), "msg: {err}");
+    }
+
+    #[test]
+    fn build_render_body_enforces_output_cap() {
+        // A template that balloons the body past the cap fails closed (kept last-good
+        // by the watcher; a fatal `rendered_output_too_large` on the initial load).
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("gp-render-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let md = dir.join("doc.md");
+        std::fs::File::create(&md)
+            .unwrap()
+            .write_all(b"# hi\n")
+            .unwrap();
+        // Leak a huge static template string to exercise the Builtin path's cap.
+        let big: &'static str = Box::leak(
+            format!(
+                "{}{{{{content}}}}",
+                "y".repeat((space::MAX_FILE_BYTES + 16) as usize)
+            )
+            .into_boxed_str(),
+        );
+        let err = build_render_body(&md, &RenderTemplate::Builtin(big)).unwrap_err();
+        assert!(err.contains("over the"), "expected cap error, got: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     async fn send(req: Request<Body>) -> StatusCode {

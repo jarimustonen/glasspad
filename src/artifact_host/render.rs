@@ -103,34 +103,22 @@ impl fmt::Display for TemplateError {
 
 impl std::error::Error for TemplateError {}
 
-/// Splice `rendered` into `template` at its single `{{content}}` placeholder.
-/// Whitespace inside the braces is tolerated, so `{{ content }}` matches too; any
-/// other `{{…}}` token (e.g. a literal `{{ note }}` the author wrote) is left
-/// verbatim. Exactly one `content` placeholder is required — zero or many is a
-/// [`TemplateError`]. The rendered HTML is inserted **verbatim** (no escaping):
-/// the result is the artifact body, already served inside the sandbox, so this is
-/// not a trust boundary.
-pub fn apply_template(template: &str, rendered: &str) -> Result<String, TemplateError> {
-    let spans = content_placeholder_spans(template);
-    match spans.len() {
-        0 => Err(TemplateError::MissingPlaceholder),
-        1 => {
-            let (start, end) = spans[0];
-            let mut out = String::with_capacity(template.len() + rendered.len());
-            out.push_str(&template[..start]);
-            out.push_str(rendered);
-            out.push_str(&template[end..]);
-            Ok(out)
-        }
-        n => Err(TemplateError::DuplicatePlaceholder(n)),
-    }
-}
-
-/// Byte spans of every `{{…}}` whose inner text trims to exactly `content`. Scans
-/// left to right without regex, so it is allocation-light and has no catastrophic
-/// backtracking. An unterminated `{{` (no following `}}`) ends the scan.
-fn content_placeholder_spans(template: &str) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
+/// Split `template` into `(prefix, suffix)` around its single `{{content}}`
+/// placeholder — the validated form the splice needs. Whitespace inside the braces
+/// is tolerated, so `{{ content }}` matches too; any other `{{…}}` token (a literal
+/// `{{ note }}` the author wrote) is left in the prefix/suffix verbatim. Exactly one
+/// `content` placeholder is required — zero or many is a [`TemplateError`].
+///
+/// The scan is a single left-to-right pass without regex, so no catastrophic
+/// backtracking and no per-placeholder allocation (the duplicate count is tracked
+/// as a counter, not an all-spans vector). On a `{{…}}` whose inner text is NOT
+/// `content`, the cursor resumes just past the opening `{{` — so a stray/unrelated
+/// `{{` before the real placeholder does **not** swallow it (e.g.
+/// `A {{ x {{content}} y` still finds the real one). An unterminated `{{` (no
+/// following `}}`) ends the scan.
+fn split_at_placeholder(template: &str) -> Result<(&str, &str), TemplateError> {
+    let mut first: Option<(usize, usize)> = None;
+    let mut count = 0usize;
     let mut i = 0;
     while let Some(rel_open) = template[i..].find("{{") {
         let open = i + rel_open;
@@ -140,18 +128,45 @@ fn content_placeholder_spans(template: &str) -> Vec<(usize, usize)> {
         };
         let close = after_open + rel_close;
         if template[after_open..close].trim() == "content" {
-            spans.push((open, close + 2));
+            count += 1;
+            if first.is_none() {
+                first = Some((open, close + 2));
+            }
+            i = close + 2; // consume this placeholder, resume after it
+        } else {
+            // Not our placeholder: resume just past `{{` so a later/nested `{{…}}`
+            // (the real one) is still found rather than skipped past its `}}`.
+            i = after_open;
         }
-        i = close + 2;
     }
-    spans
+    match (first, count) {
+        (None, _) => Err(TemplateError::MissingPlaceholder),
+        (Some((start, end)), 1) => Ok((&template[..start], &template[end..])),
+        (Some(_), n) => Err(TemplateError::DuplicatePlaceholder(n)),
+    }
 }
 
-/// The full render: markdown body + template string → artifact body. Renders the
-/// markdown, then splices it into the template's single placeholder.
+/// Splice `rendered` into `template` at its single `{{content}}` placeholder. The
+/// rendered HTML is inserted **verbatim** (no escaping): the result is the artifact
+/// body, already served inside the sandbox, so this is not a trust boundary.
+pub fn apply_template(template: &str, rendered: &str) -> Result<String, TemplateError> {
+    let (prefix, suffix) = split_at_placeholder(template)?;
+    let mut out = String::with_capacity(prefix.len() + rendered.len() + suffix.len());
+    out.push_str(prefix);
+    out.push_str(rendered);
+    out.push_str(suffix);
+    Ok(out)
+}
+
+/// The full render: markdown body + template string → artifact body. Validates the
+/// template's placeholder **first** (so a deterministically-invalid template is
+/// rejected before the potentially-expensive markdown render), then renders the
+/// markdown and splices it in.
 pub fn render_to_body(markdown: &str, template: &str) -> Result<String, TemplateError> {
-    let rendered = render_markdown(markdown);
-    apply_template(template, &rendered)
+    // Validate the single placeholder up front (cheap) so a bad template short-
+    // circuits before rendering a possibly-large markdown body; then splice.
+    split_at_placeholder(template)?;
+    apply_template(template, &render_markdown(markdown))
 }
 
 #[cfg(test)]
@@ -245,6 +260,17 @@ mod tests {
             apply_template("{{content}}{{ content }}", "x"),
             Err(TemplateError::DuplicatePlaceholder(2))
         );
+    }
+
+    #[test]
+    fn apply_template_finds_placeholder_after_a_stray_open_brace() {
+        // A stray/unrelated `{{ … }}` before the real placeholder must NOT swallow
+        // it: the scanner resumes past `{{`, so the real `{{content}}` is found.
+        let out = apply_template("A {{ note }} B {{content}} C", "X").unwrap();
+        assert_eq!(out, "A {{ note }} B X C");
+        // …even when the stray open shares the real placeholder's close scan window.
+        let out = apply_template("{{ wrap {{content}} }}", "X").unwrap();
+        assert_eq!(out, "{{ wrap X }}");
     }
 
     #[test]

@@ -546,6 +546,28 @@ pub async fn render(
             None,
         ),
     };
+    // Bound the generated body to the same per-artifact limit `create`/`serve`
+    // enforce (rendering can amplify markup past the input cap).
+    let body = match server::enforce_body_cap(body) {
+        Ok(b) => b,
+        Err(msg) => exit_error(json, 1, "rendered_output_too_large", &msg, None, None),
+    };
+
+    // A file template that renders a FULL document (opens with `<!doctype>`/`<html>`)
+    // is served verbatim — it forgoes the fragment wrap, so it loses the auto-linked
+    // `base.css` (incl. the `.gp-prose` theme) and injected `bridge.js` (live reload
+    // in-frame). Not a security issue (the `_c` response CSP/sandbox are unchanged),
+    // but a footgun worth a non-fatal warning so the author isn't surprised.
+    let mut warnings: Vec<String> = Vec::new();
+    if wrap::is_full_document(&body) {
+        warnings.push(
+            "the template renders a full HTML document (opens with <!doctype>/<html>): \
+             it is served verbatim, so glasspad does NOT link base.css (the .gp-prose \
+             theme) or inject bridge.js (in-frame live reload). Use a fragment template \
+             (e.g. the built-in prose/dashboard) to keep those, or link base.css yourself."
+                .to_string(),
+        );
+    }
 
     let host = Arc::new(ArtifactHost::new(port));
     host.swap(server::one_artifact_snapshot(&space_name, body));
@@ -563,7 +585,7 @@ pub async fn render(
     };
 
     server::spawn_render_watcher(host.clone(), file, template, space_name.clone());
-    emit_rendered(json, port, &space_name, &label, kind);
+    emit_rendered(json, port, &space_name, &label, kind, warnings);
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
@@ -741,8 +763,15 @@ fn read_capped_utf8_file(file: &Path, noun: &str, missing_code: &str, json: bool
 }
 
 /// Print the `render` startup envelope (mirrors [`emit_created`], plus the resolved
-/// template + its kind).
-fn emit_rendered(json: bool, port: u16, space: &str, template: &str, kind: &str) {
+/// template + its kind, and any non-fatal `warnings`).
+fn emit_rendered(
+    json: bool,
+    port: u16,
+    space: &str,
+    template: &str,
+    kind: &str,
+    warnings: Vec<String>,
+) {
     let url = format!("http://127.0.0.1:{port}/{space}/");
     if json {
         let payload = json!({
@@ -755,10 +784,13 @@ fn emit_rendered(json: bool, port: u16, space: &str, template: &str, kind: &str)
             "url": url,
             "template": template,
             "template_kind": kind,
-            "warnings": [],
+            "warnings": warnings,
         });
         emit_json_line(&payload);
     } else {
+        for w in &warnings {
+            eprintln!("warning: {w}");
+        }
         eprintln!(
             "glasspad serving '{space}' (rendered via {kind} template '{template}') at {url}"
         );
