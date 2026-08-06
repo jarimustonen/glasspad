@@ -78,12 +78,11 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: markdown-template-render   ← start here on resume
-(prose-theme + version-command landed 2026-08-06; dropped from the graph)
+GLOBAL HEAD-OF-LINE: hosted-share-server   ← start here on resume
+(markdown-template-render landed 2026-08-06 — render path delivered; dropped from the graph)
 
 LANE B — CLI/server (src/cli.rs, src/server.rs, render modules)
-  ▶ markdown-template-render   (prose-theme dep delivered — now unblocked)
-    hosted-share-server        after markdown-template-render (needs render path)
+  ▶ hosted-share-server        (render-path dep delivered — now unblocked)
     static-build-output        (optional/low)
     serve-process-mgmt         (0.2.2/low)
     version-commit-stamp       (0.2.2/low, follow-up to version-command; touches version code)
