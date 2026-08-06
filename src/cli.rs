@@ -428,15 +428,20 @@ fn emit_json_line(payload: &serde_json::Value) {
 ///
 /// `version`/`name` are the compile-time `CARGO_PKG_VERSION`/`CARGO_PKG_NAME`,
 /// the single source of truth shared with `Cargo.toml`. `commit` is the build
-/// provenance: `build.rs` stamps the short git SHA into `GLASSPAD_BUILD_COMMIT`
-/// at compile time when built inside a git checkout, and `option_env!` reads it
-/// here. Outside a checkout (a crates.io tarball / `cargo install` with no
-/// `.git`, or git missing) the build script emits nothing, so `commit` reports
-/// `null`, never a bogus or partial hash.
+/// provenance: `build.rs` resolves the 12-char short SHA of the repository HEAD
+/// and emits it under the internal carrier `GLASSPAD_COMMIT` at compile time
+/// when built inside this crate's git checkout, and `option_env!` reads it here.
+/// (The public `GLASSPAD_BUILD_COMMIT` override input is consumed and validated
+/// by `build.rs`, never read here — a bare `option_env!` reads the ambient
+/// compile environment, so reading that name directly would bypass validation.)
+/// Outside a checkout (a crates.io tarball / `cargo install` with no `.git`, or
+/// git missing) the build script emits nothing, so `commit` reports `null`,
+/// never a bogus or partial hash. It is the HEAD commit, not a guarantee the
+/// binary matches that tree (a dirty working tree still reports its HEAD).
 pub fn version(json: bool) {
     let name = env!("CARGO_PKG_NAME");
     let ver = env!("CARGO_PKG_VERSION");
-    let commit = option_env!("GLASSPAD_BUILD_COMMIT");
+    let commit = option_env!("GLASSPAD_COMMIT");
     if json {
         let payload = json!({
             "schema_version": SCHEMA_VERSION,

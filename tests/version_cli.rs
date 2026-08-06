@@ -52,39 +52,39 @@ fn version_subcommand_json_envelope() {
     assert_version_envelope(&bin().arg("version").arg("--json").output().unwrap());
 }
 
-/// Whether the crate is being tested from inside a git checkout — i.e. whether
-/// `build.rs` had a `HEAD` to stamp. True in dev / the release gate; false when
-/// tests run from a crates.io tarball (no `.git`). Used to decide whether
-/// `commit` MUST be a real SHA or is legitimately `null`.
-fn in_git_checkout() -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .map(|o| o.status.success() && o.stdout.starts_with(b"true"))
-        .unwrap_or(false)
+/// Whether `build.rs` had a repository to stamp: it gates on a `.git` entry
+/// existing at `CARGO_MANIFEST_DIR` (glasspad is the repo-root crate). Basing
+/// the test on the **exact same signal** the build script uses — rather than a
+/// `git rev-parse` that walks up into ancestor repos — keeps build-time and
+/// test-time in agreement: `.git` here → a SHA was stamped; no `.git` (a
+/// crates.io tarball) → `null`. `.git` is a directory in a normal checkout and
+/// a file in a linked worktree; `exists()` is true for both.
+fn build_had_a_git_repo() -> bool {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(".git")
+        .exists()
 }
 
 #[test]
 fn commit_is_a_real_short_sha_in_a_git_build() {
-    // The whole point of `build.rs`: when built inside a git checkout, `commit`
-    // is the short SHA of `HEAD`, not `null`. When tests run outside a checkout
-    // (crates.io tarball), the fallback is `null` — accepted there, since that
-    // is exactly the contract `build_stamp.rs` verifies.
+    // The whole point of `build.rs`: built with a `.git` at the crate root,
+    // `commit` is the repository's short HEAD SHA, not `null`. Built from a
+    // crates.io tarball (no `.git`) the fallback is `null` — exactly the
+    // contract `build_stamp.rs` verifies.
     let out = bin().arg("version").arg("--json").output().unwrap();
     let v = assert_version_envelope(&out);
     let commit = &v["data"]["commit"];
-    if in_git_checkout() {
+    if build_had_a_git_repo() {
         let sha = commit
             .as_str()
             .unwrap_or_else(|| panic!("commit must be a SHA in a git build, got: {commit:?}"));
-        // A `git rev-parse --short` SHA: lowercase hex, at least 7 chars.
+        // `build.rs` pins `--short=12`; assert exactly 12 lowercase-hex chars.
         assert!(
-            sha.len() >= 7
+            sha.len() == 12
                 && sha
                     .chars()
                     .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-            "commit must look like a short git SHA: {sha:?}"
+            "commit must be a 12-char lowercase short SHA: {sha:?}"
         );
     } else {
         assert!(
