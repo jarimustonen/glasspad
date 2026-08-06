@@ -2,11 +2,14 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: low
 commits:
 - hash: a1548b5
   summary: 'feat(build): glasspad build — static self-contained render of a space'
+- hash: b6c4b83
+  summary: 'fix(build): apply /llm-review findings (author-corruption, out-overlap, dry-run)'
+closed: 2026-08-06
 ---
 
 # glasspad build: static self-contained render (optional)
