@@ -6,6 +6,13 @@ status: in-progress
 priority: high
 related: ['@prose-theme']
 blocked_by: ['@prose-theme']
+commits:
+- hash: f197497
+  summary: commit implementation plan; in-progress
+- hash: cc49294
+  summary: markdown + reusable-template render path (glasspad render)
+- hash: '94564e4'
+  summary: apply /llm-review findings (F1-F6)
 ---
 
 # Markdown + reusable-template render path
