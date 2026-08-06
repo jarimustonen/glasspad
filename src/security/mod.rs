@@ -25,11 +25,13 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     }
     let mut diff: u8 = 0;
     for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
+        // `black_box` on each XOR (not just the final result) stops the optimizer
+        // from proving `diff` is already nonzero and short-circuiting the fold into
+        // an early-out branch — which would reintroduce a content-dependent timing
+        // path. Folding the whole slice unconditionally is the constant-time part.
+        diff |= std::hint::black_box(x ^ y);
     }
-    // `black_box` prevents the optimizer from turning the fold back into an
-    // early-out branch on the running `diff`.
-    std::hint::black_box(diff) == 0
+    diff == 0
 }
 
 #[cfg(test)]

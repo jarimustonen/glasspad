@@ -56,6 +56,14 @@ const META_FILE: &str = "meta.json";
 pub struct Store {
     pages_dir: PathBuf,
     host: Arc<ArtifactHost>,
+    /// Serializes the read-snapshot → mutate-disk → swap-snapshot critical section
+    /// across `publish` and `gc`. Without it, two concurrent publishes (or a
+    /// publish racing GC) each read the same snapshot, clone it, and swap — the
+    /// last swap wins and silently drops the other's page from the served set
+    /// (it stays on disk but 404s until restart). The lock makes each mutation
+    /// read the *latest* snapshot, so no update is lost and GC can't resurrect a
+    /// page it just deleted.
+    mutation: std::sync::Mutex<()>,
 }
 
 /// Outcome of a successful publish.
@@ -74,7 +82,11 @@ impl Store {
     pub fn open(root: &Path, host: Arc<ArtifactHost>) -> std::io::Result<Self> {
         let pages_dir = root.join("pages");
         std::fs::create_dir_all(&pages_dir)?;
-        let store = Store { pages_dir, host };
+        let store = Store {
+            pages_dir,
+            host,
+            mutation: std::sync::Mutex::new(()),
+        };
         let snap = store.scan_disk();
         store.host.swap(snap);
         Ok(store)
@@ -122,12 +134,31 @@ impl Store {
     /// that the on-disk slug matches the directory name (a mismatched/hostile dir
     /// name is skipped). Bounded read of the artifact body (same per-file cap).
     fn load_page(&self, dir: &Path) -> std::io::Result<Option<(PageMeta, Space)>> {
+        // Reject a symlinked page directory (defense-in-depth: a symlink under the
+        // store could point the loader at files outside the tree). `symlink_metadata`
+        // does not follow the link.
+        if std::fs::symlink_metadata(dir)?.file_type().is_symlink() {
+            eprintln!(
+                "glasspad host: page dir {} is a symlink; skipping",
+                dir.display()
+            );
+            return Ok(None);
+        }
         let meta_path = dir.join(META_FILE);
         let art_path = dir.join(ARTIFACT_FILE);
         if !meta_path.is_file() || !art_path.is_file() {
             return Ok(None);
         }
-        let meta_bytes = std::fs::read(&meta_path)?;
+        // Bounded read: a hand-tampered/oversize meta.json must not force an
+        // unbounded allocation on startup or hourly GC-rescan.
+        let meta_bytes = read_capped(&meta_path, MAX_META_BYTES)?;
+        if meta_bytes.len() as u64 > MAX_META_BYTES {
+            eprintln!(
+                "glasspad host: meta.json in {} exceeds {MAX_META_BYTES} bytes; skipping",
+                dir.display()
+            );
+            return Ok(None);
+        }
         let meta: PageMeta = match serde_json::from_slice(&meta_bytes) {
             Ok(m) => m,
             Err(e) => {
@@ -135,13 +166,18 @@ impl Store {
                 return Ok(None);
             }
         };
-        // Defense-in-depth: the directory name is the authority for the served
-        // slug; a meta.slug that disagrees or fails the grammar is rejected so a
-        // hand-edited store can't smuggle a bad space name into the router.
+        // Defense-in-depth: validate every reloaded field so a hand-edited store
+        // can't smuggle a bad schema/slug/tenant/title into the router. The
+        // directory name is the authority for the served slug.
         let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !valid_space(&meta.slug) || meta.slug != dir_name {
+        if meta.schema != META_SCHEMA
+            || !valid_space(&meta.slug)
+            || meta.slug != dir_name
+            || !valid_space(&meta.tenant)
+            || meta.title.chars().count() > space::MAX_TITLE_CHARS
+        {
             eprintln!(
-                "glasspad host: page dir {} has mismatched/invalid slug; skipping",
+                "glasspad host: page dir {} has invalid meta (schema/slug/tenant/title); skipping",
                 dir.display()
             );
             return Ok(None);
@@ -164,6 +200,10 @@ impl Store {
         html: String,
         title_override: Option<String>,
     ) -> Result<Published, PublishError> {
+        // Serialize the whole read→write→swap window so concurrent publishes (and
+        // GC) can't lose each other's snapshot updates. Held across the blocking
+        // disk write; ingest calls this on a blocking thread (`spawn_blocking`).
+        let _guard = self.mutation.lock().expect("store mutation lock poisoned");
         let current = self.host.snapshot();
         if current.spaces.len() >= MAX_PAGES {
             return Err(PublishError::Full);
@@ -218,15 +258,23 @@ impl Store {
         let tmp_dir = self.pages_dir.join(format!(".{slug}.tmp"));
         // Clean any stale staging dir from a prior crash.
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir)?;
-        std::fs::write(tmp_dir.join(ARTIFACT_FILE), html)?;
-        let meta_json = serde_json::to_vec_pretty(meta)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(tmp_dir.join(META_FILE), meta_json)?;
-        // rename is atomic on the same filesystem; the staging dir is a sibling so
-        // it shares the pages_dir filesystem.
-        std::fs::rename(&tmp_dir, &final_dir)?;
-        Ok(())
+        // Do the staged writes in a closure so a failure at ANY step cleans up the
+        // staging dir rather than leaking it (a distinct slug is minted next time,
+        // so a leaked `.<slug>.tmp` would otherwise never be reclaimed).
+        let staged = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&tmp_dir)?;
+            std::fs::write(tmp_dir.join(ARTIFACT_FILE), html)?;
+            let meta_json = serde_json::to_vec_pretty(meta)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            std::fs::write(tmp_dir.join(META_FILE), meta_json)?;
+            // rename is atomic on the same filesystem; the staging dir is a sibling
+            // so it shares the pages_dir filesystem.
+            std::fs::rename(&tmp_dir, &final_dir)
+        })();
+        if staged.is_err() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+        staged
     }
 
     /// Remove pages whose `created_at` is older than `retention` from disk, then
@@ -235,6 +283,10 @@ impl Store {
     /// new snapshot is rebuilt by re-scanning disk, so the served set exactly
     /// matches what survives on disk (no window serving a deleted page).
     pub fn gc(&self, retention: Duration) -> std::io::Result<usize> {
+        // Same lock as `publish`: GC's scan+swap must not race a publish's swap
+        // (which would let GC's rebuilt snapshot clobber a just-published page, or
+        // a stale publish resurrect a page GC just deleted).
+        let _guard = self.mutation.lock().expect("store mutation lock poisoned");
         let cutoff = Utc::now() - retention;
         let mut removed = 0usize;
         let rd = std::fs::read_dir(&self.pages_dir)?;
@@ -267,7 +319,10 @@ impl Store {
     }
 
     fn read_created_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
-        let bytes = std::fs::read(dir.join(META_FILE)).ok()?;
+        let bytes = read_capped(&dir.join(META_FILE), MAX_META_BYTES).ok()?;
+        if bytes.len() as u64 > MAX_META_BYTES {
+            return None;
+        }
         let meta: PageMeta = serde_json::from_slice(&bytes).ok()?;
         Some(meta.created_at)
     }
@@ -284,13 +339,24 @@ fn one_artifact_space(html: String, title: String) -> Space {
     sp
 }
 
+/// Ceiling on a `meta.json` sidecar read — it is a handful of small fields, so a
+/// larger file is corrupt/hostile and is bounded here to avoid an unbounded alloc.
+const MAX_META_BYTES: u64 = 64 * 1024;
+
+/// Read at most `max + 1` bytes of `path` (a bounded allocation). A returned length
+/// `> max` signals over-limit without ever buffering an unbounded file.
+fn read_capped(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    let f = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    f.take(max + 1).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// Bounded UTF-8 read of a stored artifact body (same per-file cap the scanner
 /// and `create` enforce), so a hand-tampered oversize file can't force an
 /// unbounded allocation on load.
 fn read_capped_utf8(path: &Path) -> std::io::Result<String> {
-    let f = std::fs::File::open(path)?;
-    let mut bytes = Vec::new();
-    f.take(space::MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    let bytes = read_capped(path, space::MAX_FILE_BYTES)?;
     if bytes.len() as u64 > space::MAX_FILE_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -381,6 +447,49 @@ mod tests {
         assert_eq!(store2.page_count(), 1);
         assert!(h2.snapshot().space(&pub1.slug).is_some());
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn concurrent_publishes_are_all_served() {
+        // Regression for the lost-update race: without the store mutation lock, two
+        // concurrent read-clone-swap publishes drop each other's page from the served
+        // snapshot. With the lock, every published page is present.
+        let root = tmp_root("concurrent");
+        let h = host();
+        let store = Arc::new(Store::open(&root, h.clone()).unwrap());
+        let mut handles = Vec::new();
+        for i in 0..24 {
+            let store = store.clone();
+            handles.push(std::thread::spawn(move || {
+                store
+                    .publish("acme", format!("<h1>page {i}</h1>"), None)
+                    .unwrap()
+                    .slug
+            }));
+        }
+        let slugs: Vec<String> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let snap = h.snapshot();
+        for s in &slugs {
+            assert!(snap.space(s).is_some(), "concurrent publish lost page {s}");
+        }
+        assert_eq!(store.page_count(), 24);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn publish_records_authenticated_tenant_in_meta() {
+        // Tenant isolation depends on the owner tag being the authenticated tenant.
+        let root = tmp_root("tenantmeta");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store.publish("globex", "<h1>x</h1>".into(), None).unwrap();
+        let meta: PageMeta = serde_json::from_slice(
+            &std::fs::read(root.join("pages").join(&p.slug).join("meta.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(meta.tenant, "globex");
+        assert_eq!(meta.schema, META_SCHEMA);
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -62,13 +62,44 @@ pub async fn publish(
         }
     };
 
+    // Bound the title override (it lands in metadata + the trusted shell); an
+    // unbounded title is a metadata-DoS vector. The shell escapes it regardless,
+    // so this is a size bound, not the injection defense.
+    if let Some(t) = &req.title
+        && t.chars().count() > space::MAX_TITLE_CHARS
+    {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "title_too_long",
+            &format!("title exceeds {} characters", space::MAX_TITLE_CHARS),
+        );
+    }
+
     // Resolve the artifact body from exactly one of html / markdown.
     let html = match resolve_body(&req) {
         Ok(h) => h,
         Err((code, msg)) => return err(StatusCode::BAD_REQUEST, code, &msg),
     };
 
-    match state.store.publish(&tenant.0, html, req.title.clone()) {
+    // The publish does blocking filesystem I/O and holds the store mutation lock —
+    // run it off the async worker so it never blocks the runtime.
+    let store = state.store.clone();
+    let tenant_id = tenant.0.clone();
+    let title = req.title.clone();
+    let result = tokio::task::spawn_blocking(move || store.publish(&tenant_id, html, title)).await;
+    let result = match result {
+        Ok(r) => r,
+        Err(join) => {
+            eprintln!("glasspad host: publish task panicked: {join}");
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the page",
+            );
+        }
+    };
+
+    match result {
         Ok(published) => {
             let url = format!("{}{}/{}/", state.public_origin, state.mount, published.slug);
             let payload = json!({

@@ -1015,8 +1015,12 @@ struct PublishConfig {
 /// `glasspad publish <file> [--server <url>] [--api-key <key>] [--markdown
 /// [--template <ref>]] [--title <t>] [--no-open]` — publish one page to a hosted
 /// share server and print `{slug, url}`. Config precedence (AI-first §8):
-/// flag > `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY` > config file. The API key is
-/// never echoed to stdout/stderr.
+/// flag > `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY` > config file.
+///
+/// The API key is never printed to stdout/stderr by this command. Note, however,
+/// that a key passed via `--api-key` is visible in process listings + shell
+/// history on shared machines — prefer `$GLASSPAD_API_KEY` or the config file for
+/// anything but throwaway use.
 #[allow(clippy::too_many_arguments)]
 pub async fn publish(
     file: PathBuf,
@@ -1084,8 +1088,27 @@ pub async fn publish(
         body.insert("title".into(), json!(t));
     }
 
+    // Warn (non-fatal) if the bearer key would cross a plaintext connection to a
+    // non-loopback host — it can be sniffed/replayed on a public network.
+    if server.starts_with("http://") && !server_is_loopback(&server) {
+        eprintln!(
+            "warning: publishing over plaintext http:// to a non-local host sends the API key \
+             in the clear; prefer https://"
+        );
+    }
+
     let url = format!("{}/api/v1/pages", server.trim_end_matches('/'));
-    let client = reqwest::Client::new();
+    // Disable redirects (never replay the bearer to a redirected target) and set
+    // timeouts so a hung/hostile server cannot stall the client indefinitely.
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
+    };
     let resp = client
         .post(&url)
         .bearer_auth(&api_key)
@@ -1118,8 +1141,9 @@ pub async fn publish(
             .and_then(|e| e.get("code"))
             .and_then(|c| c.as_str())
             .unwrap_or("publish_rejected");
-        // A 401 is a user-fixable auth error (1); other 5xx are system (2).
-        let exit = if status.as_u16() == 401 { 1 } else { 2 };
+        // 4xx is a caller/request error (fixable → 1); 3xx (redirects are disabled,
+        // so a 3xx is an unexpected server contract) and 5xx are system errors (2).
+        let exit = if status.is_client_error() { 1 } else { 2 };
         exit_error(
             json,
             exit,
@@ -1130,18 +1154,34 @@ pub async fn publish(
         );
     }
 
+    // A 2xx with a missing/empty slug or URL is a broken server contract, not a
+    // success — surface it rather than printing an empty "published '' to".
     let slug = payload
         .get("slug")
         .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let page_url = payload
         .get("url")
         .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .to_string();
+        .filter(|u| !u.is_empty())
+        .map(str::to_string);
+    let (slug, page_url) = match (slug, page_url) {
+        (Some(s), Some(u)) => (s, u),
+        _ => exit_error(
+            json,
+            2,
+            "malformed_response",
+            &format!(
+                "server returned {} but no slug/url in the body",
+                status.as_u16()
+            ),
+            None,
+            None,
+        ),
+    };
 
-    let launched = if no_open || page_url.is_empty() {
+    let launched = if no_open {
         false
     } else {
         launch_browser(&page_url)
@@ -1175,6 +1215,21 @@ fn resolve_setting(flag: Option<String>, env: &str, file: Option<String>) -> Opt
     flag.and_then(nonempty)
         .or_else(|| std::env::var(env).ok().and_then(nonempty))
         .or_else(|| file.and_then(nonempty))
+}
+
+/// Best-effort: is the `--server` URL a loopback host (where plaintext http is
+/// acceptable)? Used only to decide whether to warn about a cleartext bearer.
+fn server_is_loopback(server: &str) -> bool {
+    let authority = server
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(server);
+    let host = authority
+        .split(['/', ':'])
+        .next()
+        .unwrap_or(authority)
+        .to_ascii_lowercase();
+    host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
 }
 
 /// Load the optional publish config file. A missing file is fine (`None`s);

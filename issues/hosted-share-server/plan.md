@@ -70,11 +70,13 @@ authenticatable-by-nobody or authenticatable-by-anybody ingest surface (fail-clo
 **Verification (per request), fail-closed:**
 1. No `Authorization` header, or not `Bearer <token>` → `401`, no body detail.
 2. Extract the presented key; compare it against **every** stored key with a
-   **constant-time** comparator (`security::ct_eq`, length-independent: it hashes
-   both sides to a fixed width first so comparison time never depends on the key
-   value or on *which* key matched). Iterate all keys without short-circuit so
-   timing does not reveal table position. On a match, the request is attributed to
-   that key's `tenant-id`; on no match → `401`.
+   **constant-time** comparator (`security::ct_eq`: for equal-length inputs the
+   compare time is independent of *where* the bytes differ, so a timing channel
+   cannot walk the key out; a length mismatch returns early — the length of a
+   high-entropy ≥32-char key is not treated as a secret). Iterate all keys without
+   short-circuit so timing does not reveal table position. On a match, the request
+   is attributed to that key's `tenant-id`; on no match → `401`. (A huge presented
+   token is cheap: the length-mismatch early-out makes each compare O(1).)
 3. Only an authenticated request reaches the ingest handler; the tenant id is
    carried in a request extension, never taken from client-supplied data.
 
@@ -229,7 +231,7 @@ glasspad publish <file> \
                               fields and the server runs the shared render path.
   [--title <t>] [--json] [--no-open]
 ```
-Reads config from `~/.config/glasspad/publish.toml` (`server`, `api_key`) with
+Reads config from `~/.config/glasspad/config.yaml` (`server`, `api_key`) with
 flag/env override. POSTs the artifact to `<server>/api/v1/pages`; on success prints
 `{slug, url}` (the data channel) and optionally opens the URL. The api key is read
 from config/env/flag and **never** echoed into stdout/stderr/logs. HTTP+TLS via

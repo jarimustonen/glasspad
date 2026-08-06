@@ -32,6 +32,10 @@ use glasspad::security::ct_eq;
 /// random keys — a floor, not a ceiling.
 pub const MIN_API_KEY_LEN: usize = 32;
 
+/// Ceiling on the key-file size (a small list of `<tenant>:<key>` lines). Bounds
+/// the startup read + the O(n²) duplicate scan against a pathological file.
+pub const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
+
 /// One authenticated tenant, resolved from a matched API key. Carried in the
 /// request extensions by [`ingest_auth`] so the ingest handler attributes the page
 /// to the authenticated tenant — never to client-supplied data.
@@ -48,16 +52,21 @@ pub struct KeyTable {
 #[derive(Debug)]
 pub enum KeyFileError {
     Io(std::io::Error),
+    TooLarge,
     Empty,
     BadLine { line: usize, reason: String },
     DuplicateKey { line: usize },
-    DuplicateTenantKey { line: usize },
 }
 
 impl fmt::Display for KeyFileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             KeyFileError::Io(e) => write!(f, "cannot read api-key file: {e}"),
+            KeyFileError::TooLarge => write!(
+                f,
+                "api-key file exceeds {MAX_KEY_FILE_BYTES} bytes; a key file is a small \
+                 list of `<tenant>:<key>` lines"
+            ),
             KeyFileError::Empty => write!(
                 f,
                 "api-key file has no usable entries (need at least one `<tenant>:<key>` line); \
@@ -69,10 +78,6 @@ impl fmt::Display for KeyFileError {
             KeyFileError::DuplicateKey { line } => write!(
                 f,
                 "api-key file line {line}: duplicate api key (a key must map to exactly one tenant)"
-            ),
-            KeyFileError::DuplicateTenantKey { line } => write!(
-                f,
-                "api-key file line {line}: duplicate `<tenant>:<key>` entry"
             ),
         }
     }
@@ -142,9 +147,6 @@ impl KeyTable {
             if entries.iter().any(|(_, k)| k == key) {
                 return Err(KeyFileError::DuplicateKey { line });
             }
-            if entries.iter().any(|(t, k)| t == tenant && k == key) {
-                return Err(KeyFileError::DuplicateTenantKey { line });
-            }
             entries.push((tenant.to_string(), key.to_string()));
         }
         if entries.is_empty() {
@@ -153,9 +155,23 @@ impl KeyTable {
         Ok(KeyTable { entries })
     }
 
-    /// Load + parse the key file at `path` (bounded read).
+    /// Load + parse the key file at `path` (bounded read — see [`MAX_KEY_FILE_BYTES`]).
     pub fn load(path: &Path) -> Result<Self, KeyFileError> {
-        let contents = std::fs::read_to_string(path).map_err(KeyFileError::Io)?;
+        use std::io::Read as _;
+        let f = std::fs::File::open(path).map_err(KeyFileError::Io)?;
+        let mut bytes = Vec::new();
+        f.take(MAX_KEY_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(KeyFileError::Io)?;
+        if bytes.len() as u64 > MAX_KEY_FILE_BYTES {
+            return Err(KeyFileError::TooLarge);
+        }
+        let contents = String::from_utf8(bytes).map_err(|_| {
+            KeyFileError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "api-key file is not valid UTF-8",
+            ))
+        })?;
         Self::parse(&contents)
     }
 
