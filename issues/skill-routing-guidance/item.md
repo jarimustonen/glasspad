@@ -2,9 +2,13 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: task
-status: in-progress
+status: done
 priority: normal
 related: ['@hosted-share-server']
+commits:
+- hash: 41fa81c
+  summary: add mode-routing guidance to src/skill.md (serve/render/publish/preview/build)
+closed: 2026-08-06
 ---
 
 # Skill: routing guidance (serve vs publish vs preview)
