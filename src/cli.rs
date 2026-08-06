@@ -428,9 +428,11 @@ fn emit_json_line(payload: &serde_json::Value) {
 ///
 /// `version`/`name` are the compile-time `CARGO_PKG_VERSION`/`CARGO_PKG_NAME`,
 /// the single source of truth shared with `Cargo.toml`. `commit` is the build
-/// provenance when a release build injected it (`GLASSPAD_BUILD_COMMIT`), else
-/// `null` — there is no `build.rs` git shell-out, so a crates.io / `cargo
-/// install` build without the env var reports `null`, never a bogus hash.
+/// provenance: `build.rs` stamps the short git SHA into `GLASSPAD_BUILD_COMMIT`
+/// at compile time when built inside a git checkout, and `option_env!` reads it
+/// here. Outside a checkout (a crates.io tarball / `cargo install` with no
+/// `.git`, or git missing) the build script emits nothing, so `commit` reports
+/// `null`, never a bogus or partial hash.
 pub fn version(json: bool) {
     let name = env!("CARGO_PKG_NAME");
     let ver = env!("CARGO_PKG_VERSION");

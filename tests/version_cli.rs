@@ -52,6 +52,48 @@ fn version_subcommand_json_envelope() {
     assert_version_envelope(&bin().arg("version").arg("--json").output().unwrap());
 }
 
+/// Whether the crate is being tested from inside a git checkout — i.e. whether
+/// `build.rs` had a `HEAD` to stamp. True in dev / the release gate; false when
+/// tests run from a crates.io tarball (no `.git`). Used to decide whether
+/// `commit` MUST be a real SHA or is legitimately `null`.
+fn in_git_checkout() -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .map(|o| o.status.success() && o.stdout.starts_with(b"true"))
+        .unwrap_or(false)
+}
+
+#[test]
+fn commit_is_a_real_short_sha_in_a_git_build() {
+    // The whole point of `build.rs`: when built inside a git checkout, `commit`
+    // is the short SHA of `HEAD`, not `null`. When tests run outside a checkout
+    // (crates.io tarball), the fallback is `null` — accepted there, since that
+    // is exactly the contract `build_stamp.rs` verifies.
+    let out = bin().arg("version").arg("--json").output().unwrap();
+    let v = assert_version_envelope(&out);
+    let commit = &v["data"]["commit"];
+    if in_git_checkout() {
+        let sha = commit
+            .as_str()
+            .unwrap_or_else(|| panic!("commit must be a SHA in a git build, got: {commit:?}"));
+        // A `git rev-parse --short` SHA: lowercase hex, at least 7 chars.
+        assert!(
+            sha.len() >= 7
+                && sha
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "commit must look like a short git SHA: {sha:?}"
+        );
+    } else {
+        assert!(
+            commit.is_null(),
+            "outside a checkout commit must be null: {commit:?}"
+        );
+    }
+}
+
 #[test]
 fn all_json_spellings_yield_the_same_envelope() {
     // `--json` is global and `-V/--version` routes through the same code as the
