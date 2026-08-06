@@ -2,11 +2,14 @@
 created: 2026-08-05
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 5c3dd59
   summary: add version subcommand + --version/-V with --json envelope and contract tests
+- hash: 6debc79
+  summary: address llm-review — honor --json on the flag, nested data envelope, commit field
+closed: 2026-08-06
 ---
 
 # Expose an installed-version command (glasspad --version / version)
