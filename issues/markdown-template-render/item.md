@@ -2,7 +2,7 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: high
 related: ['@prose-theme']
 blocked_by: ['@prose-theme']
@@ -13,6 +13,7 @@ commits:
   summary: markdown + reusable-template render path (glasspad render)
 - hash: '94564e4'
   summary: apply /llm-review findings (F1-F6)
+closed: 2026-08-06
 ---
 
 # Markdown + reusable-template render path
