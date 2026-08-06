@@ -7,6 +7,8 @@ priority: high
 commits:
 - hash: cefa3c0
   summary: 'feat(base.css): add prose/reading theme to --gp-* design system'
+- hash: 4d5d5b9
+  summary: 'fix(base.css): harden .gp-prose against arbitrary markdown HTML (llm-review)'
 ---
 
 # Prose/reading theme in the --gp-* design system
