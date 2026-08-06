@@ -9,6 +9,8 @@ blocked_by: ['@markdown-template-render']
 commits:
 - hash: 657010d
   summary: hosted share-server run mode + publish client
+- hash: 8b11be2
+  summary: apply 4-model llm-review findings (auth/tenant/rebinding)
 ---
 
 # Hosted share-server run mode (public read, multi-agent ingest)
