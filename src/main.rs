@@ -59,6 +59,26 @@ enum Commands {
         #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
     },
+    /// Render a markdown file through a reusable template and serve it live.
+    ///
+    /// The markdown body is rendered to HTML server-side and spliced into the
+    /// template's single `{{content}}` placeholder; the result is hosted as the
+    /// artifact body (same sandbox/CSP as `create`). The template governs only
+    /// the body — never the trusted shell, CSP, or sandbox.
+    Render {
+        /// The markdown file to render.
+        file: PathBuf,
+        /// Template reference: a built-in name (`prose` [default] / `dashboard`)
+        /// or a path to a template HTML file containing one `{{content}}` slot.
+        #[arg(long)]
+        template: Option<String>,
+        /// Space name (default: the file stem). Must match the space grammar.
+        #[arg(long)]
+        name: Option<String>,
+        /// TCP port on 127.0.0.1 (1-65535).
+        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
+        port: u16,
+    },
     /// Open a served space's URL in the browser.
     Open {
         /// Space name (the `{space}` in `/{space}/`).
@@ -116,6 +136,12 @@ async fn main() {
     match args.command {
         Some(Commands::Serve { dir, port }) => cli::serve(dir, port, json).await,
         Some(Commands::Create { file, name, port }) => cli::create(file, name, port, json).await,
+        Some(Commands::Render {
+            file,
+            template,
+            name,
+            port,
+        }) => cli::render(file, template, name, port, json).await,
         Some(Commands::Open {
             space,
             port,

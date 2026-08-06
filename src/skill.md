@@ -46,11 +46,18 @@ Base libraries live under `/_gp/v1/*` (e.g. `base.css`, `charts.js` = a thin
 ```bash
 glasspad serve ./myspace          # serve a directory live (the primary loop)
 glasspad create ./report.html     # one-artifact space from a single file
+glasspad render ./notes.md        # render markdown via a template, serve it live
 glasspad open myspace             # open http://127.0.0.1:3000/myspace/ in the browser
 glasspad data ./old.csv           # optional: parse a legacy CSV/JSON/mbox file to JSON rows
 ```
 
-- `serve`/`create` run until killed — start them in the background, then `open`.
+- `render <file.md>` renders markdown → HTML server-side and hosts it. Choose the
+  look with `--template`: a built-in (`prose`, the default reading theme; or
+  `dashboard`, the card look) or a path to your own template HTML file that
+  contains one `{{content}}` slot (e.g. `--template ./layout.html`). The template
+  styles only the artifact body — the sandbox/CSP stay glasspad's. Re-renders on
+  save (editing the markdown, or a file template, reloads the browser).
+- `serve`/`create`/`render` run until killed — start them in the background, then `open`.
 - `data <file>` is a standalone helper (never starts a server): it parses a
   legacy `.csv` / `.json` / `.mbox` file and prints the rows as JSON on stdout,
   so you can fold that data into an HTML artifact you author. `--format` forces
@@ -59,9 +66,9 @@ glasspad data ./old.csv           # optional: parse a legacy CSV/JSON/mbox file 
   startup line `{schema_version, serving, port, space, url, ...}` to stdout;
   errors print `{schema_version, error:{code, message, ...}}` to stderr with a
   non-zero exit (1 = your input to fix, 2 = system/IO).
-- `--port N` (default 3000). `create --name <space>` overrides the space name
-  (default: the file stem, which must be a valid name). `open --no-browser`
-  prints just the URL.
+- `--port N` (default 3000). `create --name <space>` / `render --name <space>`
+  override the space name (default: the file stem, which must be a valid name).
+  `open --no-browser` prints just the URL.
 
 ## Typical flow
 

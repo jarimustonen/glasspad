@@ -8,7 +8,7 @@ use axum::{Router, middleware};
 use tokio::net::TcpListener;
 
 use crate::artifact_host::space::{self, Artifact, ScanError, Snapshot, Space};
-use crate::artifact_host::{self, ArtifactHost, guards};
+use crate::artifact_host::{self, ArtifactHost, guards, render};
 
 /// How often the (dependency-free) filesystem watcher polls the served directory
 /// for changes. 500 ms is imperceptible for a local edit-reload loop and avoids
@@ -91,6 +91,113 @@ pub fn one_artifact_snapshot(name: &str, html: String) -> Snapshot {
     let mut snap = Snapshot::empty();
     snap.spaces.insert(name.to_string(), sp);
     snap
+}
+
+/// A single file's `(len, mtime_nanos)` change fingerprint (see [`file_fp`]).
+type FileFp = (u64, i128);
+
+/// The combined change fingerprint of a `render` session's source(s): the markdown
+/// file plus, for a file template, the template file. Either changing re-renders.
+type RenderFp = (FileFp, Option<FileFp>);
+
+/// The template a `render` session re-applies on every (re)render. A built-in is a
+/// static fragment; a file is re-read each render so editing it reloads the browser
+/// (the same live-edit loop `serve`/`create` give a directory / single file).
+pub enum RenderTemplate {
+    Builtin(&'static str),
+    File(PathBuf),
+}
+
+impl RenderTemplate {
+    /// The template file to also watch, if the template is a local file.
+    fn file_path(&self) -> Option<&Path> {
+        match self {
+            RenderTemplate::Builtin(_) => None,
+            RenderTemplate::File(p) => Some(p),
+        }
+    }
+
+    /// Re-read (for a file template) the current template string.
+    fn read(&self) -> Result<String, String> {
+        match self {
+            RenderTemplate::Builtin(s) => Ok((*s).to_string()),
+            RenderTemplate::File(p) => read_artifact_file(p),
+        }
+    }
+}
+
+/// Render `md_path` (markdown) through `template` into an artifact body. Used by
+/// both the initial `render` load and the watcher reload, so the two share one
+/// renderer. Returns an informative message on failure (a bad read or a template
+/// missing/duplicating `{{content}}`) — the caller decides fatal-vs-log.
+pub fn build_render_body(md_path: &Path, template: &RenderTemplate) -> Result<String, String> {
+    let md = read_artifact_file(md_path)?;
+    let tstr = template.read()?;
+    render::render_to_body(&md, &tstr).map_err(|e| e.to_string())
+}
+
+/// The `render` analogue of [`spawn_file_watcher`]: poll the markdown file **and**
+/// (for a file template) the template file, and on a change to either, re-render
+/// into a fresh one-artifact snapshot, swap atomically, and fire the SSE reload. A
+/// render that fails (a removed/oversize/non-UTF-8 source, or a template that lost
+/// its `{{content}}` mid-edit) keeps the last-good snapshot serving and is logged
+/// once, so a transient bad save never blanks the page.
+pub fn spawn_render_watcher(
+    host: Arc<ArtifactHost>,
+    md_path: PathBuf,
+    template: RenderTemplate,
+    name: String,
+) {
+    tokio::spawn(async move {
+        let tpath = template.file_path().map(Path::to_path_buf);
+        let mut loaded_fp = render_fp_blocking(md_path.clone(), tpath.clone()).await;
+        let mut last_err_fp: Option<RenderFp> = None;
+        loop {
+            tokio::time::sleep(WATCH_INTERVAL).await;
+            let fp = render_fp_blocking(md_path.clone(), tpath.clone()).await;
+            if fp == loaded_fp {
+                continue;
+            }
+            let (md, tpl) = (md_path.clone(), template_clone(&template));
+            match tokio::task::spawn_blocking(move || build_render_body(&md, &tpl)).await {
+                Ok(Ok(body)) => {
+                    host.swap(one_artifact_snapshot(&name, body));
+                    host.notify_reload();
+                    loaded_fp = fp;
+                    last_err_fp = None;
+                    eprintln!("glasspad: re-rendered {}", md_path.display());
+                }
+                Ok(Err(e)) => {
+                    if last_err_fp != Some(fp) {
+                        eprintln!(
+                            "glasspad: re-render of {} failed, keeping last good content: {e}",
+                            md_path.display()
+                        );
+                        last_err_fp = Some(fp);
+                    }
+                }
+                Err(join) => eprintln!("glasspad: render watcher task failed: {join}"),
+            }
+        }
+    });
+}
+
+/// Clone a [`RenderTemplate`] for a `spawn_blocking` closure (it is not `Clone`
+/// because `&'static str` and `PathBuf` differ; a tiny explicit clone keeps the
+/// enum free of a derive that would imply the static variant allocates).
+fn template_clone(t: &RenderTemplate) -> RenderTemplate {
+    match t {
+        RenderTemplate::Builtin(s) => RenderTemplate::Builtin(s),
+        RenderTemplate::File(p) => RenderTemplate::File(p.clone()),
+    }
+}
+
+/// Fingerprint the render source(s): the markdown file's `(len, mtime)` plus, for a
+/// file template, the template file's — so a change to either re-renders.
+async fn render_fp_blocking(md: PathBuf, tpl: Option<PathBuf>) -> RenderFp {
+    tokio::task::spawn_blocking(move || (file_fp(&md), tpl.map(|p| file_fp(&p))))
+        .await
+        .unwrap_or(((0, -1), None))
 }
 
 /// A dependency-free filesystem watcher: poll a cheap fingerprint of the scan

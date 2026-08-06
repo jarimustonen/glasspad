@@ -24,6 +24,7 @@ dirs = "6"
 csv = "1"
 mail-parser = "0.9"
 rand = "0.8"
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

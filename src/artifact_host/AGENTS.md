@@ -45,6 +45,20 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   silently. Full documents are served verbatim. Wrapping runs under the same
   frozen artifact CSP (`headers::artifact_csp`) and widens nothing; it is NOT
   sanitization (the sandbox/CSP is the boundary, design.md §7).
+- `render.rs` (0.3.0) — the **markdown + reusable-template renderer** (the
+  `glasspad render` path). Renders a markdown body to HTML (CommonMark + GFM via
+  `pulldown-cmark`) and splices it into a template's single `{{content}}` slot,
+  producing an artifact **body** string that flows through the ordinary serve
+  path (`one_artifact_snapshot` → `artifact_content` → `wrap::render_artifact`).
+  The template is **client-shipped and untrusted** but governs **only the body**:
+  the CSP / sandbox / Trusted-Types / hardening headers are set server-side on the
+  `_c` response regardless of body bytes (a `<meta http-equiv=CSP>` can only
+  *tighten* — fails closed), and the trusted shell is a different route built from
+  the resolved title via `textContent`, so a template can neither widen the
+  boundary nor inject the shell. Built-in templates (`prose` =
+  `<article class="gp-prose">…</article>` [default], `dashboard` = `.gp-card`) are
+  **fragments**, so they inherit `base.css` (incl. the hardened `.gp-prose`
+  reading theme) + `bridge.js` for free. `wrap.rs`/`shell.rs` are unchanged.
 - `guards.rs` — control-plane guards (design.md §5): `host_guard` (DNS-rebinding
   defense, all routes, **fail-closed** on missing/foreign/malformed Host; only
   `127.0.0.1`/`localhost` + our port) + `control_origin_guard` (reject

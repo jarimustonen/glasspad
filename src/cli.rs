@@ -7,11 +7,13 @@
 //! and no interactive prompts. Paths are plain positional args — no hidden global
 //! state, so the commands compose.
 //!
-//! The commands are two server entry points, a browser opener, and a standalone
+//! The commands are three server entry points, a browser opener, and a standalone
 //! data helper:
 //! * `serve <dir>` drives Phase 2 live directory serving (scan + watch + SSE).
 //! * `create <file>` builds a one-artifact space from a single file and serves it
 //!   live (its own single-file watch).
+//! * `render <file.md>` renders markdown through a reusable template into an
+//!   artifact body and serves it live (0.3.0; see `artifact_host::render`).
 //! * `open <space>` opens a served space's URL in the browser.
 //! * `data <file>` parses a legacy CSV/JSON/mbox file to JSON rows (no server).
 //!
@@ -26,8 +28,8 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::artifact_host::space::{self, ScanError};
-use crate::artifact_host::{self, ArtifactHost, wrap};
-use crate::server;
+use crate::artifact_host::{self, ArtifactHost, render, wrap};
+use crate::server::{self, RenderTemplate};
 
 /// The `--json` schema version (AI-first §10). Bump on any breaking change to an
 /// envelope: removed/renamed field, changed type/nullability, or changed meaning.
@@ -496,6 +498,270 @@ fn emit_created(json: bool, port: u16, space: &str, kind: &str) {
         emit_json_line(&payload);
     } else {
         eprintln!("glasspad serving '{space}' ({kind}) at {url}");
+    }
+}
+
+// --- render (markdown + reusable template) --------------------------------
+
+/// `glasspad render <markdown-file> [--template <ref>] [--name <space>]` — render
+/// a markdown body through a referenced reusable template into a hosted artifact
+/// and serve it live (a re-render on every edit of the markdown — or, for a file
+/// template, of the template — reloads the browser).
+///
+/// The template governs **only the artifact body** (`markdown-template-render`
+/// decided model): it is spliced into the body via the same content-route seam a
+/// `create`d fragment uses (`wrap::render_artifact` → `base.css` + `bridge.js`
+/// under the frozen artifact CSP), so it can never touch the trusted shell, CSP,
+/// Trusted Types, nav, or the sandbox. See `render` module docs for the boundary
+/// argument.
+///
+/// Strict validation + a stable `--json` envelope, per AGENTS-AI-FIRST-CLI.md.
+pub async fn render(
+    file: PathBuf,
+    template_ref: Option<String>,
+    name: Option<String>,
+    port: u16,
+    json: bool,
+) {
+    // Validate the space name FIRST (fail-fast §1): it comes from `--name` or the
+    // markdown file stem, neither of which needs file contents.
+    let space_name = resolve_space_name(&file, name.as_deref(), json);
+
+    // Read + validate the markdown source (same strict checks as `create`).
+    let markdown = read_capped_utf8_file(&file, "markdown", "no_such_path", json);
+
+    // Resolve the template reference to its source string + the watcher handle.
+    let (template, template_str, kind, label) = resolve_template(template_ref.as_deref(), json);
+
+    // Render markdown + template into the artifact body. A template that lost its
+    // single `{{content}}` placeholder is a user error (§1), reported informatively.
+    let body = match render::render_to_body(&markdown, &template_str) {
+        Ok(b) => b,
+        Err(e) => exit_error(
+            json,
+            1,
+            "invalid_template",
+            &e.to_string(),
+            Some(&label),
+            None,
+        ),
+    };
+
+    let host = Arc::new(ArtifactHost::new(port));
+    host.swap(server::one_artifact_snapshot(&space_name, body));
+
+    let listener = match server::bind_loopback(port).await {
+        Ok(l) => l,
+        Err(e) => exit_error(
+            json,
+            2,
+            "bind_failed",
+            &format!("cannot bind 127.0.0.1:{port}: {e}"),
+            Some(&port.to_string()),
+            None,
+        ),
+    };
+
+    server::spawn_render_watcher(host.clone(), file, template, space_name.clone());
+    emit_rendered(json, port, &space_name, &label, kind);
+
+    let app = server::build_app_with_host(port, host);
+    if let Err(e) = server::serve_on(listener, app).await {
+        exit_error(
+            json,
+            2,
+            "serve_failed",
+            &format!("server stopped with an error: {e}"),
+            None,
+            None,
+        );
+    }
+}
+
+/// Resolve `--template <ref>` (default `prose`) to `(watcher handle, source string,
+/// kind, label)`. **Resolution rule:** an exact built-in name (`prose` /
+/// `dashboard`) resolves to that built-in; **anything else** is a filesystem path
+/// to a template file (read strictly). Built-in names contain no `/` or `.`, so a
+/// local file literally named `prose` is reachable as `./prose` (≠ `"prose"` → a
+/// path) — unambiguous. `kind` is `"builtin"`/`"file"` for the envelope; `label` is
+/// the reference echoed back (the name or the path).
+fn resolve_template(
+    template_ref: Option<&str>,
+    json: bool,
+) -> (RenderTemplate, String, &'static str, String) {
+    let reference = template_ref.unwrap_or(render::DEFAULT_TEMPLATE);
+    if let Some(builtin) = render::builtin_template(reference) {
+        return (
+            RenderTemplate::Builtin(builtin),
+            builtin.to_string(),
+            "builtin",
+            reference.to_string(),
+        );
+    }
+    // A filesystem path to a template file. A *bare* name (no `/`, no `.`) that is
+    // neither a built-in nor an existing file is almost certainly a mistyped
+    // built-in, not a path — surface the built-in allowlist rather than a bare
+    // "no such file" (AI-first §10: an `expected` set on a fixed-enum-like arg).
+    let path = PathBuf::from(reference);
+    let looks_like_path = reference.contains('/') || reference.contains('.');
+    if !looks_like_path && !path.exists() {
+        exit_error(
+            json,
+            1,
+            "unknown_template",
+            &format!(
+                "unknown template {reference:?}: expected a built-in ({}) or a path to a \
+                 template file (e.g. ./my-template.html)",
+                render::BUILTIN_NAMES.join(", ")
+            ),
+            Some(reference),
+            Some(
+                render::BUILTIN_NAMES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            ),
+        );
+    }
+    let content = read_capped_utf8_file(&path, "template", "template_not_found", json);
+    (
+        RenderTemplate::File(path),
+        content,
+        "file",
+        reference.to_string(),
+    )
+}
+
+/// Read + validate a UTF-8 source file (markdown or template), bounded to the
+/// per-file cap. Strict like `create` (fail-fast §1): a missing path, a directory,
+/// a non-regular / oversize / non-UTF-8 file each exits with an informative
+/// envelope rather than a silent fixup. `noun` names the file kind in messages;
+/// `missing_code` is the stable `code` for a not-found path (so a missing template
+/// reports `template_not_found`, a missing markdown `no_such_path`).
+fn read_capped_utf8_file(file: &Path, noun: &str, missing_code: &str, json: bool) -> String {
+    let meta = match std::fs::metadata(file) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => exit_error(
+            json,
+            1,
+            missing_code,
+            &format!("no such {noun} file: {}", file.display()),
+            Some(&file.display().to_string()),
+            None,
+        ),
+        Err(e) => exit_error(
+            json,
+            2,
+            "io_error",
+            &format!("cannot read {}: {e}", file.display()),
+            None,
+            None,
+        ),
+    };
+    if meta.is_dir() {
+        exit_error(
+            json,
+            1,
+            "not_a_file",
+            &format!(
+                "{} is a directory; a {noun} must be a single file",
+                file.display()
+            ),
+            Some(&file.display().to_string()),
+            None,
+        );
+    }
+    if !meta.is_file() {
+        exit_error(
+            json,
+            1,
+            "not_a_file",
+            &format!(
+                "{} is not a regular file (FIFOs, sockets, and devices are not supported)",
+                file.display()
+            ),
+            None,
+            None,
+        );
+    }
+    if meta.len() > space::MAX_FILE_BYTES {
+        exit_error(
+            json,
+            1,
+            "file_too_large",
+            &format!(
+                "{} is {} bytes, over the {}-byte per-file limit",
+                file.display(),
+                meta.len(),
+                space::MAX_FILE_BYTES
+            ),
+            None,
+            None,
+        );
+    }
+    let bytes = match read_capped(file, space::MAX_FILE_BYTES) {
+        Ok(b) => b,
+        Err(e) => exit_error(
+            json,
+            2,
+            "io_error",
+            &format!("cannot read {}: {e}", file.display()),
+            None,
+            None,
+        ),
+    };
+    if bytes.len() as u64 > space::MAX_FILE_BYTES {
+        exit_error(
+            json,
+            1,
+            "file_too_large",
+            &format!(
+                "{} exceeds the {}-byte per-file limit",
+                file.display(),
+                space::MAX_FILE_BYTES
+            ),
+            None,
+            None,
+        );
+    }
+    match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => exit_error(
+            json,
+            1,
+            "not_utf8",
+            &format!(
+                "{} is not valid UTF-8 ({noun} must be UTF-8)",
+                file.display()
+            ),
+            None,
+            None,
+        ),
+    }
+}
+
+/// Print the `render` startup envelope (mirrors [`emit_created`], plus the resolved
+/// template + its kind).
+fn emit_rendered(json: bool, port: u16, space: &str, template: &str, kind: &str) {
+    let url = format!("http://127.0.0.1:{port}/{space}/");
+    if json {
+        let payload = json!({
+            "schema_version": SCHEMA_VERSION,
+            "serving": true,
+            "port": port,
+            "space": space,
+            "slug": server::SINGLE_SLUG,
+            "home": server::SINGLE_SLUG,
+            "url": url,
+            "template": template,
+            "template_kind": kind,
+            "warnings": [],
+        });
+        emit_json_line(&payload);
+    } else {
+        eprintln!(
+            "glasspad serving '{space}' (rendered via {kind} template '{template}') at {url}"
+        );
     }
 }
 

