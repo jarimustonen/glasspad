@@ -79,7 +79,10 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   fragment-only parent↔iframe channel), `manifest.json`, and the vendored Vega stack
   (`vega`/`vega-lite`/`vega-embed`, SRI-pinned under `assets/`). The Vega bundles
   are vendored, not CDN-loaded, because the artifact `script-src` names only the
-  loopback host — `charts.js` lazily loads them from `/_gp/v1/*`.
+  loopback host — `charts.js` lazily loads them from `/_gp/v1/*`. `BASE_LIB_NAMES`
+  enumerates the served set (minus the `probe.js` test stub) that a self-contained
+  `glasspad build` (`src/build.rs`) bundles under `_gp/v1/`, resolved through
+  `gp_asset` so the list never drifts from what the server serves.
 - `space.rs` (Wave 2a) — the **space model + directory scanner** (security-
   sensitive). `scan_dir` reads a directory into an immutable `Space` (artifacts +
   `assets/`), all-or-nothing: slug grammar, **reserved-name / collision** hard

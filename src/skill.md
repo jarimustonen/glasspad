@@ -65,6 +65,7 @@ Base libraries live under `/_gp/v1/*` (e.g. `base.css`, `charts.js` = a thin
 glasspad serve ./myspace          # serve a directory live (the primary loop)
 glasspad create ./report.html     # one-artifact space from a single file
 glasspad render ./notes.md        # render markdown via a template, serve it live
+glasspad build ./myspace ./out    # statically render a space to HTML files (no server)
 glasspad open myspace             # open http://127.0.0.1:3000/myspace/ in the browser
 glasspad data ./old.csv           # optional: parse a legacy CSV/JSON/mbox file to JSON rows
 ```
@@ -75,6 +76,15 @@ glasspad data ./old.csv           # optional: parse a legacy CSV/JSON/mbox file 
   contains one `{{content}}` slot (e.g. `--template ./layout.html`). The template
   styles only the artifact body — the sandbox/CSP stay glasspad's. Re-renders on
   save (editing the markdown, or a file template, reloads the browser).
+- `build <space> <out>` statically renders a space to self-contained HTML files —
+  no server, no bind. Each artifact becomes `<slug>.html` (wrapped exactly as the
+  live host would serve it); the home is `index.html` (a redirect when the home is
+  not literally `index`). Default **self-contained**: the base libs are bundled
+  under `_gp/v1/` and referenced relatively, so the output works offline (open
+  `index.html`, or serve the dir at web root). `--shared-libs` references the libs
+  at the absolute `/_gp/v1/…` path and skips bundling (smaller; needs a host that
+  serves them). `--force` writes into a non-empty dir; `--dry-run` plans without
+  writing. For an offline docsite / preview transport, not a live-reload loop.
 - `serve`/`create`/`render` run until killed — start them in the background, then `open`.
 - `data <file>` is a standalone helper (never starts a server): it parses a
   legacy `.csv` / `.json` / `.mbox` file and prints the rows as JSON on stdout,

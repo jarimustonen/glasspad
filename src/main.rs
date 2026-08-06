@@ -5,6 +5,7 @@
 // / mbox formats on demand. The section-DSL renderer that once consumed them was
 // removed in Wave 5 / Phase 6.
 mod artifact_host;
+mod build;
 mod cli;
 mod hosted;
 mod server;
@@ -80,6 +81,28 @@ enum Commands {
         /// TCP port on 127.0.0.1 (1-65535).
         #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
+    },
+    /// Statically render a space directory to self-contained HTML files (no
+    /// server, no bind). Reuses the same scanner + wrap seam `serve` uses, writing
+    /// the wrapped pages to `<out>` for an offline docsite / preview transport.
+    Build {
+        /// The space directory to render (same scan + validation as `serve`).
+        space: PathBuf,
+        /// Output directory for the rendered files. Created if absent; must be
+        /// empty unless `--force`.
+        out: PathBuf,
+        /// Reference the base libs at the absolute `/_gp/v1/…` server path instead
+        /// of bundling them (default: self-contained — bundle + reference them
+        /// relatively so the output works offline).
+        #[arg(long)]
+        shared_libs: bool,
+        /// Write into a non-empty output directory (may overwrite existing files).
+        #[arg(long)]
+        force: bool,
+        /// Validate + plan the build and print what would be written, without
+        /// writing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Run the hosted share server (public bind, API-key ingest, capability-slug
     /// public read). A separate run mode from `serve`: it binds the given public
@@ -194,6 +217,13 @@ async fn main() {
             name,
             port,
         }) => cli::render(file, template, name, port, json).await,
+        Some(Commands::Build {
+            space,
+            out,
+            shared_libs,
+            force,
+            dry_run,
+        }) => cli::build(space, out, shared_libs, force, dry_run, json),
         Some(Commands::HostServe {
             bind,
             public_host,

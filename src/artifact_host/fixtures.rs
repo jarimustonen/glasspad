@@ -357,6 +357,22 @@ const INJECT: &str = r#"<!doctype html>
 /// (`vega@5.30.0` / `vega-lite@5.21.0` / `vega-embed@6.26.0`); their SRI hashes
 /// match `src/renderer.rs`. They are vendored under `assets/vendor/` because the
 /// artifact `script-src` names only the loopback host — no external CDN.
+/// The pinned base libraries a **self-contained** static build (`glasspad build`)
+/// bundles under `_gp/v1/` so the output resolves them with no running host. This
+/// is the real served set minus the Wave-1 `probe.js` exfil stub (a test-only
+/// fixture, never part of a real space's output). Each name resolves through
+/// [`gp_asset`] for its content type + body, so the list can never drift from what
+/// the server serves.
+pub const BASE_LIB_NAMES: &[&str] = &[
+    "base.css",
+    "bridge.js",
+    "charts.js",
+    "manifest.json",
+    "vega.min.js",
+    "vega-lite.min.js",
+    "vega-embed.min.js",
+];
+
 pub fn gp_asset(path: &str) -> Option<(&'static str, &'static str)> {
     const JS: &str = "text/javascript; charset=utf-8";
     // (content_type, body)

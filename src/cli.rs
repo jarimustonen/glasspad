@@ -14,6 +14,8 @@
 //!   live (its own single-file watch).
 //! * `render <file.md>` renders markdown through a reusable template into an
 //!   artifact body and serves it live (0.3.0; see `artifact_host::render`).
+//! * `build <space> <out>` statically renders a space to self-contained HTML files
+//!   (no server, no bind; reuses the scanner + wrap seam — see `crate::build`).
 //! * `open <space>` opens a served space's URL in the browser.
 //! * `data <file>` parses a legacy CSV/JSON/mbox file to JSON rows (no server).
 //!
@@ -30,6 +32,7 @@ use serde_json::json;
 
 use crate::artifact_host::space::{self, ScanError};
 use crate::artifact_host::{self, ArtifactHost, render, wrap};
+use crate::build::{self, LibMode};
 use crate::hosted::auth::{KeyFileError, KeyTable};
 use crate::hosted::{self, HostedConfig};
 use crate::server::{self, RenderTemplate};
@@ -796,6 +799,218 @@ fn emit_rendered(
         }
         eprintln!(
             "glasspad serving '{space}' (rendered via {kind} template '{template}') at {url}"
+        );
+    }
+}
+
+// --- build (static render) ------------------------------------------------
+
+/// `glasspad build <space> <out> [--shared-libs] [--force] [--dry-run]` —
+/// statically render a space directory to self-contained HTML files (no server,
+/// no bind). Reuses the same security-checked scanner + wrap seam `serve` uses,
+/// producing the same wrapped pages the content route would serve, written to
+/// `<out>` for an offline docsite / external preview transport (see `build` docs).
+///
+/// Strict + fail-fast (AI-first §1): a symlink / traversal / reserved-slug /
+/// oversize input is refused by the scanner before anything is written, and a
+/// non-empty `<out>` is refused unless `--force` (§3 — a potentially-overwriting
+/// write opts in explicitly). `--dry-run` (§11) validates + plans and prints the
+/// file list without touching the filesystem.
+pub fn build(
+    space_dir: PathBuf,
+    out: PathBuf,
+    shared_libs: bool,
+    force: bool,
+    dry_run: bool,
+    json: bool,
+) {
+    let mode = if shared_libs {
+        LibMode::SharedLibs
+    } else {
+        LibMode::SelfContained
+    };
+
+    // Scan the space with the SAME scanner `serve` uses: a symlink, path
+    // traversal, reserved slug, collision, or oversize file is refused here just
+    // as on the server path (AI-first §1), before any output is written.
+    let (name, snap) = match server::scan_named(&space_dir) {
+        Ok(x) => x,
+        Err(e) => exit_scan_error(&e, json),
+    };
+    let space = snap.space(&name).expect("scanned space is present");
+    let home = space.home.clone();
+    let slugs = space.slugs();
+
+    // Plan every output file (pure — no filesystem writes yet).
+    let files = build::plan(space, home.as_deref(), mode);
+    let index = files
+        .iter()
+        .any(|f| f.rel_path == "index.html")
+        .then(|| "index.html".to_string());
+
+    if dry_run {
+        emit_build_report(
+            json,
+            true,
+            &out,
+            &name,
+            mode,
+            &slugs,
+            &files,
+            home.as_deref(),
+            index.as_deref(),
+        );
+        return;
+    }
+
+    // Refuse to clobber a non-empty output directory unless --force (§3).
+    guard_out_dir(&out, force, json);
+
+    if let Err(e) = build::write_files(&out, &files) {
+        exit_error(
+            json,
+            2,
+            "io_error",
+            &format!("cannot write build output under {}: {e}", out.display()),
+            None,
+            None,
+        );
+    }
+
+    // Prefer the canonical absolute path now that the directory exists.
+    let resolved = std::fs::canonicalize(&out).unwrap_or_else(|_| out.clone());
+    emit_build_report(
+        json,
+        false,
+        &resolved,
+        &name,
+        mode,
+        &slugs,
+        &files,
+        home.as_deref(),
+        index.as_deref(),
+    );
+}
+
+/// Refuse to write into an existing non-empty `<out>` unless `--force`. A path that
+/// does not exist is fine (`write_files` creates it); a path that exists but is not
+/// a directory is always an error. IO errors reading the directory are system
+/// errors (exit 2).
+fn guard_out_dir(out: &Path, force: bool, json: bool) {
+    match std::fs::metadata(out) {
+        Ok(m) if m.is_dir() => {
+            if !force {
+                let empty = std::fs::read_dir(out)
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(false);
+                if !empty {
+                    exit_error(
+                        json,
+                        1,
+                        "output_not_empty",
+                        &format!(
+                            "output directory {} is not empty; pass --force to write into it \
+                             (existing files may be overwritten)",
+                            out.display()
+                        ),
+                        Some(&out.display().to_string()),
+                        None,
+                    );
+                }
+            }
+        }
+        Ok(_) => exit_error(
+            json,
+            1,
+            "output_not_a_directory",
+            &format!(
+                "{} exists and is not a directory; give a directory path for the build output",
+                out.display()
+            ),
+            Some(&out.display().to_string()),
+            None,
+        ),
+        // Absent: created by `write_files`.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => exit_error(
+            json,
+            2,
+            "io_error",
+            &format!("cannot access {}: {e}", out.display()),
+            None,
+            None,
+        ),
+    }
+}
+
+/// Emit the `build` result (`dry` = false) or dry-run plan (`dry` = true). The
+/// dry-run form carries the AI-first §11 `would[]` planning list and `dry_run:
+/// true`; the real-run form reports `built: true` and the written counts. Both
+/// share the descriptive fields so a caller reads the same shape either way.
+#[allow(clippy::too_many_arguments)]
+fn emit_build_report(
+    json: bool,
+    dry: bool,
+    out: &Path,
+    name: &str,
+    mode: LibMode,
+    slugs: &[String],
+    files: &[build::OutFile],
+    home: Option<&str>,
+    index: Option<&str>,
+) {
+    if json {
+        let mut payload = json!({
+            "schema_version": SCHEMA_VERSION,
+            "space": name,
+            "out": out.display().to_string(),
+            "mode": mode.as_str(),
+            "home": home,
+            "index": index,
+            "artifacts": slugs,
+            "pages": slugs.len(),
+            "files": files.len(),
+            "base_libs_bundled": mode == LibMode::SelfContained,
+        });
+        let obj = payload.as_object_mut().expect("object literal");
+        if dry {
+            obj.insert("dry_run".into(), json!(true));
+            let would: Vec<serde_json::Value> = files
+                .iter()
+                .map(|f| {
+                    json!({
+                        "action": "write",
+                        "resource": "file",
+                        "path": f.rel_path,
+                        "bytes": f.bytes.len(),
+                    })
+                })
+                .collect();
+            obj.insert("would".into(), json!(would));
+        } else {
+            obj.insert("built".into(), json!(true));
+            obj.insert("warnings".into(), json!([]));
+        }
+        emit_json_line(&payload);
+    } else if dry {
+        eprintln!(
+            "glasspad build (dry run): would write {} file(s) for space '{name}' ({}) to {}",
+            files.len(),
+            mode.as_str(),
+            out.display()
+        );
+        for f in files {
+            eprintln!("  {} ({} bytes)", f.rel_path, f.bytes.len());
+        }
+    } else {
+        // Bare output path on stdout (composable); human summary on stderr.
+        println!("{}", out.display());
+        eprintln!(
+            "glasspad built space '{name}' ({}) to {} — {} page(s), {} file(s)",
+            mode.as_str(),
+            out.display(),
+            slugs.len(),
+            files.len()
         );
     }
 }
