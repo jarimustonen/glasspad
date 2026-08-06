@@ -21,6 +21,24 @@ stable `--json` envelope, and fails with an informative error (never a prompt).
 - Serving is live: edit a file on disk and the browser reloads. The directory is
   the single source of truth — there is no upload/push step.
 
+## Which mode to reach for
+
+Pick by **who needs to see it and how it travels** — the authoring model (HTML or
+markdown, spaces, slugs) is the same underneath. Default to loopback `serve`; only
+leave the machine when the viewer is elsewhere.
+
+| You want to… | Use | Notes |
+|---|---|---|
+| Show the user on **this machine** while you work | `glasspad serve ./dir` (or `create <file>` for a single file) | Loopback `127.0.0.1`, keeps the DNS-rebinding Host guard, live reload. The private on-your-machine view — "show me while I work." |
+| Same, but the payload is **markdown** and you want a themed page | `glasspad render <file.md> [--template prose\|dashboard\|./tpl.html]` | Server-side md→HTML spliced into the template's `{{content}}` slot; the template governs the body only (sandbox/CSP stay glasspad's). Still loopback + live reload. |
+| Let a **colleague / another machine** open it over the network | `glasspad publish <file>` → hosted share server | API-key ingest; returns a public capability-slug URL (`/p/<slug>`, `noindex` — "hold the link"). `--markdown` renders md server-side; `--title`, `--no-open`. Server + key from `--server`/`--api-key`, `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY`, or `~/.config/glasspad/config.yaml`. |
+| Preview on an **external seat** (not this box) | external seat preview | The external transport path — hands the rendered page to a remote seat you reach over that transport, rather than the local browser or the share server. |
+| **No server at all** — static, self-contained files (offline / docsite) | `glasspad build <space> <out>` | Renders a space to a self-contained static bundle in `<out>`; no bind, no live reload. The "just ship the files" option. |
+
+Operator note: the hosted share server is a separate run mode —
+`glasspad host-serve --bind … --public-host … --api-key-file … --store …` (public
+bind, no loopback guard). Agents `publish` **to** it; they don't run it.
+
 ## Authoring: write HTML
 
 **Fragment (default).** Write body content; Glasspad wraps it in a themed
