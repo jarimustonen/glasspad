@@ -156,7 +156,10 @@ The color system is deliberately restrained: a single accent color (blue/indigo)
 - Collapse links: underline, muted text, darken on hover
 - Focus: `2px solid var(--gp-focus)`, 2px offset
 
-### Markdown Body
+### Markdown Body (legacy dashboard inline-markdown)
+> Describes inline markdown rendered *inside a dashboard card*. For the
+> markdown render path the authoritative styling is the Prose / Reading Theme
+> below (`.gp-prose`), not this section.
 - Line height: 1.7 for comfortable reading
 - Headings: h1/h2 get bottom border, progressive size reduction
 - Code inline: accent-pink text (`#d63384` light / `#f472b6` dark), surface-alt background
@@ -175,12 +178,26 @@ Opt in by wrapping content in an element carrying the `gp-prose` class
 class, so nothing changes for content that does not opt in. This is the default
 template target for the markdown render path.
 
-- **Column**: centered, `max-width: var(--gp-prose-measure)` (~720px reading measure)
+**Render contract:** rendered blocks are direct children of `.gp-prose` (the
+first/last child margins are flushed on that assumption). The styles are built
+to survive arbitrary markdown-generated HTML.
+
+- **Column**: centered, `max-width: var(--gp-prose-measure)` (~720px reading measure); `min-width: 0` + `overflow-wrap` so long URLs / wide content never blow it out
 - **Body**: `var(--gp-font-serif)` at `var(--gp-prose-font-size)` (~18px), line height 1.75
-- **Headings**: same serif, sentence-case (no uppercase/tracking), generous space above / tight below; h1 large, h2 with a bottom border rule
+- **Headings**: same serif, sentence-case (no uppercase/tracking), generous space above / tight below; h1 large, h2 with a `--gp-border-strong` bottom rule
 - **Links**: underlined (readability over the dashboard's clean look)
-- **Lists / blockquotes / figures**: reading-rhythm spacing; blockquote uses a `--gp-border-strong` left rule with secondary italic text; images cap at 100% width and center with an 8px radius
-- **Code**: inline/`pre` reuse the base pink-on-alt treatment, sized relative to the reading body
+- **Lists**: logical (RTL-safe) indent; loose-list `<p>` gaps collapsed; GFM task-list checkboxes de-marked, aligned, and `accent-color`-themed
+- **Blockquotes**: `--gp-border-strong` inline-start rule, secondary italic prose (italic reset on code / nested headings)
+- **Tables**: sentence-case headers (not the dashboard uppercase signature); a wide table scrolls inside its own box rather than overflowing the column
+- **Images**: inline by default (badges/icons keep flow); `<figure>` images and image-only paragraphs go block-centered with an 8px radius
+- **Definition lists, sub/sup**: styled for the reading rhythm
+- **Code**: inline/`pre`/`kbd`/`samp` reuse the base pink-on-alt treatment, sized relative to the reading body
+- **Native controls**: `color-scheme` is bound per theme so checkboxes/scrollbars match Glass Light / Glass Dark
+- **Print**: `@media print` forces a light, full-width flow and avoids splitting code/quotes/figures/tables across pages
+
+Deferred to the markdown render feature (needs that renderer's HTML contract):
+syntax-highlight color tokens (`--gp-syntax-*`) and the exact footnote-section
+class vocabulary.
 
 ## 5. Layout Principles
 

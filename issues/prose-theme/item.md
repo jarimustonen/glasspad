@@ -4,6 +4,9 @@ updated: 2026-08-06
 type: feature
 status: in-progress
 priority: high
+commits:
+- hash: cefa3c0
+  summary: 'feat(base.css): add prose/reading theme to --gp-* design system'
 ---
 
 # Prose/reading theme in the --gp-* design system

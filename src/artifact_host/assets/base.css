@@ -17,6 +17,8 @@
 /* Light theme (default) */
 :root,
 [data-theme="light"] {
+  color-scheme: light;
+
   --gp-bg: #fafbfc;
   --gp-surface: #ffffff;
   --gp-surface-alt: #f3f4f6;
@@ -51,6 +53,8 @@
 
 /* Dark theme tokens (explicit dark) */
 [data-theme="dark"] {
+  color-scheme: dark;
+
   --gp-bg: #0f1117;
   --gp-surface: #1a1b26;
   --gp-surface-alt: #242530;
@@ -88,6 +92,8 @@
    mirrors [data-theme="dark"] above (kept in sync with dashboard.css). */
 @media (prefers-color-scheme: dark) {
   [data-theme="auto"] {
+    color-scheme: dark;
+
     --gp-bg: #0f1117;
     --gp-surface: #1a1b26;
     --gp-surface-alt: #242530;
@@ -361,11 +367,14 @@ tbody tr:hover {
 
 .gp-prose {
   max-width: var(--gp-prose-measure);
+  min-width: 0; /* never let content force the column wider than its flex/grid track */
   margin-inline: auto;
   font-family: var(--gp-font-serif);
   font-size: var(--gp-prose-font-size);
   line-height: var(--gp-prose-line-height);
   color: var(--gp-text);
+  /* Long URLs / identifiers / inline code wrap rather than blowing out the measure. */
+  overflow-wrap: break-word;
 }
 
 /* Reading rhythm: generous space above a heading, tighter below (it binds to
@@ -386,21 +395,28 @@ tbody tr:hover {
   margin: 2em 0 0.6em;
 }
 
-/* No leading gap: the first block sits flush with the top of the column. */
+/* No leading gap at the top / trailing gap at the bottom: the reading column
+   sits flush inside its wrapper (e.g. a .gp-card). Assumes the renderer emits
+   rendered blocks as direct children of .gp-prose (the markdown-render contract). */
 .gp-prose > :first-child {
   margin-top: 0;
 }
 
+.gp-prose > :last-child {
+  margin-bottom: 0;
+}
+
+/* h1 keeps the shared 2em top rhythm so a mid-document h1 is separated; only the
+   very first block is flushed (by the :first-child rule above). */
 .gp-prose h1 {
   font-size: 2.25rem;
   letter-spacing: -0.02em;
-  margin-top: 0;
 }
 
 .gp-prose h2 {
   font-size: 1.6rem;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--gp-border);
+  border-bottom: 1px solid var(--gp-border-strong);
 }
 
 .gp-prose h3 {
@@ -430,6 +446,7 @@ tbody tr:hover {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.15em;
+  overflow-wrap: anywhere; /* a bare URL as link text must not blow out the column */
 }
 
 .gp-prose a:hover {
@@ -447,7 +464,7 @@ tbody tr:hover {
 .gp-prose ul,
 .gp-prose ol {
   margin: 0 0 1.25em;
-  padding-left: 1.6em;
+  padding-inline-start: 1.6em; /* logical: honors dir="rtl" content */
 }
 
 .gp-prose li {
@@ -464,10 +481,29 @@ tbody tr:hover {
   margin-bottom: 0;
 }
 
+/* "Loose" markdown lists wrap each item's text in a <p>; that <p> must not add
+   its 1.25em block gap between items (it would look broken). Reset the last
+   block inside every list item. */
+.gp-prose li > :last-child {
+  margin-bottom: 0;
+}
+
+/* GFM task lists: `- [ ]` renders as <li><input type=checkbox> …>. Drop the
+   marker for those items (renderer-agnostic via :has) and align/theme the box. */
+.gp-prose li:has(> input[type="checkbox"]:first-child) {
+  list-style: none;
+}
+
+.gp-prose li > input[type="checkbox"]:first-child {
+  margin-inline: -1.4em 0.5em; /* pull back into the marker gutter */
+  vertical-align: middle;
+  accent-color: var(--gp-accent);
+}
+
 .gp-prose blockquote {
   margin: 1.5em 0;
   padding: 0.25em 1.25em;
-  border-left: 3px solid var(--gp-border-strong);
+  border-inline-start: 3px solid var(--gp-border-strong); /* logical: honors dir="rtl" */
   color: var(--gp-text-secondary);
   font-style: italic;
 }
@@ -476,9 +512,18 @@ tbody tr:hover {
   margin-bottom: 0;
 }
 
-/* Code sizes relative to the reading body so it tracks the prose measure; the
-   inline pink-on-alt treatment and the pre block come from the base rules. */
-.gp-prose code {
+/* Italic is for the quoted prose, not for code/keyboard/nested headings inside a
+   quote — synthetic-italic monospace is unreadable. Reset those descendants. */
+.gp-prose blockquote :is(code, pre, kbd, samp, h1, h2, h3, h4, h5, h6) {
+  font-style: normal;
+}
+
+/* Inline monospace sizes relative to the reading body so it tracks the prose
+   measure (0.85em, not the base's absolute 0.85rem); the inline pink-on-alt
+   treatment and the pre block come from the base rules. */
+.gp-prose code,
+.gp-prose kbd,
+.gp-prose samp {
   font-size: 0.85em;
 }
 
@@ -491,21 +536,46 @@ tbody tr:hover {
   font-size: inherit;
 }
 
+/* A wide markdown table (many columns / long cells) scrolls inside its own box
+   instead of blowing out the reading column. `display: block` turns the table
+   into a scroll container; the rows keep table layout via an anonymous table
+   box (the well-worn GitHub-markdown approach). */
 .gp-prose table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
   margin: 1.5em 0;
   font-size: 0.95rem;
+}
+
+/* Prose table headers are sentence-case reading type, not the dashboard's
+   uppercase/tracked/muted signature (which the base `th` rule would otherwise
+   apply here). */
+.gp-prose th {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: inherit;
+  color: var(--gp-text);
 }
 
 .gp-prose hr {
   margin: 2.5em 0;
 }
 
+/* Images cap at the column width; keep them inline by default so badges / small
+   inline icons / inline math don't force a line break. */
 .gp-prose img {
-  display: block;
   max-width: 100%;
   height: auto;
-  margin: 1.5em auto;
   border-radius: 8px;
+}
+
+/* Block-level images (a figure, or an image alone in its paragraph) center with
+   reading rhythm. */
+.gp-prose figure img,
+.gp-prose p > img:only-child {
+  display: block;
+  margin: 1.5em auto;
 }
 
 .gp-prose figure {
@@ -517,4 +587,48 @@ tbody tr:hover {
   font-size: 0.85em;
   color: var(--gp-text-muted);
   text-align: center;
+}
+
+/* Definition lists (Pandoc / python-markdown `extra`). */
+.gp-prose dl {
+  margin: 0 0 1.25em;
+}
+
+.gp-prose dt {
+  margin-top: 1em;
+  font-weight: 700;
+}
+
+.gp-prose dd {
+  margin: 0 0 0 1.5em;
+  color: var(--gp-text-secondary);
+}
+
+/* Footnote / super-subscript references must not disturb the line box. */
+.gp-prose sub,
+.gp-prose sup {
+  font-size: 0.75em;
+  line-height: 0;
+}
+
+/* The `--gp-prose-*` scale is theme-independent, but printing an explicitly dark
+   artifact would waste ink and read poorly — force a light, full-width, un-
+   decorated reading flow and keep block elements from splitting across pages.
+   The hardcoded print colors are a deliberate exception to the token rule. */
+@media print {
+  .gp-prose {
+    max-width: none;
+    color: #111;
+  }
+
+  .gp-prose a {
+    color: inherit;
+  }
+
+  .gp-prose pre,
+  .gp-prose blockquote,
+  .gp-prose figure,
+  .gp-prose table {
+    break-inside: avoid;
+  }
 }
