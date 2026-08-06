@@ -23,19 +23,35 @@ skill family (thin wrappers over the `ossctl` binary).
 - **Green baseline on `main`:** `./test-security.sh` = 41 browser checks + Wave 2a
   probes; `cargo fmt --check` / `build` / `clippy --all-targets` / `test` all clean.
 
-## ▶ Start here (next session)
+## ▶ Start here (next session) — the 0.3.0 agent→HTML consolidation
 
-The big release is done. Remaining is optional polish — **no hard gate, nothing urgent.**
+**This is the substantive forward work now.** Glasspad becomes the single
+canonical "agent → browser HTML" surface, absorbing the roles today split across
+publish-html (persistent shareable pages), tw view (seat preview), and the
+tilictl `build_docs.py` docsite pattern. Full design + rationale: homebase
+`issues/glasspad-html-consolidation/design.md` (Option D — hosted share server).
 
-1. **Round-it-out CLI features** (deferred to **0.2.2**): `glasspad stop`,
-   `GLASSPAD_PORT` env var, PID file (`~/.glasspad/server.pid`). Decide scope, then
-   drive as normal worktree units. This is the most substantive forward work.
-2. **Cosmetic confirms** (only if you care): LICENSE copyright holder reads
-   "Jari Mustonen"; SECURITY.md / CoC contact is `jari@itsellesi.fi`. Change via a
-   normal edit + patch release if wanted.
-3. **Close the `release-oss` epic** — it is effectively complete (all three channels
-   shipped). Either close it, or keep it open only to track the 0.2.2 round-it-out
-   items above.
+**Target: 0.3.0.** Filed issues (critical path in order):
+
+1. **`prose-theme`** (feature, high) — prose/reading theme in the `--gp-*` system.
+2. **`markdown-template-render`** (feature, high) — md + reusable-template render
+   (server-side; payload = markdown + template reference). The headline feature.
+3. **`hosted-share-server`** (feature, high) — hosted run mode: API-key ingest,
+   capability-slug public URLs, retention, multi-tenant; loopback `serve` unchanged.
+4. **`skill-routing-guidance`** (task, normal) — skill: when serve vs publish vs preview.
+5. **`static-build-output`** (feature, low, optional) — `glasspad build` static render.
+
+Order: `prose-theme` → `markdown-template-render` → `hosted-share-server` →
+`skill-routing-guidance`; `static-build-output` is optional/parallel. Downstream
+homebase + tilictl work is gated on **0.3.0 landing** (tracked in those repos).
+
+### Optional polish (no hard gate, unchanged)
+
+- **Round-it-out CLI features** (deferred to a **0.2.2** patch, independent of the
+  above): `glasspad stop`, `GLASSPAD_PORT` env var, PID file (`~/.glasspad/server.pid`).
+- **Cosmetic confirms:** LICENSE copyright holder "Jari Mustonen"; SECURITY.md /
+  CoC contact `jari@itsellesi.fi`. Change via a normal edit + patch release if wanted.
+- **Close the `release-oss` epic** — effectively complete (all three channels shipped).
 
 ## How to cut a release (the recipe, now automated)
 
@@ -55,10 +71,12 @@ Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+p
 
 ## Backlog
 
+- **0.3.0 agent→HTML consolidation** — `prose-theme`, `markdown-template-render`,
+  `hosted-share-server`, `skill-routing-guidance`, `static-build-output` (see ▶ Start
+  here). The primary forward work.
 - `release-oss` (epic, high) — **effectively DONE** (0.2.1 shipped all three channels);
   close it or retain only for the 0.2.2 round-it-out items.
 - 0.2.2 round-it-out: `glasspad stop`, `GLASSPAD_PORT`, PID file (deferred, not started).
-- No other open work items.
 
 ## Verify / deploy (localhost)
 
