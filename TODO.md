@@ -78,16 +78,13 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: skill-routing-guidance   ← start here on resume
-(hosted-share-server landed 2026-08-06 — 0.3.0 headline path COMPLETE; version now 0.3.0 in Cargo.toml)
+GLOBAL HEAD-OF-LINE: (none — backlog empty; 0.3.0 cut 2026-08-06)
 
-LANE B — CLI/server (src/cli.rs, src/server.rs, render modules)
-    static-build-output        (optional/low)
-    serve-process-mgmt         (0.2.2/low)
-    version-commit-stamp       (0.2.2/low, follow-up to version-command; touches version code)
+All 0.3.0 work landed and dropped from the graph:
+  markdown-template-render · hosted-share-server · skill-routing-guidance ·
+  static-build-output · serve-process-mgmt · version-commit-stamp
 
-UNLANED — confirmed no shared hot files, run anytime:
-  ▶ skill-routing-guidance     (hosted-share-server dep delivered — now unblocked; docs serve vs publish vs preview)
+No active non-epic issues. Next round: file new work, then re-populate lanes.
 ```
 <!-- execution-dag:end -->
 
