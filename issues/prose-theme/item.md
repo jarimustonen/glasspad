@@ -2,13 +2,14 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: high
 commits:
 - hash: cefa3c0
   summary: 'feat(base.css): add prose/reading theme to --gp-* design system'
 - hash: 4d5d5b9
   summary: 'fix(base.css): harden .gp-prose against arbitrary markdown HTML (llm-review)'
+closed: 2026-08-06
 ---
 
 # Prose/reading theme in the --gp-* design system
