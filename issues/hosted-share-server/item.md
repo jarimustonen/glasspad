@@ -2,7 +2,7 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: open
+status: in-progress
 priority: high
 related: ['@markdown-template-render']
 blocked_by: ['@markdown-template-render']
