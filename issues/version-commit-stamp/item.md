@@ -2,9 +2,15 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: low
 related: ['@version-command']
+commits:
+- hash: 2ff3858
+  summary: 'feat(version): stamp build-time git commit SHA into version output'
+- hash: 3946f3b
+  summary: 'fix(version): harden commit stamp — apply /llm-review findings'
+closed: 2026-08-06
 ---
 
 # Wire build-time git commit into glasspad version output
