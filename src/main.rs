@@ -8,6 +8,7 @@ mod artifact_host;
 mod build;
 mod cli;
 mod hosted;
+mod pidfile;
 mod server;
 
 use std::net::SocketAddr;
@@ -47,9 +48,10 @@ enum Commands {
     Serve {
         /// Directory to serve as a space. Omit to serve only the built-in fixtures.
         dir: Option<PathBuf>,
-        /// TCP port on 127.0.0.1 (1-65535).
-        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
-        port: u16,
+        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
     },
     /// Build a one-artifact space from a single file and serve it live.
     Create {
@@ -58,9 +60,10 @@ enum Commands {
         /// Space name (default: the file stem). Must match the space grammar.
         #[arg(long)]
         name: Option<String>,
-        /// TCP port on 127.0.0.1 (1-65535).
-        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
-        port: u16,
+        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
     },
     /// Render a markdown file through a reusable template and serve it live.
     ///
@@ -78,9 +81,10 @@ enum Commands {
         /// Space name (default: the file stem). Must match the space grammar.
         #[arg(long)]
         name: Option<String>,
-        /// TCP port on 127.0.0.1 (1-65535).
-        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
-        port: u16,
+        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
     },
     /// Statically render a space directory to self-contained HTML files (no
     /// server, no bind). Reuses the same scanner + wrap seam `serve` uses, writing
@@ -154,13 +158,22 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// Stop the running loopback server (`serve` / `create` / `render`).
+    ///
+    /// Reads the pid file at ~/.glasspad/server.pid (override with $GLASSPAD_PID_FILE)
+    /// and sends SIGTERM, which the server traps to remove its pid file and exit
+    /// cleanly. A stale pid file (recorded process already dead) is cleaned and
+    /// reported as "no running server" rather than treated as still-running. Targets
+    /// a LOCAL process only — no network call, so the loopback Host guard is untouched.
+    Stop,
     /// Open a served space's URL in the browser.
     Open {
         /// Space name (the `{space}` in `/{space}/`).
         space: String,
-        /// TCP port on 127.0.0.1 (1-65535).
-        #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
-        port: u16,
+        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
         /// Print the URL without launching a browser (pipe-friendly).
         #[arg(long)]
         no_browser: bool,
@@ -209,14 +222,18 @@ async fn main() {
     }
 
     match args.command {
-        Some(Commands::Serve { dir, port }) => cli::serve(dir, port, json).await,
-        Some(Commands::Create { file, name, port }) => cli::create(file, name, port, json).await,
+        Some(Commands::Serve { dir, port }) => {
+            cli::serve(dir, cli::resolve_port(port, json), json).await
+        }
+        Some(Commands::Create { file, name, port }) => {
+            cli::create(file, name, cli::resolve_port(port, json), json).await
+        }
         Some(Commands::Render {
             file,
             template,
             name,
             port,
-        }) => cli::render(file, template, name, port, json).await,
+        }) => cli::render(file, template, name, cli::resolve_port(port, json), json).await,
         Some(Commands::Build {
             space,
             out,
@@ -245,11 +262,12 @@ async fn main() {
             )
             .await
         }
+        Some(Commands::Stop) => cli::stop(json),
         Some(Commands::Open {
             space,
             port,
             no_browser,
-        }) => cli::open(space, port, json, no_browser),
+        }) => cli::open(space, cli::resolve_port(port, json), json, no_browser),
         Some(Commands::Data { file, format, meta }) => cli::data(file, format, meta, json),
         Some(Commands::Version) => cli::version(json),
         Some(Commands::Skill {

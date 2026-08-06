@@ -35,11 +35,284 @@ use crate::artifact_host::{self, ArtifactHost, render, wrap};
 use crate::build::{self, LibMode};
 use crate::hosted::auth::{KeyFileError, KeyTable};
 use crate::hosted::{self, HostedConfig};
+use crate::pidfile::{self, PidError};
 use crate::server::{self, RenderTemplate};
 
 /// The `--json` schema version (AI-first §10). Bump on any breaking change to an
 /// envelope: removed/renamed field, changed type/nullability, or changed meaning.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// The loopback port used when neither `--port` nor `$GLASSPAD_PORT` is set.
+pub const DEFAULT_PORT: u16 = 3000;
+
+/// The environment variable that sets the loopback port (AI-first §8: the env name
+/// mirrors the `--port` flag).
+pub const PORT_ENV: &str = "GLASSPAD_PORT";
+
+// --- port resolution (AI-first §8) ----------------------------------------
+
+/// Resolve the loopback port by AI-first §8 precedence: an explicit `--port` flag >
+/// the `$GLASSPAD_PORT` env var > the built-in [`DEFAULT_PORT`]. An invalid
+/// `$GLASSPAD_PORT` (empty, non-numeric, or out of the 1-65535 range) is a hard,
+/// informative error (§1 — never a silent fallback to the default). The flag is
+/// already range-validated by clap, so it is taken verbatim when present.
+pub fn resolve_port(flag: Option<u16>, json: bool) -> u16 {
+    if let Some(p) = flag {
+        return p;
+    }
+    match std::env::var(PORT_ENV) {
+        Err(std::env::VarError::NotPresent) => DEFAULT_PORT,
+        Err(std::env::VarError::NotUnicode(_)) => exit_error(
+            json,
+            1,
+            "invalid_port",
+            &format!("{PORT_ENV} is set but is not valid UTF-8 (expected an integer 1-65535)"),
+            None,
+            None,
+        ),
+        Ok(raw) => match parse_env_port(&raw) {
+            Ok(p) => p,
+            Err(msg) => exit_error(json, 1, "invalid_port", &msg, Some(raw.trim()), None),
+        },
+    }
+}
+
+/// Parse a `$GLASSPAD_PORT` value into a valid loopback port. Strict (AI-first §1):
+/// rejects empty / whitespace-only, non-numeric, and out-of-range (`0` or > 65535)
+/// with an informative message naming the offending value. Pure — unit-tested.
+fn parse_env_port(raw: &str) -> Result<u16, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err(format!(
+            "{PORT_ENV} is set but empty (expected an integer 1-65535)"
+        ));
+    }
+    match t.parse::<u16>() {
+        Ok(0) => Err(format!(
+            "{PORT_ENV}={t:?} is out of range (expected an integer 1-65535)"
+        )),
+        Ok(p) => Ok(p),
+        Err(_) => Err(format!(
+            "{PORT_ENV}={t:?} is not a valid port (expected an integer 1-65535)"
+        )),
+    }
+}
+
+// --- pid file (process management) ----------------------------------------
+
+/// Record this process in the loopback-server pid file and arrange its cleanup.
+/// Called by `serve`/`create`/`render` **after** a successful bind (so a bind
+/// failure never leaves a pid file behind). It:
+///
+/// * writes our PID (last-writer-wins over any stale *or* live entry — see the
+///   `pidfile` module: refusing would make pkill-and-restart and multi-port use
+///   fragile), and
+/// * installs a SIGINT/SIGTERM handler (Unix) that removes *our* pid file and
+///   exits `130`/`143`, so `glasspad stop` (SIGTERM) leaves no stale file.
+///
+/// Returns any non-fatal warnings (e.g. taking over another live server's entry)
+/// for the startup envelope. A write/dir/permission failure is fatal + informative
+/// (exit 2) — the issue's fail-closed contract for pid-file errors.
+async fn acquire_pidfile(json: bool) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let me = std::process::id();
+
+    // Detect a pre-existing entry. A live, different PID is a (rare) multi-instance
+    // takeover worth a warning; a stale (dead) or malformed/unreadable entry is just
+    // overwritten by the write below — the strict surfacing of a bad existing file
+    // is `stop`'s job, not a reason to block serving.
+    if let Ok(Some(other)) = pidfile::read()
+        && other != me
+        && pidfile::process_alive(other)
+    {
+        warnings.push(format!(
+            "another glasspad loopback server (pid {other}) is already recorded in the pid \
+             file; taking it over (last-writer-wins), so `glasspad stop` will now target \
+             pid {me}. Stop the other server manually if it is still needed."
+        ));
+    }
+
+    match pidfile::write(me) {
+        Ok(_) => install_signal_cleanup(me),
+        Err(e) => {
+            let exit = match e {
+                PidError::Io(..) | PidError::NoHome => 2,
+                PidError::Malformed(..) => 1,
+            };
+            exit_error(
+                json,
+                exit,
+                "pidfile_write_failed",
+                &format!(
+                    "cannot write the loopback-server pid file: {e}. Fix permissions on \
+                     ~/.glasspad (it may need creating) or set {} to a writable path.",
+                    pidfile::PATH_ENV
+                ),
+                None,
+                None,
+            );
+        }
+    }
+    warnings
+}
+
+/// Install a SIGINT/SIGTERM handler that removes *our* pid file and exits with the
+/// signal-conventional code (130 for SIGINT, 143 for SIGTERM — AI-first §12). This
+/// is what makes `glasspad stop` (SIGTERM) a clean shutdown that leaves no stale
+/// pid file. If handler registration fails, serving continues (the pid file simply
+/// becomes stale on exit, which the next `serve`/`stop` reclaims) — never fatal.
+#[cfg(unix)]
+fn install_signal_cleanup(me: u32) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("warning: cannot install SIGTERM handler (pid file may go stale): {e}");
+            return;
+        }
+    };
+    let mut intr = match signal(SignalKind::interrupt()) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("warning: cannot install SIGINT handler (pid file may go stale): {e}");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        let code = tokio::select! {
+            _ = term.recv() => 143,
+            _ = intr.recv() => 130,
+        };
+        pidfile::remove_if_owned(me);
+        std::process::exit(code);
+    });
+}
+
+/// Non-Unix: no signal-based cleanup (the pid file is removed on the next start).
+#[cfg(not(unix))]
+fn install_signal_cleanup(_me: u32) {}
+
+// --- stop -----------------------------------------------------------------
+
+/// `glasspad stop` — stop the running loopback server. Reads the pid file, checks
+/// the recorded process is actually alive, and sends `SIGTERM` (the server traps it
+/// to remove its own pid file and exit cleanly). This targets a LOCAL process via
+/// the pid file + a signal — it makes no network call, so the loopback DNS-rebinding
+/// Host guard in `server.rs` is entirely untouched.
+///
+/// Fail-closed + informative (AI-first §1/§4): with no server running — no pid file,
+/// or a *stale* one whose recorded process is dead — it reports `no_running_server`
+/// (exit 1) rather than a silent no-op, cleaning a stale file it finds. A permission
+/// or I/O failure is a system error (exit 2). On success it does **not** delete the
+/// pid file: the signaled server removes its own entry (ownership-checked), which
+/// avoids racing a fast restart.
+pub fn stop(json: bool) {
+    let pid = match pidfile::read() {
+        Ok(Some(p)) => p,
+        Ok(None) => exit_error(
+            json,
+            1,
+            "no_running_server",
+            &format!(
+                "no running glasspad loopback server (no pid file at {}). \
+                 Start one with `glasspad serve <dir>`.",
+                pid_path_display()
+            ),
+            None,
+            None,
+        ),
+        Err(e) => {
+            // A malformed pid file is a fixable user/state error (1); an I/O or
+            // no-home failure is a system error (2).
+            let exit = match e {
+                PidError::Malformed(..) => 1,
+                PidError::Io(..) | PidError::NoHome => 2,
+            };
+            exit_error(json, exit, "pidfile_unreadable", &e.to_string(), None, None);
+        }
+    };
+
+    if !pidfile::process_alive(pid) {
+        // Stale: the recorded process is gone. Clean the file (if still ours) and
+        // report no running server — the issue's "stale is not already-running" rule.
+        pidfile::remove_if_owned(pid);
+        exit_error(
+            json,
+            1,
+            "no_running_server",
+            &format!(
+                "no running glasspad loopback server: the pid file recorded pid {pid}, but that \
+                 process is not alive. Removed the stale pid file."
+            ),
+            None,
+            None,
+        );
+    }
+
+    match pidfile::send_term(pid) {
+        Ok(()) => emit_stopped(json, pid),
+        Err(e) if e.raw_os_error() == esrch() => {
+            // The process exited between the liveness check and the signal — treat
+            // it as no running server and clean the (now stale) pid file.
+            pidfile::remove_if_owned(pid);
+            exit_error(
+                json,
+                1,
+                "no_running_server",
+                &format!(
+                    "no running glasspad loopback server: pid {pid} exited before it could be \
+                     signaled. Removed the stale pid file."
+                ),
+                None,
+                None,
+            );
+        }
+        Err(e) => exit_error(
+            json,
+            2,
+            "stop_failed",
+            &format!("cannot signal pid {pid}: {e}"),
+            None,
+            None,
+        ),
+    }
+}
+
+/// The pid-file path for messages (best-effort — falls back to the literal default
+/// if the home directory cannot be resolved).
+fn pid_path_display() -> String {
+    pidfile::path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "~/.glasspad/server.pid".to_string())
+}
+
+/// `ESRCH` ("no such process") for the `send_term` race check — `libc` on Unix,
+/// `None` elsewhere (where `send_term` returns `Unsupported`, not `ESRCH`).
+#[cfg(unix)]
+fn esrch() -> Option<i32> {
+    Some(libc::ESRCH)
+}
+#[cfg(not(unix))]
+fn esrch() -> Option<i32> {
+    None
+}
+
+/// Print the `stop` result envelope. Success is a terminal result (not long-running),
+/// so `--json` emits a one-line result object; text prints a concise confirmation.
+fn emit_stopped(json: bool, pid: u32) {
+    if json {
+        let payload = json!({
+            "schema_version": SCHEMA_VERSION,
+            "stopped": true,
+            "pid": pid,
+            "signal": "SIGTERM",
+            "warnings": [],
+        });
+        emit_json_line(&payload);
+    } else {
+        println!("stopped glasspad loopback server (pid {pid}, SIGTERM)");
+    }
+}
 
 // --- Error contract -------------------------------------------------------
 
@@ -193,13 +466,20 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
         ),
     };
 
+    // Record this process (post-bind, so a bind failure leaves no pid file) and
+    // arrange clean SIGTERM/SIGINT shutdown; a write/permission failure is fatal here.
+    let pid_warnings = acquire_pidfile(json).await;
+
     if let Some(d) = dir {
         server::spawn_watcher(host.clone(), d);
     }
-    emit_serving(json, port, live.as_ref());
+    emit_serving(json, port, live.as_ref(), pid_warnings);
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
+        // A mid-run failure exits without hitting the signal handler; drop our pid
+        // file so it does not linger stale.
+        pidfile::remove_if_owned(std::process::id());
         exit_error(
             json,
             2,
@@ -214,8 +494,16 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
 /// Print the `serve` startup envelope. `--json` → one line to stdout (the data
 /// channel); text → a line to stderr (a long-running process's stdout stays free
 /// for a caller that pipes it). The command is long-running, so this is a startup
-/// announcement, not a terminal result — the server then runs until killed.
-fn emit_serving(json: bool, port: u16, live: Option<&(String, Vec<String>, Option<String>)>) {
+/// announcement, not a terminal result — the server then runs until killed. `pid`
+/// is included so a caller knows exactly what `glasspad stop` will target; extra
+/// (pid-file takeover) warnings are folded into the envelope's `warnings`.
+fn emit_serving(
+    json: bool,
+    port: u16,
+    live: Option<&(String, Vec<String>, Option<String>)>,
+    mut warnings: Vec<String>,
+) {
+    let pid = std::process::id();
     match live {
         Some((name, slugs, home)) => {
             let url = format!("http://127.0.0.1:{port}/{name}/");
@@ -224,16 +512,20 @@ fn emit_serving(json: bool, port: u16, live: Option<&(String, Vec<String>, Optio
                     "schema_version": SCHEMA_VERSION,
                     "serving": true,
                     "port": port,
+                    "pid": pid,
                     "space": name,
                     "url": url,
                     "artifacts": slugs,
                     "home": home,
-                    "warnings": [],
+                    "warnings": warnings,
                 });
                 emit_json_line(&payload);
             } else {
+                for w in &warnings {
+                    eprintln!("warning: {w}");
+                }
                 eprintln!(
-                    "glasspad serving space '{name}' at {url} ({} artifact{})",
+                    "glasspad serving space '{name}' at {url} ({} artifact{}, pid {pid})",
                     slugs.len(),
                     if slugs.len() == 1 { "" } else { "s" }
                 );
@@ -241,22 +533,31 @@ fn emit_serving(json: bool, port: u16, live: Option<&(String, Vec<String>, Optio
         }
         None => {
             let url = format!("http://127.0.0.1:{port}/");
-            let warn = "no directory given: serving built-in fixtures only; \
-                        pass a directory to serve a space";
+            // The fixtures caveat leads; any pid-file warning follows it.
+            warnings.insert(
+                0,
+                "no directory given: serving built-in fixtures only; \
+                 pass a directory to serve a space"
+                    .to_string(),
+            );
             if json {
                 let payload = json!({
                     "schema_version": SCHEMA_VERSION,
                     "serving": true,
                     "port": port,
+                    "pid": pid,
                     "space": serde_json::Value::Null,
                     "url": url,
                     "artifacts": [],
                     "home": serde_json::Value::Null,
-                    "warnings": [warn],
+                    "warnings": warnings,
                 });
                 emit_json_line(&payload);
             } else {
-                eprintln!("glasspad serving built-in fixtures at {url} ({warn})");
+                for w in &warnings {
+                    eprintln!("warning: {w}");
+                }
+                eprintln!("glasspad serving built-in fixtures at {url} (pid {pid})");
             }
         }
     }
@@ -292,11 +593,13 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) 
         ),
     };
 
+    let pid_warnings = acquire_pidfile(json).await;
     server::spawn_file_watcher(host.clone(), file, space_name.clone());
-    emit_created(json, port, &space_name, kind);
+    emit_created(json, port, &space_name, kind, pid_warnings);
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
+        pidfile::remove_if_owned(std::process::id());
         exit_error(
             json,
             2,
@@ -486,24 +789,30 @@ fn read_capped(file: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 }
 
 /// Print the `create` startup envelope (mirrors [`emit_serving`], plus the single
-/// slug and the detected authoring `kind`).
-fn emit_created(json: bool, port: u16, space: &str, kind: &str) {
+/// slug and the detected authoring `kind`). `pid` names what `stop` targets;
+/// `warnings` carries any pid-file takeover note.
+fn emit_created(json: bool, port: u16, space: &str, kind: &str, warnings: Vec<String>) {
     let url = format!("http://127.0.0.1:{port}/{space}/");
+    let pid = std::process::id();
     if json {
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
             "serving": true,
             "port": port,
+            "pid": pid,
             "space": space,
             "slug": server::SINGLE_SLUG,
             "home": server::SINGLE_SLUG,
             "url": url,
             "kind": kind,
-            "warnings": [],
+            "warnings": warnings,
         });
         emit_json_line(&payload);
     } else {
-        eprintln!("glasspad serving '{space}' ({kind}) at {url}");
+        for w in &warnings {
+            eprintln!("warning: {w}");
+        }
+        eprintln!("glasspad serving '{space}' ({kind}) at {url} (pid {pid})");
     }
 }
 
@@ -590,11 +899,13 @@ pub async fn render(
         ),
     };
 
+    warnings.extend(acquire_pidfile(json).await);
     server::spawn_render_watcher(host.clone(), file, template, space_name.clone());
     emit_rendered(json, port, &space_name, &label, kind, warnings);
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
+        pidfile::remove_if_owned(std::process::id());
         exit_error(
             json,
             2,
@@ -779,11 +1090,13 @@ fn emit_rendered(
     warnings: Vec<String>,
 ) {
     let url = format!("http://127.0.0.1:{port}/{space}/");
+    let pid = std::process::id();
     if json {
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
             "serving": true,
             "port": port,
+            "pid": pid,
             "space": space,
             "slug": server::SINGLE_SLUG,
             "home": server::SINGLE_SLUG,
@@ -798,7 +1111,8 @@ fn emit_rendered(
             eprintln!("warning: {w}");
         }
         eprintln!(
-            "glasspad serving '{space}' (rendered via {kind} template '{template}') at {url}"
+            "glasspad serving '{space}' (rendered via {kind} template '{template}') at {url} \
+             (pid {pid})"
         );
     }
 }
@@ -1995,6 +2309,37 @@ mod tests {
         assert_eq!(detect_data_format(Path::new("one.eml")), Some("mbox"));
         assert_eq!(detect_data_format(Path::new("notes.txt")), None);
         assert_eq!(detect_data_format(Path::new("noext")), None);
+    }
+
+    #[test]
+    fn env_port_parsing_is_strict() {
+        // Valid values pass through.
+        assert_eq!(parse_env_port("8080"), Ok(8080));
+        assert_eq!(parse_env_port("1"), Ok(1));
+        assert_eq!(parse_env_port("65535"), Ok(65535));
+        assert_eq!(parse_env_port("  3000\n"), Ok(3000)); // surrounding whitespace trimmed
+        // Invalid values are rejected with an informative, value-naming message —
+        // never coerced or silently defaulted (AI-first §1).
+        for bad in [
+            "", "   ", "0", "65536", "99999", "-1", "80abc", "abc", "3.14",
+        ] {
+            let err = parse_env_port(bad).unwrap_err();
+            assert!(
+                err.contains(PORT_ENV),
+                "error for {bad:?} should name the env var: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_port_flag_wins_env_independent() {
+        // An explicit flag is returned verbatim without consulting the environment,
+        // so `--port` always beats `$GLASSPAD_PORT` (AI-first §8). The env→default
+        // fallback is covered by `env_port_parsing_is_strict` (the pure parser); we
+        // deliberately do not mutate the process environment in tests (unsafe +
+        // racy under the parallel test harness).
+        assert_eq!(resolve_port(Some(4100), false), 4100);
+        assert_eq!(resolve_port(Some(1), true), 1);
     }
 
     #[test]

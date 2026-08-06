@@ -425,6 +425,7 @@ dependencies = [
  "clap",
  "csv",
  "dirs",
+ "libc",
  "mail-parser",
  "pulldown-cmark",
  "rand 0.8.5",

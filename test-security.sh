@@ -16,6 +16,12 @@ cd "$(dirname "$0")"
 PORT="${GLASSPAD_TEST_PORT:-3210}"
 SUITE_DIR="tests/security"
 
+# Isolate the loopback-server pid file so this suite's `serve` invocations never
+# touch the developer's real ~/.glasspad/server.pid (which a running local deploy
+# may own). Each `serve` here writes/reclaims this hermetic path instead; the
+# existing EXIT-trap cleanup() removes it (the later traps all chain through it).
+export GLASSPAD_PID_FILE="$(mktemp -u "${TMPDIR:-/tmp}/glasspad-sec-pid.XXXXXX")"
+
 echo "==> Building glasspad"
 cargo build 2>&1 | tail -1
 
@@ -31,7 +37,7 @@ pkill -f "target/debug/glasspad serve" 2>/dev/null || true
 sleep 0.5
 ./target/debug/glasspad serve --port "$PORT" >/tmp/glasspad-sec-test.log 2>&1 &
 SERVER_PID=$!
-cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -f "$GLASSPAD_PID_FILE" 2>/dev/null || true; }
 trap cleanup EXIT
 
 # Wait for the server to answer.

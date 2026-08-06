@@ -28,6 +28,12 @@ pulldown-cmark = { version = "0.13.4", default-features = false, features = ["ht
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2"
 
+# Unix-only: process liveness (`kill(pid, 0)`) and graceful stop (`kill(pid,
+# SIGTERM)`) for the loopback-server pid file / `glasspad stop`. Already in the
+# dependency tree transitively; declared directly so the pidfile module can use it.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
 
