@@ -1,9 +1,11 @@
 ---
 created: 2026-07-25
-updated: 2026-08-04
+updated: 2026-08-06
 type: epic
-status: open
+status: done
 priority: high
+closed: 2026-08-06
+closed_by: claude
 ---
 
 # Release glasspad 0.2.0 as a proper open-source project
@@ -118,3 +120,8 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
 - The old `finalization-release` epic is closed obsolete; its process-management
   items are re-captured above.
 
+## Comments
+
+### 2026-08-06T06:52:38Z · @claude
+
+0.2.1 shipped across all three channels (crates.io + GitHub Release binaries + Homebrew tap). Repo public, main default. CI (ci.yml + publish-crates.yml + cargo-dist release.yml) in place. See item.md progress log.
