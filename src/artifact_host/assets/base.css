@@ -121,6 +121,23 @@
   }
 }
 
+/* === Typographic & layout scale (theme-independent) ===
+   Fonts and the prose reading measure do not change between Glass Light and
+   Glass Dark, so they live in a single :root block rather than being duplicated
+   per theme. The dashboard styles use --gp-font-sans / --gp-font-mono; the prose
+   reading theme (below) uses --gp-font-serif and the --gp-prose-* scale. */
+:root {
+  --gp-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --gp-font-mono: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  --gp-font-serif:
+    "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, Cambria,
+    "Times New Roman", Times, serif;
+
+  --gp-prose-measure: 45rem; /* ~720px reading column */
+  --gp-prose-font-size: 1.125rem; /* ~18px comfortable reading body */
+  --gp-prose-line-height: 1.75;
+}
+
 /* === Base reset & body === */
 
 * {
@@ -134,7 +151,7 @@ body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--gp-font-sans);
   font-size: 0.9rem;
   line-height: 1.5;
   background: var(--gp-bg);
@@ -214,7 +231,7 @@ code,
 pre,
 kbd,
 samp {
-  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-family: var(--gp-font-mono);
   font-size: 0.85rem;
 }
 
@@ -324,4 +341,180 @@ tbody tr:hover {
   color: var(--gp-error);
   font-size: 0.85rem;
   padding: 0.5rem 0;
+}
+
+/* === Prose / reading theme ===
+ *
+ * A first-class reading layout beside the data-dashboard styles: a centered
+ * serif reading column (~720px) for editorial / long-form / markdown content.
+ * One --gp-* system, two themes — prose reads its colors from the same theme
+ * tokens, so it inherits Glass Light / Glass Dark automatically.
+ *
+ * Opt in by wrapping content in an element with the `gp-prose` class, e.g.
+ * `<article class="gp-prose"> … </article>`. This is the default template
+ * target for the markdown render path (see the markdown-template-render issue):
+ * the server renders markdown to HTML and drops it inside a `.gp-prose` article.
+ *
+ * All descendant rules are scoped under `.gp-prose`, so linking base.css never
+ * changes the dashboard defaults for content that does not opt in.
+ */
+
+.gp-prose {
+  max-width: var(--gp-prose-measure);
+  margin-inline: auto;
+  font-family: var(--gp-font-serif);
+  font-size: var(--gp-prose-font-size);
+  line-height: var(--gp-prose-line-height);
+  color: var(--gp-text);
+}
+
+/* Reading rhythm: generous space above a heading, tighter below (it binds to
+   the text it introduces). Headings drop the dashboard's uppercase/tracked
+   treatment — prose headings are sentence-case display type. */
+.gp-prose h1,
+.gp-prose h2,
+.gp-prose h3,
+.gp-prose h4,
+.gp-prose h5,
+.gp-prose h6 {
+  font-family: var(--gp-font-serif);
+  color: var(--gp-text);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: normal;
+  text-transform: none;
+  margin: 2em 0 0.6em;
+}
+
+/* No leading gap: the first block sits flush with the top of the column. */
+.gp-prose > :first-child {
+  margin-top: 0;
+}
+
+.gp-prose h1 {
+  font-size: 2.25rem;
+  letter-spacing: -0.02em;
+  margin-top: 0;
+}
+
+.gp-prose h2 {
+  font-size: 1.6rem;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--gp-border);
+}
+
+.gp-prose h3 {
+  font-size: 1.3rem;
+}
+
+.gp-prose h4 {
+  font-size: 1.1rem;
+}
+
+.gp-prose h5 {
+  font-size: 1rem;
+}
+
+.gp-prose h6 {
+  font-size: 0.9rem;
+  color: var(--gp-text-muted);
+}
+
+.gp-prose p {
+  margin: 0 0 1.25em;
+}
+
+/* Links are underlined in prose (readability over the dashboard's clean look). */
+.gp-prose a {
+  color: var(--gp-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+.gp-prose a:hover {
+  color: var(--gp-accent-hover);
+}
+
+.gp-prose strong {
+  font-weight: 700;
+}
+
+.gp-prose em {
+  font-style: italic;
+}
+
+.gp-prose ul,
+.gp-prose ol {
+  margin: 0 0 1.25em;
+  padding-left: 1.6em;
+}
+
+.gp-prose li {
+  margin: 0.3em 0;
+}
+
+.gp-prose li::marker {
+  color: var(--gp-text-muted);
+}
+
+/* Nested lists ride with their parent item — no double bottom gap. */
+.gp-prose li > ul,
+.gp-prose li > ol {
+  margin-bottom: 0;
+}
+
+.gp-prose blockquote {
+  margin: 1.5em 0;
+  padding: 0.25em 1.25em;
+  border-left: 3px solid var(--gp-border-strong);
+  color: var(--gp-text-secondary);
+  font-style: italic;
+}
+
+.gp-prose blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* Code sizes relative to the reading body so it tracks the prose measure; the
+   inline pink-on-alt treatment and the pre block come from the base rules. */
+.gp-prose code {
+  font-size: 0.85em;
+}
+
+.gp-prose pre {
+  margin: 1.5em 0;
+  font-size: 0.9rem;
+}
+
+.gp-prose pre code {
+  font-size: inherit;
+}
+
+.gp-prose table {
+  margin: 1.5em 0;
+  font-size: 0.95rem;
+}
+
+.gp-prose hr {
+  margin: 2.5em 0;
+}
+
+.gp-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.5em auto;
+  border-radius: 8px;
+}
+
+.gp-prose figure {
+  margin: 1.5em 0;
+}
+
+.gp-prose figcaption {
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  color: var(--gp-text-muted);
+  text-align: center;
 }

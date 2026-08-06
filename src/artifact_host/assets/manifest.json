@@ -6,7 +6,7 @@
   "assets": {
     "base.css": {
       "type": "text/css",
-      "description": "The --gp-* design-system tokens (light/dark/auto) plus base element styles for fragment artifacts."
+      "description": "The --gp-* design-system tokens (light/dark/auto) plus base element styles for fragment artifacts. Wrap long-form/markdown content in an element with the gp-prose class for the serif reading theme (centered ~720px column)."
     },
     "charts.js": {
       "type": "text/javascript",

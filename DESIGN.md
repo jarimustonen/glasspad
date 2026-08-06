@@ -164,6 +164,24 @@ The color system is deliberately restrained: a single accent color (blue/indigo)
 - Blockquotes: strong border left, subtle background
 - Tables: auto width, striped rows in light mode
 
+### Prose / Reading Theme (`.gp-prose`)
+A first-class reading layout beside the data-dashboard styles, for editorial /
+long-form / markdown content. It is a **layout + typography variant**, not a
+third color theme — it reads its colors from the same `--gp-*` tokens, so it
+inherits Glass Light / Glass Dark automatically.
+
+Opt in by wrapping content in an element carrying the `gp-prose` class
+(`<article class="gp-prose"> … </article>`). All rules are scoped under that
+class, so nothing changes for content that does not opt in. This is the default
+template target for the markdown render path.
+
+- **Column**: centered, `max-width: var(--gp-prose-measure)` (~720px reading measure)
+- **Body**: `var(--gp-font-serif)` at `var(--gp-prose-font-size)` (~18px), line height 1.75
+- **Headings**: same serif, sentence-case (no uppercase/tracking), generous space above / tight below; h1 large, h2 with a bottom border rule
+- **Links**: underlined (readability over the dashboard's clean look)
+- **Lists / blockquotes / figures**: reading-rhythm spacing; blockquote uses a `--gp-border-strong` left rule with secondary italic text; images cap at 100% width and center with an 8px radius
+- **Code**: inline/`pre` reuse the base pink-on-alt treatment, sized relative to the reading body
+
 ## 5. Layout Principles
 
 ### Spacing System
@@ -297,6 +315,14 @@ All theme tokens use the `--gp-` prefix:
 - `--gp-code-text`: Inline code text color
 - `--gp-chart-axis`: Chart axis tick/label color
 - `--gp-chart-grid`: Chart gridline color
+
+Typographic & layout tokens (theme-independent — identical in light and dark):
+- `--gp-font-sans`: System UI stack — dashboard/body text
+- `--gp-font-mono`: Monospace stack — code, technical labels
+- `--gp-font-serif`: Reading serif stack — the prose theme
+- `--gp-prose-measure`: Reading-column max width (`45rem` ≈ 720px)
+- `--gp-prose-font-size`: Prose body size (`1.125rem` ≈ 18px)
+- `--gp-prose-line-height`: Prose body line height (`1.75`)
 
 ### Theme Selection
 - `auto` (default): follows `prefers-color-scheme` media query
