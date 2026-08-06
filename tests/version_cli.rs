@@ -1,11 +1,15 @@
-//! End-to-end contract tests for `glasspad version` and the built-in
-//! `--version` / `-V` flag.
+//! End-to-end contract tests for `glasspad version` and the `--version` / `-V`
+//! flag.
 //!
 //! Drives the built binary (`CARGO_BIN_EXE_glasspad`) so the tests exercise the
 //! real CLI surface: the fleet-updater version-gates installs off this output,
-//! so the JSON envelope shape (`{schema_version, name, version, warnings}`) and
-//! the plain-text `glasspad <version>` line are a contract, not an accident. The
-//! version reported must always be the compile-time `CARGO_PKG_VERSION`.
+//! so the JSON envelope shape (`{schema_version, data: {name, version, commit},
+//! warnings}` — nested under `data`, matching the sibling CLIs) and the
+//! plain-text `glasspad <version>` line are a contract, not an accident. The
+//! version reported must always be the compile-time `CARGO_PKG_VERSION`, and
+//! every JSON spelling — `version --json`, `--json version`, `--json --version`,
+//! `--version --json` — must yield the same envelope (the flag is not a
+//! text-only clap built-in; it routes through the same code as the subcommand).
 
 use std::process::Command;
 
@@ -13,31 +17,68 @@ fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_glasspad"))
 }
 
-#[test]
-fn version_subcommand_json_envelope() {
-    let out = bin().arg("version").arg("--json").output().unwrap();
-
+/// Assert `out` is a successful, clean (`stderr` empty) run whose stdout is the
+/// nested version envelope, and return the parsed JSON.
+fn assert_version_envelope(out: &std::process::Output) -> serde_json::Value {
     assert!(out.status.success(), "exit: {:?}", out.status);
-    // stdout (the data channel) is ONLY the JSON envelope; nothing on stderr.
+    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+    // Exactly one line of output (the envelope), no trailing junk.
+    assert_eq!(
+        out.stdout.iter().filter(|&&b| b == b'\n').count(),
+        1,
+        "stdout should be exactly one line: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["schema_version"], 1);
-    assert_eq!(v["name"], "glasspad");
-    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    // Payload is nested under `data`, matching orchestratectl/ossctl so the
+    // fleet-updater reads `.data.version` uniformly across every tool.
+    assert_eq!(v["data"]["name"], env!("CARGO_PKG_NAME"));
+    assert_eq!(v["data"]["version"], env!("CARGO_PKG_VERSION"));
+    // `commit` is always present (string when a release build injected it, else
+    // null) so a strict consumer never hits a missing-field error.
+    let commit = &v["data"]["commit"];
+    assert!(
+        commit.is_null() || commit.is_string(),
+        "commit must be string or null: {commit:?}"
+    );
     // `warnings` is present (empty) for cross-command uniformity.
     assert_eq!(v["warnings"], serde_json::json!([]));
-    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+    v
 }
 
 #[test]
-fn global_json_flag_before_subcommand_also_works() {
-    // `--json` is a global flag, so `glasspad --json version` is equivalent to
-    // `glasspad version --json` — both yield the same envelope on stdout.
-    let out = bin().arg("--json").arg("version").output().unwrap();
+fn version_subcommand_json_envelope() {
+    assert_version_envelope(&bin().arg("version").arg("--json").output().unwrap());
+}
 
-    assert!(out.status.success(), "exit: {:?}", out.status);
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
-    assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
+#[test]
+fn all_json_spellings_yield_the_same_envelope() {
+    // `--json` is global and `-V/--version` routes through the same code as the
+    // subcommand, so every spelling must produce byte-identical output. This is
+    // the exact case a fleet-updater hits: appending `--json` to `--version`
+    // must NOT fall back to plain text.
+    let spellings: [&[&str]; 4] = [
+        &["version", "--json"],
+        &["--json", "version"],
+        &["--json", "--version"],
+        &["--version", "--json"],
+    ];
+    let mut outputs = spellings.iter().map(|args| {
+        let out = bin().args(*args).output().unwrap();
+        assert_version_envelope(&out);
+        out.stdout
+    });
+    let first = outputs.next().unwrap();
+    for (args, stdout) in spellings[1..].iter().zip(outputs) {
+        assert_eq!(
+            stdout,
+            first,
+            "`{}` diverged from `{}`",
+            args.join(" "),
+            spellings[0].join(" ")
+        );
+    }
 }
 
 #[test]
@@ -46,17 +87,19 @@ fn version_subcommand_text_line() {
 
     assert!(out.status.success(), "exit: {:?}", out.status);
     let stdout = String::from_utf8(out.stdout).unwrap();
-    // Exactly the same one line clap's built-in `--version` prints, so the two
-    // entrypoints never drift: `glasspad <version>`.
-    assert_eq!(stdout, format!("glasspad {}\n", env!("CARGO_PKG_VERSION")));
+    // Exactly the conventional one-line `<name> <version>` a `--version` prints.
+    assert_eq!(
+        stdout,
+        format!("{} {}\n", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    );
     assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
 }
 
 #[test]
-fn builtin_version_flag_matches_subcommand() {
-    // `--version` and `-V` are clap built-ins; both print the same text line the
-    // `version` subcommand does, so tooling can use whichever it prefers.
-    let expected = format!("glasspad {}\n", env!("CARGO_PKG_VERSION"));
+fn version_flag_matches_subcommand_text() {
+    // `--version` and `-V` print the same text line the `version` subcommand
+    // does (no `--json`), so tooling can use whichever spelling it prefers.
+    let expected = format!("{} {}\n", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(out.status.success(), "{flag} exit: {:?}", out.status);
@@ -65,5 +108,6 @@ fn builtin_version_flag_matches_subcommand() {
             expected,
             "flag: {flag}"
         );
+        assert!(out.stderr.is_empty(), "{flag} stderr: {:?}", out.stderr);
     }
 }

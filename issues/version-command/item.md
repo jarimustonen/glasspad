@@ -4,6 +4,9 @@ updated: 2026-08-06
 type: feature
 status: in-progress
 priority: normal
+commits:
+- hash: 5c3dd59
+  summary: add version subcommand + --version/-V with --json envelope and contract tests
 ---
 
 # Expose an installed-version command (glasspad --version / version)

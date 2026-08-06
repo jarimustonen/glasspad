@@ -107,26 +107,41 @@ fn emit_json_line(payload: &serde_json::Value) {
 
 // --- version --------------------------------------------------------------
 
-/// `glasspad version` — report the installed CLI version so tooling (the homebase
-/// fleet-updater) can version-gate installs, matching the sibling CLIs
-/// (`issuectl --version`, `ossctl version`, `orchestratectl version`).
+/// `glasspad version` (and `glasspad --version` / `-V`) — report the installed
+/// CLI version so tooling (the homebase fleet-updater) can version-gate installs,
+/// matching the sibling CLIs (`issuectl --version`, `ossctl version`,
+/// `orchestratectl version`).
 ///
-/// Under `--json`, glasspad's flat AI-first §10 envelope
-/// (`{schema_version, name, version, warnings}`) on stdout — the data channel —
-/// so a consumer can `jq -r .version` directly. Otherwise the same
-/// `glasspad <version>` line clap's built-in `--version` prints, on stdout. The
-/// version is the compile-time `CARGO_PKG_VERSION`, the single source of truth
-/// shared with `Cargo.toml`.
+/// Under `--json`, emit the AI-first §10 envelope with the version payload
+/// **nested under `data`** — `{schema_version, data: {name, version, commit},
+/// warnings}` — the same shape orchestratectl/ossctl `version` use, so the
+/// cross-tool fleet-updater reads `.data.version` uniformly across every tool
+/// rather than special-casing glasspad. Otherwise a plain `glasspad <version>`
+/// line on stdout (the data channel). Both the subcommand and the `--version` /
+/// `-V` flag route here (main dispatches the flag manually), so all three honor
+/// `--json` identically.
+///
+/// `version`/`name` are the compile-time `CARGO_PKG_VERSION`/`CARGO_PKG_NAME`,
+/// the single source of truth shared with `Cargo.toml`. `commit` is the build
+/// provenance when a release build injected it (`GLASSPAD_BUILD_COMMIT`), else
+/// `null` — there is no `build.rs` git shell-out, so a crates.io / `cargo
+/// install` build without the env var reports `null`, never a bogus hash.
 pub fn version(json: bool) {
     let name = env!("CARGO_PKG_NAME");
     let ver = env!("CARGO_PKG_VERSION");
+    let commit = option_env!("GLASSPAD_BUILD_COMMIT");
     if json {
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
-            "name": name,
-            "version": ver,
+            "data": {
+                "name": name,
+                "version": ver,
+                // `Option<&str>` → a JSON string or `null`; the key is always
+                // present so a strict consumer never hits a missing-field error.
+                "commit": commit,
+            },
             // Present (empty) for cross-command uniformity: callers read
-            // `warnings` unconditionally across every envelope (see `data`).
+            // `warnings` unconditionally across every envelope.
             "warnings": [],
         });
         emit_json_line(&payload);

@@ -10,17 +10,27 @@ mod server;
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
     name = "glasspad",
-    version,
-    about = "AI scratchpad for rich HTML artifact views"
+    about = "AI scratchpad for rich HTML artifact views",
+    // Disable clap's built-in `--version` (it short-circuits during parse and
+    // would ignore `--json`, emitting plain text). We wire our own `-V/--version`
+    // below so it routes through `cli::version` and honors `--json` like every
+    // other command. A bare `glasspad` (no subcommand, no flag) prints help.
+    disable_version_flag = true,
+    arg_required_else_help = true
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    /// Print the installed version and exit (honors --json; same output as the
+    /// `version` subcommand). Top-level only, mirroring clap's built-in flag.
+    #[arg(short = 'V', long = "version")]
+    version: bool,
 
     /// Emit machine-readable JSON (stable, versioned envelopes; errors to stderr).
     #[arg(long, global = true)]
@@ -96,19 +106,33 @@ async fn main() {
     let args = Cli::parse();
     let json = args.json;
 
+    // The `-V/--version` flag and the `version` subcommand are one entry point:
+    // both route through `cli::version`, so all three spellings honor `--json`.
+    if args.version {
+        cli::version(json);
+        return;
+    }
+
     match args.command {
-        Commands::Serve { dir, port } => cli::serve(dir, port, json).await,
-        Commands::Create { file, name, port } => cli::create(file, name, port, json).await,
-        Commands::Open {
+        Some(Commands::Serve { dir, port }) => cli::serve(dir, port, json).await,
+        Some(Commands::Create { file, name, port }) => cli::create(file, name, port, json).await,
+        Some(Commands::Open {
             space,
             port,
             no_browser,
-        } => cli::open(space, port, json, no_browser),
-        Commands::Data { file, format, meta } => cli::data(file, format, meta, json),
-        Commands::Version => cli::version(json),
-        Commands::Skill {
+        }) => cli::open(space, port, json, no_browser),
+        Some(Commands::Data { file, format, meta }) => cli::data(file, format, meta, json),
+        Some(Commands::Version) => cli::version(json),
+        Some(Commands::Skill {
             install_claude,
             user,
-        } => cli::skill(install_claude, user, json),
+        }) => cli::skill(install_claude, user, json),
+        // `arg_required_else_help` covers a bare `glasspad`; this reaches only a
+        // no-subcommand invocation that still carried an arg (e.g. `glasspad
+        // --json`). Print help and exit non-zero (a usage error, like clap's).
+        None => {
+            let _ = Cli::command().print_help();
+            std::process::exit(2);
+        }
     }
 }
