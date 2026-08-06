@@ -31,19 +31,31 @@ publish-html (persistent shareable pages), tw view (seat preview), and the
 tilictl `build_docs.py` docsite pattern. Full design + rationale: homebase
 `issues/glasspad-html-consolidation/design.md` (Option D — hosted share server).
 
-**Target: 0.3.0.** Filed issues (critical path in order):
+**Round of 2026-08-06 landed (both verified green on `main`):**
+- ✅ **`prose-theme`** (done) — prose/reading theme added to the `--gp-*` system
+  (`src/artifact_host/assets/base.css`); `.gp-prose` hardened against arbitrary
+  markdown HTML. Unblocks `markdown-template-render`.
+- ✅ **`version-command`** (done) — `glasspad version` + `-V/--version` with a nested
+  `{schema_version, data:{name,version,commit}, warnings}` `--json` envelope matching
+  the sibling CLIs. NOTE: the `commit` field currently returns `null` (build stamp not
+  wired at compile time) — harmless, wire later if useful.
+- Green gate re-run on `main` after both: fmt/clippy/test + `./test-security.sh`
+  (41 checks + Wave 2a) all clean.
 
-1. **`prose-theme`** (feature, high) — prose/reading theme in the `--gp-*` system.
-2. **`markdown-template-render`** (feature, high) — md + reusable-template render
-   (server-side; payload = markdown + template reference). The headline feature.
-3. **`hosted-share-server`** (feature, high) — hosted run mode: API-key ingest,
+**Next up — `markdown-template-render`** (feature, high) is now **unblocked** (its
+prose-token dep just landed) and is the head-of-line. Remaining 0.3.0 critical path:
+
+1. **`markdown-template-render`** (feature, high) — md + reusable-template render
+   (server-side; payload = markdown + template reference). **The headline feature.**
+2. **`hosted-share-server`** (feature, high) — hosted run mode: API-key ingest,
    capability-slug public URLs, retention, multi-tenant; loopback `serve` unchanged.
-4. **`skill-routing-guidance`** (task, normal) — skill: when serve vs publish vs preview.
-5. **`static-build-output`** (feature, low, optional) — `glasspad build` static render.
+   Blocked on `markdown-template-render`.
+3. **`skill-routing-guidance`** (task, normal) — skill: when serve vs publish vs preview.
+4. **`static-build-output`** (feature, low, optional) — `glasspad build` static render.
 
-Order: `prose-theme` → `markdown-template-render` → `hosted-share-server` →
-`skill-routing-guidance`; `static-build-output` is optional/parallel. Downstream
-homebase + tilictl work is gated on **0.3.0 landing** (tracked in those repos).
+Order: `markdown-template-render` → `hosted-share-server` → `skill-routing-guidance`;
+`static-build-output` is optional/parallel. Downstream homebase + tilictl work is gated
+on **0.3.0 landing** (tracked in those repos).
 
 ### Optional polish (no hard gate, unchanged)
 
@@ -66,14 +78,11 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: prose-theme   ← start here on resume
-
-LANE A — design system (src/artifact_host/assets/base.css)
-  ▶ prose-theme
+GLOBAL HEAD-OF-LINE: markdown-template-render   ← start here on resume
+(prose-theme + version-command landed 2026-08-06; dropped from the graph)
 
 LANE B — CLI/server (src/cli.rs, src/server.rs, render modules)
-  ▶ version-command
-    markdown-template-render   after prose-theme (needs prose tokens)
+  ▶ markdown-template-render   (prose-theme dep delivered — now unblocked)
     hosted-share-server        after markdown-template-render (needs render path)
     static-build-output        (optional/low)
     serve-process-mgmt         (0.2.2/low)
@@ -101,9 +110,9 @@ Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+p
 
 ## Backlog
 
-- **0.3.0 agent→HTML consolidation** — `prose-theme`, `markdown-template-render`,
+- **0.3.0 agent→HTML consolidation** — `markdown-template-render`,
   `hosted-share-server`, `skill-routing-guidance`, `static-build-output` (see ▶ Start
-  here). The primary forward work.
+  here). The primary forward work. (`prose-theme` + `version-command` landed 2026-08-06.)
 - `release-oss` (epic, high) — **effectively DONE** (0.2.1 shipped all three channels);
   close it or retain only for the 0.2.2 round-it-out items.
 - 0.2.2 round-it-out: `glasspad stop`, `GLASSPAD_PORT`, PID file (deferred, not started).
