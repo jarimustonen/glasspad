@@ -76,14 +76,23 @@ pub fn path() -> Result<PathBuf, PidError> {
     Ok(home.join(DIR).join(FILE))
 }
 
+/// The largest PID we will ever store or signal. A Unix `pid_t` is a *signed*
+/// 32-bit int, so a value above `i32::MAX` would wrap to a negative number when
+/// cast — and `kill()` reads a negative PID as "signal a whole process group"
+/// (`-1` = *every* process the caller may signal). Capping at `i32::MAX` here (and
+/// re-checking at the syscall in [`checked_pid_t`]) makes that catastrophe
+/// unreachable from a corrupt/hostile pid file.
+const MAX_PID: u32 = i32::MAX as u32;
+
 /// Parse the pid-file contents into a PID. Rejects empty/whitespace, non-numeric,
-/// and `0` (never a real process) — returning the trimmed raw text on failure so
-/// the caller can report it. Pure: unit-tested directly.
+/// `0` (never a real process), and anything above [`MAX_PID`] (would cast to a
+/// negative `pid_t` and turn a `kill` into a process-group broadcast) — returning
+/// the trimmed raw text on failure so the caller can report it. Pure: unit-tested.
 fn parse_pid(s: &str) -> Result<u32, String> {
     let t = s.trim();
     match t.parse::<u32>() {
-        Ok(0) | Err(_) => Err(t.to_string()),
-        Ok(pid) => Ok(pid),
+        Ok(pid) if (1..=MAX_PID).contains(&pid) => Ok(pid),
+        _ => Err(t.to_string()),
     }
 }
 
@@ -115,45 +124,95 @@ pub fn write(pid: u32) -> Result<PathBuf, PidError> {
 }
 
 /// [`write`] against an explicit path (the testable core). Creates the parent
-/// directory if absent.
+/// directory if absent, then publishes the PID **atomically**: write a
+/// same-directory temp file and `rename` it into place, so a concurrent reader
+/// (`stop`, or another starting server) never observes a truncated/empty file
+/// mid-write — it sees either the old contents or the complete new PID.
 pub fn write_at(p: &Path, pid: u32) -> Result<(), PidError> {
-    if let Some(dir) = p.parent()
-        && !dir.as_os_str().is_empty()
-    {
+    let dir = p.parent().filter(|d| !d.as_os_str().is_empty());
+    if let Some(dir) = dir {
         std::fs::create_dir_all(dir).map_err(|e| PidError::Io(dir.to_path_buf(), e))?;
     }
-    std::fs::write(p, format!("{pid}\n")).map_err(|e| PidError::Io(p.to_path_buf(), e))
+    // The temp file lives in the destination directory (same filesystem → `rename`
+    // is atomic and cannot fail with EXDEV) and is process-unique so two concurrent
+    // writers never collide on it.
+    let tmp = match p.file_name() {
+        Some(name) => {
+            let mut t = name.to_os_string();
+            t.push(format!(".tmp.{}", std::process::id()));
+            dir.map(|d| d.join(&t)).unwrap_or_else(|| PathBuf::from(&t))
+        }
+        None => return Err(PidError::Io(p.to_path_buf(), invalid_path_err())),
+    };
+    std::fs::write(&tmp, format!("{pid}\n")).map_err(|e| PidError::Io(tmp.clone(), e))?;
+    std::fs::rename(&tmp, p).map_err(|e| {
+        // Best-effort cleanup of the temp file if the rename could not complete.
+        let _ = std::fs::remove_file(&tmp);
+        PidError::Io(p.to_path_buf(), e)
+    })
 }
 
-/// Remove the default pid file **only if** it still records `pid` (ours). A file
-/// that a successor has since overwritten with its own PID is left intact, so a
-/// server shutting down never deletes its replacement's entry. Best-effort: any
-/// error (including no pid file) is ignored — cleanup must never fail loudly.
-pub fn remove_if_owned(pid: u32) {
-    if let Ok(p) = path() {
-        remove_if_owned_at(&p, pid);
+/// An `InvalidInput` error for a path with no file-name component (e.g. `/`).
+fn invalid_path_err() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, "path has no file name")
+}
+
+/// Remove the default pid file **only if** it still records `pid` (ours), returning
+/// whether a file was actually removed. A file a successor has since overwritten
+/// with its own PID is left intact — so in the common case a shutting-down server
+/// does not delete its replacement's entry. This is a read-then-unlink check, not a
+/// true compare-and-delete: a successor that overwrites the file *between* our read
+/// and the `remove` can still lose its entry (a microsecond TOCTOU window). That
+/// residual race is acceptable here because a missing pid file is self-healing — the
+/// next `serve`/`stop` reclaims it — so the failure mode is a harmless re-scan, not
+/// data loss. Best-effort: any error (including no pid file) yields `false`.
+pub fn remove_if_owned(pid: u32) -> bool {
+    match path() {
+        Ok(p) => remove_if_owned_at(&p, pid),
+        Err(_) => false,
     }
 }
 
-/// [`remove_if_owned`] against an explicit path (the testable core).
-pub fn remove_if_owned_at(p: &Path, pid: u32) {
+/// [`remove_if_owned`] against an explicit path (the testable core). Returns `true`
+/// only when the file matched `pid` and was successfully unlinked.
+pub fn remove_if_owned_at(p: &Path, pid: u32) -> bool {
     if let Ok(s) = std::fs::read_to_string(p)
         && parse_pid(&s).ok() == Some(pid)
     {
-        let _ = std::fs::remove_file(p);
+        return std::fs::remove_file(p).is_ok();
     }
+    false
 }
 
 // --- process primitives (Unix) --------------------------------------------
 
+/// Convert a `u32` PID to a positive `pid_t`, or `None` if it is `0` or would not
+/// fit a signed `pid_t` (> [`MAX_PID`]). Defense in depth: `parse_pid` already
+/// enforces this range, but every `kill` goes through here so a stray caller can
+/// never pass a value that wraps to a negative (process-group / kill-all) PID.
+#[cfg(unix)]
+fn checked_pid_t(pid: u32) -> Option<libc::pid_t> {
+    if (1..=MAX_PID).contains(&pid) {
+        Some(pid as libc::pid_t)
+    } else {
+        None
+    }
+}
+
 /// Is `pid` a live process? Uses `kill(pid, 0)`: success or `EPERM` (the process
 /// exists but we may not signal it) both mean alive; `ESRCH` means gone. A stale
 /// pid file (dead process) is thus reliably distinguished from a running server.
+/// An out-of-range PID (rejected by [`checked_pid_t`]) is reported not-alive rather
+/// than being passed to `kill`.
 #[cfg(unix)]
 pub fn process_alive(pid: u32) -> bool {
-    // SAFETY: `kill` with signal 0 performs only the existence/permission check and
-    // sends no signal; it has no memory-safety preconditions.
-    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+    let Some(pid) = checked_pid_t(pid) else {
+        return false;
+    };
+    // SAFETY: `pid` is a validated positive `pid_t`; `kill` with signal 0 performs
+    // only the existence/permission check, sends no signal, and has no
+    // memory-safety preconditions.
+    if unsafe { libc::kill(pid, 0) } == 0 {
         return true;
     }
     io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
@@ -161,11 +220,19 @@ pub fn process_alive(pid: u32) -> bool {
 
 /// Send `SIGTERM` to `pid` for a graceful stop. The target's signal handler
 /// removes its own pid file and exits; `ESRCH`/`EPERM` are surfaced to the caller.
+/// An out-of-range PID is an `InvalidInput` error — never a wrapped negative PID
+/// handed to `kill`.
 #[cfg(unix)]
 pub fn send_term(pid: u32) -> io::Result<()> {
-    // SAFETY: `kill` takes a pid + signal number and has no memory-safety
-    // preconditions; the result is checked via errno below.
-    if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } == 0 {
+    let pid = checked_pid_t(pid).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("PID {pid} is outside the valid range 1..={MAX_PID}"),
+        )
+    })?;
+    // SAFETY: `pid` is a validated positive `pid_t`; `kill` has no memory-safety
+    // preconditions and the result is checked via errno below.
+    if unsafe { libc::kill(pid, libc::SIGTERM) } == 0 {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
@@ -192,18 +259,23 @@ mod tests {
     use super::*;
 
     fn temp_pidfile(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("gp-pidfile-{tag}-{}-{}", std::process::id(), tag))
+        std::env::temp_dir().join(format!("gp-pidfile-{tag}-{}", std::process::id()))
     }
 
     #[test]
     fn parse_pid_strict() {
         assert_eq!(parse_pid("1234"), Ok(1234));
         assert_eq!(parse_pid("  42\n"), Ok(42)); // trims surrounding whitespace
+        assert_eq!(parse_pid(&MAX_PID.to_string()), Ok(MAX_PID)); // the ceiling is allowed
         assert!(parse_pid("0").is_err()); // 0 is never a real process
         assert!(parse_pid("").is_err());
         assert!(parse_pid("   ").is_err());
         assert!(parse_pid("12x").is_err());
         assert!(parse_pid("-1").is_err());
+        // Above i32::MAX would cast to a negative pid_t (kill-group / kill-all) — a
+        // corrupt/hostile pid file must never be accepted as a signalable PID.
+        assert!(parse_pid("2147483648").is_err()); // i32::MAX + 1
+        assert!(parse_pid("4294967295").is_err()); // u32::MAX (would cast to -1)
     }
 
     #[test]
@@ -215,12 +287,15 @@ mod tests {
         // Write then read back.
         write_at(&p, 4321).unwrap();
         assert_eq!(read_at(&p).unwrap(), Some(4321));
-        // Removal is ownership-checked: a different PID does NOT delete it.
-        remove_if_owned_at(&p, 9999);
+        // Removal is ownership-checked: a different PID does NOT delete it, and the
+        // return value reports that nothing was removed.
+        assert!(!remove_if_owned_at(&p, 9999), "not ours → not removed");
         assert_eq!(read_at(&p).unwrap(), Some(4321), "not ours → left intact");
-        // Our PID removes it.
-        remove_if_owned_at(&p, 4321);
+        // Our PID removes it (and reports the removal).
+        assert!(remove_if_owned_at(&p, 4321), "ours → removed");
         assert_eq!(read_at(&p).unwrap(), None);
+        // A second removal finds nothing → false.
+        assert!(!remove_if_owned_at(&p, 4321), "already gone → not removed");
     }
 
     #[test]
@@ -246,8 +321,23 @@ mod tests {
     fn liveness_detects_self_and_a_dead_pid() {
         // Our own process is alive.
         assert!(process_alive(std::process::id()));
-        // PID 999999 is (almost certainly) not a live process → detected dead, so a
-        // pid file recording it would be treated as stale, not "already running".
-        assert!(!process_alive(999_999));
+        // `MAX_PID` (i32::MAX) is above every platform's pid_max, so it is reliably
+        // "no such process" → detected dead, so a pid file recording it is treated
+        // as stale, not "already running". (Unlike a small guess like 999999, which
+        // can be a live PID on a Linux box with a high pid_max.)
+        assert!(!process_alive(MAX_PID));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn out_of_range_pid_never_reaches_kill() {
+        // Defense in depth for the pid_t-wrap hazard: even if an out-of-range value
+        // bypasses `parse_pid`, the process primitives refuse it rather than casting
+        // it to a negative (process-group / kill-all) pid_t.
+        assert!(!process_alive(u32::MAX));
+        assert!(!process_alive(0));
+        let err = send_term(u32::MAX).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(send_term(0).is_err());
     }
 }

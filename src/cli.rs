@@ -87,11 +87,15 @@ fn parse_env_port(raw: &str) -> Result<u16, String> {
             "{PORT_ENV} is set but empty (expected an integer 1-65535)"
         ));
     }
-    match t.parse::<u16>() {
-        Ok(0) => Err(format!(
-            "{PORT_ENV}={t:?} is out of range (expected an integer 1-65535)"
+    // Parse into a wider integer first so a syntactically-valid but out-of-range
+    // value (e.g. 65536) gets the distinct "out of range" diagnostic rather than
+    // collapsing into "not a valid port" (which a u16 parse would give). AI-first
+    // §4: name the actual failure so the caller can fix its input precisely.
+    match t.parse::<u32>() {
+        Ok(v) if (1..=u16::MAX as u32).contains(&v) => Ok(v as u16),
+        Ok(v) => Err(format!(
+            "{PORT_ENV}={v} is out of range (expected an integer 1-65535)"
         )),
-        Ok(p) => Ok(p),
         Err(_) => Err(format!(
             "{PORT_ENV}={t:?} is not a valid port (expected an integer 1-65535)"
         )),
@@ -132,26 +136,30 @@ async fn acquire_pidfile(json: bool) -> Vec<String> {
         ));
     }
 
-    match pidfile::write(me) {
-        Ok(_) => install_signal_cleanup(me),
-        Err(e) => {
-            let exit = match e {
-                PidError::Io(..) | PidError::NoHome => 2,
-                PidError::Malformed(..) => 1,
-            };
-            exit_error(
-                json,
-                exit,
-                "pidfile_write_failed",
-                &format!(
-                    "cannot write the loopback-server pid file: {e}. Fix permissions on \
-                     ~/.glasspad (it may need creating) or set {} to a writable path.",
-                    pidfile::PATH_ENV
-                ),
-                None,
-                None,
-            );
-        }
+    // Install the SIGINT/SIGTERM cleanup handler BEFORE publishing our PID, so there
+    // is no window in which `stop` can read the pid file and signal us before the
+    // handler exists (which would kill us via the default action, leaving a stale
+    // file). If a signal arrives before the write, the handler's ownership-checked
+    // removal simply finds no file of ours and is a no-op.
+    install_signal_cleanup(me);
+
+    if let Err(e) = pidfile::write(me) {
+        let exit = match e {
+            PidError::Io(..) | PidError::NoHome => 2,
+            PidError::Malformed(..) => 1,
+        };
+        exit_error(
+            json,
+            exit,
+            "pidfile_write_failed",
+            &format!(
+                "cannot write the loopback-server pid file: {e}. Fix permissions on \
+                 ~/.glasspad (it may need creating) or set {} to a writable path.",
+                pidfile::PATH_ENV
+            ),
+            None,
+            None,
+        );
     }
     warnings
 }
@@ -206,6 +214,12 @@ fn install_signal_cleanup(_me: u32) {}
 /// or I/O failure is a system error (exit 2). On success it does **not** delete the
 /// pid file: the signaled server removes its own entry (ownership-checked), which
 /// avoids racing a fast restart.
+///
+/// Signal-based process management is Unix-only; on a non-Unix platform `stop`
+/// reports `unsupported_platform` (exit 2) rather than pretending — the non-Unix
+/// liveness stub always reports "dead", so falling through would falsely claim
+/// "no running server" while a server kept running.
+#[cfg(unix)]
 pub fn stop(json: bool) {
     let pid = match pidfile::read() {
         Ok(Some(p)) => p,
@@ -235,37 +249,15 @@ pub fn stop(json: bool) {
     if !pidfile::process_alive(pid) {
         // Stale: the recorded process is gone. Clean the file (if still ours) and
         // report no running server — the issue's "stale is not already-running" rule.
-        pidfile::remove_if_owned(pid);
-        exit_error(
-            json,
-            1,
-            "no_running_server",
-            &format!(
-                "no running glasspad loopback server: the pid file recorded pid {pid}, but that \
-                 process is not alive. Removed the stale pid file."
-            ),
-            None,
-            None,
-        );
+        no_running_server_stale(json, pid, "that process is not alive");
     }
 
     match pidfile::send_term(pid) {
         Ok(()) => emit_stopped(json, pid),
-        Err(e) if e.raw_os_error() == esrch() => {
+        Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
             // The process exited between the liveness check and the signal — treat
             // it as no running server and clean the (now stale) pid file.
-            pidfile::remove_if_owned(pid);
-            exit_error(
-                json,
-                1,
-                "no_running_server",
-                &format!(
-                    "no running glasspad loopback server: pid {pid} exited before it could be \
-                     signaled. Removed the stale pid file."
-                ),
-                None,
-                None,
-            );
+            no_running_server_stale(json, pid, "it exited before it could be signaled");
         }
         Err(e) => exit_error(
             json,
@@ -278,27 +270,59 @@ pub fn stop(json: bool) {
     }
 }
 
+/// Non-Unix: `stop` cannot deliver a signal, so it fails explicitly rather than
+/// misreporting a running server as stopped.
+#[cfg(not(unix))]
+pub fn stop(json: bool) {
+    exit_error(
+        json,
+        2,
+        "unsupported_platform",
+        "glasspad stop is only supported on Unix platforms (it stops the server with SIGTERM)",
+        None,
+        None,
+    );
+}
+
+/// Exit with `no_running_server` for a stale-pid situation, cleaning our entry if it
+/// is still ours. The removal is ownership-checked (`remove_if_owned` returns whether
+/// it actually removed anything), so the message never claims a removal that did not
+/// happen — in the rare takeover race the file now belongs to a live successor and is
+/// left intact, which the message states truthfully.
+#[cfg(unix)]
+fn no_running_server_stale(json: bool, pid: u32, why: &str) -> ! {
+    let cleanup = if pidfile::remove_if_owned(pid) {
+        "Removed the stale pid file."
+    } else {
+        "The pid file now records a different server (or was already gone); left it intact."
+    };
+    exit_error(
+        json,
+        1,
+        "no_running_server",
+        &format!(
+            "no running glasspad loopback server: the pid file recorded pid {pid}, but {why}. \
+             {cleanup}"
+        ),
+        None,
+        None,
+    );
+}
+
 /// The pid-file path for messages (best-effort — falls back to the literal default
 /// if the home directory cannot be resolved).
+#[cfg(unix)]
 fn pid_path_display() -> String {
     pidfile::path()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "~/.glasspad/server.pid".to_string())
 }
 
-/// `ESRCH` ("no such process") for the `send_term` race check — `libc` on Unix,
-/// `None` elsewhere (where `send_term` returns `Unsupported`, not `ESRCH`).
-#[cfg(unix)]
-fn esrch() -> Option<i32> {
-    Some(libc::ESRCH)
-}
-#[cfg(not(unix))]
-fn esrch() -> Option<i32> {
-    None
-}
-
 /// Print the `stop` result envelope. Success is a terminal result (not long-running),
 /// so `--json` emits a one-line result object; text prints a concise confirmation.
+/// `stopped: true` means SIGTERM was delivered to the server (the `signal` field
+/// names it); the server then shuts down and removes its own pid file.
+#[cfg(unix)]
 fn emit_stopped(json: bool, pid: u32) {
     if json {
         let payload = json!({
@@ -2329,6 +2353,23 @@ mod tests {
                 "error for {bad:?} should name the env var: {err}"
             );
         }
+        // Out-of-range vs. malformed get distinct diagnostics (AI-first §4).
+        assert!(
+            parse_env_port("65536")
+                .unwrap_err()
+                .contains("out of range")
+        );
+        assert!(
+            parse_env_port("99999")
+                .unwrap_err()
+                .contains("out of range")
+        );
+        assert!(parse_env_port("0").unwrap_err().contains("out of range"));
+        assert!(
+            parse_env_port("abc")
+                .unwrap_err()
+                .contains("not a valid port")
+        );
     }
 
     #[test]

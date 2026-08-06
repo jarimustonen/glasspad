@@ -4,6 +4,9 @@ updated: 2026-08-06
 type: feature
 status: in-progress
 priority: low
+commits:
+- hash: 999bf30
+  summary: 'feat(serve): process management — stop, GLASSPAD_PORT, pid file'
 ---
 
 # Serve process management: stop, GLASSPAD_PORT, PID file
