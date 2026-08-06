@@ -86,6 +86,7 @@ LANE B — CLI/server (src/cli.rs, src/server.rs, render modules)
     hosted-share-server        after markdown-template-render (needs render path)
     static-build-output        (optional/low)
     serve-process-mgmt         (0.2.2/low)
+    version-commit-stamp       (0.2.2/low, follow-up to version-command; touches version code)
 
 UNLANED — confirmed no shared hot files, run anytime:
     skill-routing-guidance     after hosted-share-server (documents serve vs publish vs preview)
