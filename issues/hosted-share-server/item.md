@@ -5,6 +5,7 @@ type: feature
 status: open
 priority: high
 related: ['@markdown-template-render']
+blocked_by: ['@markdown-template-render']
 ---
 
 # Hosted share-server run mode (public read, multi-agent ingest)

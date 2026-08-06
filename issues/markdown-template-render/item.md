@@ -5,6 +5,7 @@ type: feature
 status: open
 priority: high
 related: ['@prose-theme']
+blocked_by: ['@prose-theme']
 ---
 
 # Markdown + reusable-template render path

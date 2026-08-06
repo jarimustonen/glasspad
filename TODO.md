@@ -53,6 +53,36 @@ homebase + tilictl work is gated on **0.3.0 landing** (tracked in those repos).
   CoC contact `jari@itsellesi.fi`. Change via a normal edit + patch release if wanted.
 - **Close the `release-oss` epic** — effectively complete (all three channels shipped).
 
+## Execution DAG (2026-08-06)
+
+Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
+(never copied here). Merge each round (drop landed, add active, keep existing order).
+`▶` = head-of-line snapshot — RE-COMPUTE from issuectl at pick time.
+`after <slug> (needs …)` = logical blocked_by mirror. `collision: <file>` = touches a
+second lane's hot file (spawn-time exclusion).
+
+Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A);
+`src/cli.rs` + `src/server.rs` + render modules (Lane B). `src/skill.md` is docs-only.
+
+<!-- execution-dag:begin -->
+```
+GLOBAL HEAD-OF-LINE: prose-theme   ← start here on resume
+
+LANE A — design system (src/artifact_host/assets/base.css)
+  ▶ prose-theme
+
+LANE B — CLI/server (src/cli.rs, src/server.rs, render modules)
+  ▶ version-command
+    markdown-template-render   after prose-theme (needs prose tokens)
+    hosted-share-server        after markdown-template-render (needs render path)
+    static-build-output        (optional/low)
+    serve-process-mgmt         (0.2.2/low)
+
+UNLANED — confirmed no shared hot files, run anytime:
+    skill-routing-guidance     after hosted-share-server (documents serve vs publish vs preview)
+```
+<!-- execution-dag:end -->
+
 ## How to cut a release (the recipe, now automated)
 
 `git push origin vX.Y.Z` triggers **both** workflows off the tag:
