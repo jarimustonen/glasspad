@@ -22,6 +22,7 @@
 //! file authored either way — full `<!doctype html>` document or bare fragment —
 //! is served correctly whether it arrives via `serve` or `create`.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,6 +30,8 @@ use serde_json::json;
 
 use crate::artifact_host::space::{self, ScanError};
 use crate::artifact_host::{self, ArtifactHost, render, wrap};
+use crate::hosted::auth::{KeyFileError, KeyTable};
+use crate::hosted::{self, HostedConfig};
 use crate::server::{self, RenderTemplate};
 
 /// The `--json` schema version (AI-first §10). Bump on any breaking change to an
@@ -876,6 +879,336 @@ fn launch_browser(url: &str) -> bool {
     {
         std::process::Command::new(cmd).arg(url).spawn().is_ok()
     }
+}
+
+// --- host-serve (hosted share server) -------------------------------------
+
+/// `glasspad host-serve --bind <ip:port> --public-host <origin> --api-key-file
+/// <path> --store <dir> [--retention-days <n>]` — run the long-lived hosted share
+/// server (0.3.0): API-key-authenticated ingest + unguessable capability-slug
+/// public read. A *separate run mode* from loopback `serve` — it binds the given
+/// public address and never uses the loopback DNS-rebinding guard (see
+/// `hosted` module docs / `plan.md` §8). Fail-fast + fail-closed: a bad origin, an
+/// unreadable/empty/malformed key file, or an un-openable store each exit with an
+/// informative envelope *before* the server binds.
+pub async fn host_serve(
+    bind: SocketAddr,
+    public_host: String,
+    api_key_file: PathBuf,
+    store: PathBuf,
+    retention_days: i64,
+    json: bool,
+) {
+    // Validate the public origin (AI-first §1 fail-fast) before any I/O.
+    let public_origin = match hosted::validate_public_origin(&public_host) {
+        Ok(o) => o,
+        Err(msg) => exit_error(
+            json,
+            1,
+            "invalid_public_host",
+            &msg,
+            Some(&public_host),
+            None,
+        ),
+    };
+
+    // Load the operator key file — fail-closed: the server never comes up with an
+    // ingest surface no key (or any key) can authenticate.
+    let keys = match KeyTable::load(&api_key_file) {
+        Ok(k) => Arc::new(k),
+        Err(e) => {
+            let (code, exit) = match e {
+                KeyFileError::Io(_) => ("api_key_file_unreadable", 2),
+                _ => ("invalid_api_key_file", 1),
+            };
+            exit_error(
+                json,
+                exit,
+                code,
+                &e.to_string(),
+                Some(&api_key_file.display().to_string()),
+                None,
+            );
+        }
+    };
+    let key_count = keys.len();
+
+    let config = HostedConfig {
+        bind,
+        public_origin: public_origin.clone(),
+        store_root: store,
+        retention_days,
+    };
+
+    let handle = match hosted::run(config, keys).await {
+        Ok(h) => h,
+        Err(msg) => exit_error(json, 2, "host_start_failed", &msg, None, None),
+    };
+    let local = handle
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| bind.to_string());
+    emit_host_serving(
+        json,
+        &local,
+        &public_origin,
+        handle.pages,
+        key_count,
+        retention_days,
+    );
+
+    if let Err(e) = handle.serve().await {
+        exit_error(
+            json,
+            2,
+            "serve_failed",
+            &format!("hosted server stopped with an error: {e}"),
+            None,
+            None,
+        );
+    }
+}
+
+/// Startup envelope for `host-serve` (mirrors [`emit_serving`]): a long-running
+/// announcement, not a terminal result. `--json` → stdout; text → stderr.
+fn emit_host_serving(
+    json: bool,
+    bind: &str,
+    public_origin: &str,
+    pages: usize,
+    keys: usize,
+    retention_days: i64,
+) {
+    if json {
+        let payload = json!({
+            "schema_version": SCHEMA_VERSION,
+            "serving": true,
+            "mode": "hosted",
+            "bind": bind,
+            "public_host": public_origin,
+            "ingest": format!("{public_origin}/api/v1/pages"),
+            "mount": hosted::MOUNT,
+            "pages": pages,
+            "api_keys": keys,
+            "retention_days": retention_days,
+            "warnings": [],
+        });
+        emit_json_line(&payload);
+    } else {
+        eprintln!(
+            "glasspad hosted share server on {bind} (public {public_origin}); \
+             {pages} page(s), {keys} key(s), {retention_days}d retention"
+        );
+    }
+}
+
+// --- publish (client) -----------------------------------------------------
+
+/// Config the `publish` client reads (lowest precedence; flag > env > file). YAML
+/// at `${XDG_CONFIG_HOME:-~/.config}/glasspad/config.yaml`. Both fields optional.
+#[derive(Default, serde::Deserialize)]
+struct PublishConfig {
+    server: Option<String>,
+    api_key: Option<String>,
+}
+
+/// `glasspad publish <file> [--server <url>] [--api-key <key>] [--markdown
+/// [--template <ref>]] [--title <t>] [--no-open]` — publish one page to a hosted
+/// share server and print `{slug, url}`. Config precedence (AI-first §8):
+/// flag > `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY` > config file. The API key is
+/// never echoed to stdout/stderr.
+#[allow(clippy::too_many_arguments)]
+pub async fn publish(
+    file: PathBuf,
+    server: Option<String>,
+    api_key: Option<String>,
+    markdown: bool,
+    template: Option<String>,
+    title: Option<String>,
+    json: bool,
+    no_open: bool,
+) {
+    let cfg = load_publish_config(json);
+
+    let server = resolve_setting(server, "GLASSPAD_SERVER", cfg.server).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_server",
+            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
+             to ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        )
+    });
+    let api_key = resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_api_key",
+            "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` to \
+             ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        )
+    });
+
+    // Read the source file (bounded, UTF-8) — the same strict checks `create` uses.
+    let noun = if markdown { "markdown" } else { "html" };
+    let content = read_capped_utf8_file(&file, noun, "no_such_path", json);
+
+    // Build the ingest JSON body.
+    let mut body = serde_json::Map::new();
+    if markdown {
+        body.insert("markdown".into(), json!(content));
+        if let Some(t) = &template {
+            // A built-in name is sent as-is; anything else is a template FILE path,
+            // read + sent as an inline template (matches `render`'s resolution).
+            let resolved = resolve_publish_template(t, json);
+            body.insert("template".into(), json!(resolved));
+        }
+    } else {
+        if template.is_some() {
+            exit_error(
+                json,
+                1,
+                "template_without_markdown",
+                "--template only applies with --markdown (raw HTML is published verbatim)",
+                None,
+                None,
+            );
+        }
+        body.insert("html".into(), json!(content));
+    }
+    if let Some(t) = &title {
+        body.insert("title".into(), json!(t));
+    }
+
+    let url = format!("{}/api/v1/pages", server.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .bearer_auth(&api_key)
+        .json(&serde_json::Value::Object(body))
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => exit_error(
+            json,
+            2,
+            "request_failed",
+            // reqwest's Display never includes the bearer token; safe to surface.
+            &format!("cannot reach {url}: {e}"),
+            None,
+            None,
+        ),
+    };
+
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let msg = payload
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("the server rejected the publish");
+        let code = payload
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("publish_rejected");
+        // A 401 is a user-fixable auth error (1); other 5xx are system (2).
+        let exit = if status.as_u16() == 401 { 1 } else { 2 };
+        exit_error(
+            json,
+            exit,
+            code,
+            &format!("{msg} (HTTP {})", status.as_u16()),
+            None,
+            None,
+        );
+    }
+
+    let slug = payload
+        .get("slug")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let page_url = payload
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let launched = if no_open || page_url.is_empty() {
+        false
+    } else {
+        launch_browser(&page_url)
+    };
+
+    if json {
+        let out = json!({
+            "schema_version": SCHEMA_VERSION,
+            "published": true,
+            "slug": slug,
+            "url": page_url,
+            "browser_launched": launched,
+            "warnings": [],
+        });
+        emit_json_line(&out);
+    } else {
+        // Bare URL on stdout (composable); a human note on stderr.
+        println!("{page_url}");
+        eprintln!("published '{slug}' to {page_url}");
+    }
+}
+
+/// Resolve one setting by precedence: explicit flag > environment variable > config
+/// file value. An empty/whitespace flag or env value is treated as unset (AI-first
+/// §1 — no silent empties). Returns `None` if unset at every level.
+fn resolve_setting(flag: Option<String>, env: &str, file: Option<String>) -> Option<String> {
+    let nonempty = |s: String| {
+        let t = s.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    };
+    flag.and_then(nonempty)
+        .or_else(|| std::env::var(env).ok().and_then(nonempty))
+        .or_else(|| file.and_then(nonempty))
+}
+
+/// Load the optional publish config file. A missing file is fine (`None`s);
+/// a present-but-malformed file is a user error surfaced informatively.
+fn load_publish_config(json: bool) -> PublishConfig {
+    let Some(path) = dirs::config_dir().map(|d| d.join("glasspad").join("config.yaml")) else {
+        return PublishConfig::default();
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return PublishConfig::default(), // absent/unreadable → no config
+    };
+    match serde_yaml::from_str::<PublishConfig>(&contents) {
+        Ok(c) => c,
+        Err(e) => exit_error(
+            json,
+            1,
+            "invalid_config",
+            &format!("malformed {}: {e}", path.display()),
+            None,
+            None,
+        ),
+    }
+}
+
+/// Resolve the `--template` reference for `publish`: a built-in name is sent
+/// verbatim; anything else is a path to a template file, read + returned as an
+/// inline template string. Mirrors `resolve_template`'s built-in-vs-path rule.
+fn resolve_publish_template(reference: &str, json: bool) -> String {
+    if render::builtin_template(reference).is_some() {
+        return reference.to_string();
+    }
+    // A path to a template file (read strictly, bounded, UTF-8).
+    read_capped_utf8_file(Path::new(reference), "template", "template_not_found", json)
 }
 
 // --- data (legacy-format helper) ------------------------------------------

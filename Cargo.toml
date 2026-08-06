@@ -1,6 +1,6 @@
 [package]
 name = "glasspad"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "AI-friendly, loopback-only HTML-artifact host: serves agent-authored HTML in null-origin sandboxed iframes for dashboards, charts, and interactive UIs."
 license = "MIT"
@@ -25,6 +25,7 @@ csv = "1"
 mail-parser = "0.9"
 rand = "0.8"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

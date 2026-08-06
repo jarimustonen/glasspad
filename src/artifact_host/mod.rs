@@ -48,24 +48,76 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use glasspad::security::token;
 use space::Snapshot;
 
-/// Shared state for the artifact host: the port (the CSP must name the explicit
-/// host), the live directory **snapshot** (immutable, swapped atomically on
-/// rescan so a half-written file is never served), and a broadcast channel the
-/// filesystem watcher pokes to drive SSE reloads.
+/// Which origin(s) the artifact CSP names, and the URL mount prefix the trusted
+/// shell emits. `'self'` is meaningless under the artifact's null origin, so the
+/// CSP must name explicit origins; loopback names both loopback spellings, the
+/// hosted run mode names its single public origin. This is a *parameterization*
+/// of the frozen boundary — the sandbox tokens and `connect-src 'none'` egress
+/// closure are identical either way (see `headers::artifact_csp_from_origins`).
+#[derive(Clone, Debug)]
+pub enum OriginPolicy {
+    /// The loopback dev server: CSP names `127.0.0.1:port` + `localhost:port`,
+    /// shell URLs are root-absolute (no mount prefix).
+    Loopback { port: u16 },
+    /// The hosted share server: CSP names the single public `origin`
+    /// (`scheme://host[:port]`), shell content/nav URLs carry the `/p` mount.
+    Public { origin: String },
+}
+
+/// Shared state for the artifact host: the origin policy (which origin the CSP
+/// names + the shell's URL mount, see [`OriginPolicy`]), the live **snapshot**
+/// (immutable, swapped atomically so a half-written file is never served), and a
+/// broadcast channel the filesystem watcher pokes to drive SSE reloads.
 pub struct ArtifactHost {
-    pub port: u16,
+    origins: OriginPolicy,
+    /// URL prefix the shell prepends to `/{space}/…` content + nav links (never to
+    /// `/_gp/*`). Empty for loopback, `/p` for the hosted mount.
+    mount: String,
     snapshot: RwLock<Arc<Snapshot>>,
     reload_tx: broadcast::Sender<()>,
 }
 
 impl ArtifactHost {
+    /// The loopback dev host (unchanged behavior): CSP names both loopback
+    /// origins, shell URLs are root-absolute.
     pub fn new(port: u16) -> Self {
+        Self::with_origins(OriginPolicy::Loopback { port }, String::new())
+    }
+
+    /// The hosted share host: the artifact CSP names `origin` (the operator's
+    /// `--public-host`) and the shell emits `{mount}/{space}/…` links.
+    pub fn new_public(origin: String, mount: String) -> Self {
+        Self::with_origins(OriginPolicy::Public { origin }, mount)
+    }
+
+    fn with_origins(origins: OriginPolicy, mount: String) -> Self {
         let (reload_tx, _) = broadcast::channel(16);
         Self {
-            port,
+            origins,
+            mount,
             snapshot: RwLock::new(Arc::new(Snapshot::empty())),
             reload_tx,
         }
+    }
+
+    /// The space-separated origin list the artifact CSP names for this host.
+    fn csp_origins(&self) -> String {
+        match &self.origins {
+            OriginPolicy::Loopback { port } => headers::self_origins(*port),
+            OriginPolicy::Public { origin } => origin.clone(),
+        }
+    }
+
+    /// Build the artifact-content CSP for this host's origin policy. Delegates to
+    /// the one frozen builder — the hosted mode changes only the named origin.
+    pub fn artifact_csp(&self, allow_eval: bool) -> String {
+        headers::artifact_csp_from_origins(&self.csp_origins(), allow_eval)
+    }
+
+    /// The URL mount prefix the shell prepends to content/nav links (`""` loopback,
+    /// `/p` hosted).
+    pub fn mount(&self) -> &str {
+        &self.mount
     }
 
     /// Cheap, lock-brief read of the current immutable snapshot.
@@ -97,11 +149,28 @@ impl ArtifactHost {
 /// `Router<()>` so it merges into the main server router. Control-plane guards
 /// (§5) are applied by the caller in `server::run` across the whole app.
 pub fn router(host: Arc<ArtifactHost>) -> Router {
+    spaces_router(host.clone()).merge(gp_router(host))
+}
+
+/// Just the `/{space}/…` space routes (entry, shell, content, assets), finalized
+/// over `host`. Split out so the hosted run mode can `nest` these under its `/p`
+/// mount while serving `/_gp/*` ([`gp_router`]) at the origin root — the loopback
+/// [`router`] merges the two at root, unchanged. The shell emits `{mount}/…` links
+/// so the nested paths resolve correctly (see `ArtifactHost::mount`).
+pub fn spaces_router(host: Arc<ArtifactHost>) -> Router {
     Router::new()
         .route("/{space}/", get(space_entry))
         .route("/{space}/_c/{slug}", get(artifact_content))
         .route("/{space}/assets/{*path}", get(space_asset))
         .route("/{space}/{slug}", get(shell_page))
+        .with_state(host)
+}
+
+/// The `/_gp/*` base-library + reload routes, finalized over `host`. Always mounted
+/// at the origin root in both run modes (the wrap + shell reference `/_gp/v1/*` and
+/// `/_gp/reload` as root-absolute paths).
+pub fn gp_router(host: Arc<ArtifactHost>) -> Router {
+    Router::new()
         .route("/_gp/reload", get(reload_stream))
         .route("/_gp/v1/{*path}", get(gp_asset))
         .with_state(host)
@@ -245,7 +314,7 @@ async fn artifact_content(
     // The noeval knob only *tightens* the policy, and only in debug builds; the
     // `&& cfg!(...)` keeps `q` referenced in every profile (no unused warning).
     let allow_eval = !(cfg!(debug_assertions) && q.csp.as_deref() == Some("noeval"));
-    let csp = headers::artifact_csp(host.port, allow_eval);
+    let csp = host.artifact_csp(allow_eval);
 
     let mut hmap = base_html_headers();
     hmap.insert(
@@ -275,7 +344,7 @@ async fn shell_page(
     let Some(hit) = find_artifact(&snap, &space, &slug) else {
         return not_found();
     };
-    render_shell(&snap, &space, &slug, hit.title.as_deref())
+    render_shell(&snap, host.mount(), &space, &slug, hit.title.as_deref())
 }
 
 /// Space entry — the shell for the home artifact (`index`, else first slug).
@@ -288,14 +357,20 @@ async fn space_entry(State(host): State<Arc<ArtifactHost>>, Path(space): Path<St
         return not_found();
     };
     let title = find_artifact(&snap, &space, &home).and_then(|h| h.title);
-    render_shell(&snap, &space, &home, title.as_deref())
+    render_shell(&snap, host.mount(), &space, &home, title.as_deref())
 }
 
-fn render_shell(snap: &Snapshot, space: &str, slug: &str, title: Option<&str>) -> Response {
+fn render_shell(
+    snap: &Snapshot,
+    mount: &str,
+    space: &str,
+    slug: &str,
+    title: Option<&str>,
+) -> Response {
     let nonce = token::generate_token();
     let nav = space_nav(snap, space);
     let nav_refs: Vec<(&str, &str)> = nav.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect();
-    let body = shell::render(space, slug, title.unwrap_or(""), &nav_refs, &nonce);
+    let body = shell::render(mount, space, slug, title.unwrap_or(""), &nav_refs, &nonce);
     let csp = headers::shell_csp(&nonce);
 
     let mut hmap = base_html_headers();
@@ -365,7 +440,7 @@ async fn space_asset(
 /// SSE reload stream. The trusted shell opens an `EventSource` to this path
 /// (its `connect-src 'self'` permits it) and reloads when the filesystem watcher
 /// fires after an atomic snapshot swap. The **artifact** CSP is widened to name
-/// exactly this loopback path (see `headers::artifact_csp`) so a future in-frame
+/// exactly this loopback path (see `headers::artifact_csp_from_origins`) so a future in-frame
 /// reload client can use it too — never to a foreign host, never a broad origin.
 async fn reload_stream(
     State(host): State<Arc<ArtifactHost>>,

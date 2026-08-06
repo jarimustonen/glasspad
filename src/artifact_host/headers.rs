@@ -38,7 +38,8 @@ pub fn self_origins(port: u16) -> String {
     format!("http://127.0.0.1:{port} http://localhost:{port}")
 }
 
-/// Build the artifact-content `Content-Security-Policy`.
+/// Build the artifact-content `Content-Security-Policy`, parameterized by the
+/// exact origin(s) it names.
 ///
 /// * `sandbox allow-scripts` — sandboxes direct-opens (§3); scripts run but the
 ///   document has a **null origin** (no `allow-same-origin`), so it cannot read
@@ -51,20 +52,24 @@ pub fn self_origins(port: u16) -> String {
 ///   `WebSocket`, or XHR to anywhere, including self. Live reload is driven from
 ///   the **trusted shell** (its `connect-src 'self'` permits the `EventSource`),
 ///   so the artifact needs no connect authority and this stays fully closed.
-///   (An in-*artifact* reload client would be Wave 3b's `bridge.js`; if it lands,
-///   widen this to the exact `/_gp/reload` path — a CSP path-source — never a bare
-///   origin, which would re-open `/api/*`, and never a foreign host.)
 /// * `img-src` names the host + `data:` only — no external beacon pixels.
 /// * `form-action 'none'`, `base-uri 'none'`, `object-src 'none'`,
 ///   `frame-src 'none'`, `worker-src 'none'` — close the remaining channels.
 /// * `frame-ancestors` names the host so only our shell may frame it.
 ///
-/// `allow_eval = false` produces the identical policy minus `'unsafe-eval'`.
-/// That variant is **strictly tighter** and exists only so the adversarial suite
-/// can empirically demonstrate that Vega-Lite-style `new Function(...)` requires
-/// `'unsafe-eval'` (design.md §4). Production always serves `allow_eval = true`.
-pub fn artifact_csp(port: u16, allow_eval: bool) -> String {
-    let hosts = self_origins(port);
+/// `allow_eval = false` produces the identical policy minus `'unsafe-eval'`
+/// (strictly tighter; the adversarial suite's Vega `new Function` probe). Production
+/// serves `allow_eval = true`.
+///
+/// `origins` is the exact space-separated origin list the artifact may load its
+/// `/_gp/v1/*` script/style from and be framed by — the loopback path passes both
+/// loopback spellings ([`self_origins`]); the hosted run mode passes its single
+/// public origin. **Only the named host changes**: the null-origin `sandbox`, the
+/// `connect-src 'none'` boundary, and every other closure are identical in both
+/// modes, so the hosted mode reuses — never widens — the frozen boundary. `'self'`
+/// is meaningless under a null origin, which is why the origin is named explicitly.
+pub fn artifact_csp_from_origins(origins: &str, allow_eval: bool) -> String {
+    let hosts = origins;
     let eval = if allow_eval { " 'unsafe-eval'" } else { "" };
     format!(
         "sandbox allow-scripts allow-top-navigation-by-user-activation; \
@@ -136,7 +141,7 @@ mod tests {
 
     #[test]
     fn artifact_csp_sandboxes_and_allows_scripts() {
-        let csp = artifact_csp(3000, true);
+        let csp = artifact_csp_from_origins(&self_origins(3000), true);
         assert!(csp.starts_with("sandbox allow-scripts"));
         // No allow-same-origin — the null origin is the whole point.
         assert!(!csp.contains("allow-same-origin"));
@@ -144,7 +149,7 @@ mod tests {
 
     #[test]
     fn artifact_csp_names_explicit_hosts_not_self() {
-        let csp = artifact_csp(3000, true);
+        let csp = artifact_csp_from_origins(&self_origins(3000), true);
         // 'self' is useless under a null origin; script/img/style must name the
         // explicit loopback origins — BOTH spellings the shell is reachable at.
         assert!(csp.contains("http://127.0.0.1:3000"));
@@ -158,7 +163,7 @@ mod tests {
 
     #[test]
     fn artifact_csp_blocks_all_egress_channels() {
-        let csp = artifact_csp(3000, true);
+        let csp = artifact_csp_from_origins(&self_origins(3000), true);
         assert!(csp.contains("connect-src 'none'")); // fetch/beacon/ws/xhr, incl. self
         assert!(csp.contains("form-action 'none'")); // form POST exfil
         assert!(csp.contains("object-src 'none'"));
@@ -173,14 +178,16 @@ mod tests {
 
     #[test]
     fn artifact_csp_eval_toggle() {
-        assert!(artifact_csp(3000, true).contains("'unsafe-eval'"));
-        assert!(!artifact_csp(3000, false).contains("'unsafe-eval'"));
+        assert!(artifact_csp_from_origins(&self_origins(3000), true).contains("'unsafe-eval'"));
+        assert!(!artifact_csp_from_origins(&self_origins(3000), false).contains("'unsafe-eval'"));
     }
 
     #[test]
     fn artifact_csp_port_is_reflected() {
-        assert!(artifact_csp(8123, true).contains("http://127.0.0.1:8123"));
-        assert!(!artifact_csp(8123, true).contains(":3000"));
+        assert!(
+            artifact_csp_from_origins(&self_origins(8123), true).contains("http://127.0.0.1:8123")
+        );
+        assert!(!artifact_csp_from_origins(&self_origins(8123), true).contains(":3000"));
     }
 
     #[test]

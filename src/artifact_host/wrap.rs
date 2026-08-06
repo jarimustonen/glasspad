@@ -14,7 +14,7 @@
 //!   itself and falls back to `target="_top"`).
 //!
 //! The wrapped document is still served under the frozen Wave-1 artifact CSP
-//! (`headers::artifact_csp`); nothing here widens it. `base.css`/`bridge.js` load
+//! (`headers::artifact_csp_from_origins`); nothing here widens it. `base.css`/`bridge.js` load
 //! as classic same-host subresources, which `script-src`/`style-src` already
 //! permit. The fragment body is inserted verbatim — the artifact is already
 //! untrusted script inside the null-origin sandbox, so wrapping adds no new trust

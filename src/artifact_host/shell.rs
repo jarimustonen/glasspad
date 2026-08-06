@@ -41,7 +41,14 @@ use serde_json::json;
 /// as **text** (client `textContent`, server-side escaped). `title` is the current
 /// artifact's resolved display title (empty → fall back to `space / slug`).
 /// `nonce` matches the CSP.
-pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce: &str) -> String {
+pub fn render(
+    mount: &str,
+    space: &str,
+    slug: &str,
+    title: &str,
+    nav: &[(&str, &str)],
+    nonce: &str,
+) -> String {
     // All dynamic values are serialized as JSON, so they land in the script as
     // data literals — never as HTML that could break out of context. `json` also
     // neutralizes `</script>` / U+2028 / U+2029 so a hostile value cannot close
@@ -66,9 +73,15 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
     let slugs_json = json_for_script(&json!(known));
     let title_json = json_for_script(&json!(display_title));
     let nav_json = json_for_script(&nav_json_value);
+    // The URL mount prefix (`""` loopback, `/p` hosted) prepended to every
+    // `/{space}/…` content + nav link — NOT to `/_gp/*` (base libs + reload stay
+    // at root in both run modes). It is a fixed server constant, never client
+    // input; emitted as a JSON string literal so it lands as data in the script.
+    let mount_json = json_for_script(&json!(mount));
 
-    // Content path for the iframe src. space/slug are path-validated upstream.
-    let content_src = format!("/{space}/_c/{slug}");
+    // Content path for the iframe src. space/slug are path-validated upstream;
+    // `mount` is a trusted server constant.
+    let content_src = format!("{mount}/{space}/_c/{slug}");
     let esc_src = html_attr_escape(&content_src);
     let esc_title = html_text_escape(&display_title);
 
@@ -108,6 +121,7 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
 <script nonce="{nonce}">
 (function () {{
   "use strict";
+  var MOUNT = {mount_json};
   var SPACE = {space_json};
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
@@ -143,7 +157,7 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
     var item = NAV[k];
     if (!item || typeof item.slug !== "string") continue;
     var a = document.createElement("a");
-    a.setAttribute("href", "/" + SPACE + "/" + item.slug);
+    a.setAttribute("href", MOUNT + "/" + SPACE + "/" + item.slug);
     a.setAttribute("data-slug", item.slug);
     a.setAttribute("rel", "noopener");
     a.textContent = (typeof item.title === "string" && item.title !== "") ? item.title : item.slug;
@@ -207,7 +221,7 @@ pub fn render(space: &str, slug: &str, title: &str, nav: &[(&str, &str)], nonce:
     var shown = (typeof t === "string" && t !== "") ? t : (SPACE + " / " + slug);
     // Inline the current theme into the swapped artifact so the new fragment wraps
     // with the right `data-theme` (no FOUC). The `load` handler re-sends it too.
-    frame.src = "/" + SPACE + "/_c/" + slug + themeQuery();
+    frame.src = MOUNT + "/" + SPACE + "/_c/" + slug + themeQuery();
     titleEl.textContent = shown;   // textContent — never innerHTML
     document.title = shown;
     frame.setAttribute("title", shown);
@@ -352,7 +366,7 @@ mod tests {
 
     #[test]
     fn shell_has_null_origin_sandbox() {
-        let html = render("demo", "index", "", &nav_of(&["index"]), "n0nce");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n0nce");
         assert!(
             html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
         );
@@ -361,31 +375,31 @@ mod tests {
 
     #[test]
     fn shell_frames_content_route() {
-        let html = render("demo", "eval", "", &nav_of(&["eval"]), "n0nce");
+        let html = render("", "demo", "eval", "", &nav_of(&["eval"]), "n0nce");
         assert!(html.contains(r#"data-src="/demo/_c/eval""#));
     }
 
     #[test]
     fn shell_validates_event_source() {
-        let html = render("demo", "index", "", &nav_of(&["index"]), "n0nce");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n0nce");
         assert!(html.contains("event.source !== frame.contentWindow"));
     }
 
     #[test]
     fn shell_script_is_nonce_gated() {
-        let html = render("demo", "index", "", &nav_of(&["index"]), "abc123");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "abc123");
         assert!(html.contains(r#"<script nonce="abc123">"#));
     }
 
     #[test]
     fn shell_embeds_slugs_as_json_data() {
-        let html = render("demo", "index", "", &nav_of(&["index", "eval"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index", "eval"]), "n");
         assert!(html.contains(r#"["index","eval"]"#));
     }
 
     #[test]
     fn shell_opens_reload_event_source() {
-        let html = render("demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
         assert!(html.contains(r#"new EventSource("/_gp/reload")"#));
     }
 
@@ -393,7 +407,7 @@ mod tests {
     fn shell_uses_resolved_title_as_text() {
         // A provided title lands in the chrome as a JSON string literal + escaped
         // <title>, never as live markup.
-        let html = render("demo", "index", "Sales & Q3", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "Sales & Q3", &nav_of(&["index"]), "n");
         assert!(html.contains("Sales &amp; Q3")); // server-side <title>, escaped
         // client textContent literal: `&` is JSON-for-script-encoded so it can't
         // close the <script> element — assert the encoded form is present and the
@@ -405,13 +419,13 @@ mod tests {
         assert!(!title_line.contains('&'));
         assert!(!title_line.contains("Sales & Q3"));
         // Empty title falls back to "space / slug".
-        let fallback = render("demo", "index", "", &nav_of(&["index"]), "n");
+        let fallback = render("", "demo", "index", "", &nav_of(&["index"]), "n");
         assert!(fallback.contains("demo / index"));
     }
 
     #[test]
     fn shell_has_theme_toggle_and_messaging() {
-        let html = render("demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
         // A toggle control exists in the trusted chrome…
         assert!(html.contains(r#"id="gp-theme-toggle""#));
         // …and the shell sends a low-authority theme message to the framed artifact.
@@ -424,18 +438,19 @@ mod tests {
     fn shell_navigation_carries_theme_query() {
         // A swapped iframe src inlines the current theme so the new fragment wraps
         // FOUC-free; `auto` omits the query.
-        let html = render("demo", "index", "", &nav_of(&["index"]), "n");
-        assert!(html.contains(r#""/" + SPACE + "/_c/" + slug + themeQuery()"#));
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        assert!(html.contains(r#"MOUNT + "/" + SPACE + "/_c/" + slug + themeQuery()"#));
         assert!(html.contains("gp_theme="));
     }
 
     #[test]
     fn shell_escapes_injection_in_title_context() {
         // A hostile slug must not break out of the HTML title/attr context.
-        let html = render("demo", "a\"><script>x", "", &nav_of(&["a"]), "n");
+        let html = render("", "demo", "a\"><script>x", "", &nav_of(&["a"]), "n");
         assert!(!html.contains("<script>x"));
         // A hostile *title* likewise cannot break out (escaped + JSON-encoded).
         let html2 = render(
+            "",
             "demo",
             "index",
             "</title><script>evil()</script>",
@@ -449,7 +464,14 @@ mod tests {
 
     #[test]
     fn shell_renders_nav_container_and_navigate_path() {
-        let html = render("demo", "index", "Home", &nav_of(&["index", "sales"]), "n");
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "Home",
+            &nav_of(&["index", "sales"]),
+            "n",
+        );
         // The nav container exists and is built client-side (no server-rendered
         // artifact-title markup — the list is populated via createElement/textContent).
         assert!(html.contains(r#"<nav class="gp-nav" id="gp-nav""#));
@@ -469,6 +491,7 @@ mod tests {
         // anywhere in the document — the client inserts it via textContent.
         let hostile = r#"<img src=x onerror=alert(1)>"#;
         let html = render(
+            "",
             "demo",
             "index",
             "Home",
@@ -488,9 +511,9 @@ mod tests {
     fn shell_nav_navigate_is_allowlist_bounded() {
         // navigateTo only ever swaps to a KNOWN slug via the content route; the
         // grammar + KNOWN_SET checks are present.
-        let html = render("demo", "index", "", &nav_of(&["index", "sales"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index", "sales"]), "n");
         assert!(html.contains("!KNOWN_SET.has(slug)"));
-        assert!(html.contains(r#""/" + SPACE + "/_c/" + slug"#));
+        assert!(html.contains(r#"MOUNT + "/" + SPACE + "/_c/" + slug"#));
     }
 
     #[test]
@@ -501,6 +524,7 @@ mod tests {
         // `<`/`>`/`&` bytes, and U+2028/U+2029.
         let hostile = "</ScRiPt><b>&\u{2028}\u{2029}";
         let html = render(
+            "",
             "demo",
             "index",
             "Home",
@@ -523,7 +547,7 @@ mod tests {
     fn shell_renders_with_empty_nav_without_panicking() {
         // A space with no artifacts (empty nav table) must render a valid shell —
         // the nav loop is a no-op and paintActive iterates nothing.
-        let html = render("demo", "index", "", &[], "n");
+        let html = render("", "demo", "index", "", &[], "n");
         assert!(html.contains(r#"<nav class="gp-nav" id="gp-nav""#));
         assert!(
             html.contains(r#"var NAV = [];"#)
@@ -537,7 +561,7 @@ mod tests {
         // A same-slug navigate must be a validated no-op (return true, no frame
         // reassignment) so a hostile child can't loop the iframe by re-posting the
         // current slug on every load.
-        let html = render("demo", "index", "", &nav_of(&["index", "sales"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index", "sales"]), "n");
         assert!(html.contains("if (slug === current) return true;"));
     }
 }

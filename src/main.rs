@@ -6,8 +6,10 @@
 // removed in Wave 5 / Phase 6.
 mod artifact_host;
 mod cli;
+mod hosted;
 mod server;
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -79,6 +81,56 @@ enum Commands {
         #[arg(short, long, default_value_t = 3000, value_parser = clap::value_parser!(u16).range(1..))]
         port: u16,
     },
+    /// Run the hosted share server (public bind, API-key ingest, capability-slug
+    /// public read). A separate run mode from `serve`: it binds the given public
+    /// address and does NOT use the loopback DNS-rebinding guard. Runs until killed.
+    HostServe {
+        /// Public bind address, e.g. 0.0.0.0:8080. Explicit — never defaulted to a
+        /// routable interface.
+        #[arg(long)]
+        bind: SocketAddr,
+        /// Canonical public origin for the artifact CSP + returned URLs, e.g.
+        /// https://pad.example.com (scheme://host[:port], no path).
+        #[arg(long)]
+        public_host: String,
+        /// Operator API-key file: `<tenant>:<key>` lines. Fail-closed if
+        /// missing/empty/malformed.
+        #[arg(long)]
+        api_key_file: PathBuf,
+        /// Storage root for published pages.
+        #[arg(long)]
+        store: PathBuf,
+        /// Days before an immutable page is garbage-collected.
+        #[arg(long, default_value_t = 90, value_parser = clap::value_parser!(i64).range(1..))]
+        retention_days: i64,
+    },
+    /// Publish one page to a hosted share server and print its slug + URL.
+    ///
+    /// Config precedence: flag > $GLASSPAD_SERVER / $GLASSPAD_API_KEY > the file
+    /// ~/.config/glasspad/config.yaml. The API key is never printed.
+    Publish {
+        /// The file to publish (HTML by default; markdown with --markdown).
+        file: PathBuf,
+        /// Hosted server base URL, e.g. https://pad.example.com.
+        #[arg(long)]
+        server: Option<String>,
+        /// Bearer API key for ingest auth.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Treat the file as markdown and render it server-side.
+        #[arg(long)]
+        markdown: bool,
+        /// With --markdown: a built-in template name (prose/dashboard) or a path to
+        /// a template file with one {{content}} slot.
+        #[arg(long)]
+        template: Option<String>,
+        /// Override the resolved display title.
+        #[arg(long)]
+        title: Option<String>,
+        /// Do not open the published URL in a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Open a served space's URL in the browser.
     Open {
         /// Space name (the `{space}` in `/{space}/`).
@@ -142,6 +194,27 @@ async fn main() {
             name,
             port,
         }) => cli::render(file, template, name, port, json).await,
+        Some(Commands::HostServe {
+            bind,
+            public_host,
+            api_key_file,
+            store,
+            retention_days,
+        }) => cli::host_serve(bind, public_host, api_key_file, store, retention_days, json).await,
+        Some(Commands::Publish {
+            file,
+            server,
+            api_key,
+            markdown,
+            template,
+            title,
+            no_open,
+        }) => {
+            cli::publish(
+                file, server, api_key, markdown, template, title, json, no_open,
+            )
+            .await
+        }
         Some(Commands::Open {
             space,
             port,
