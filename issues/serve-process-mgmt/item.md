@@ -2,13 +2,14 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: low
 commits:
 - hash: 999bf30
   summary: 'feat(serve): process management — stop, GLASSPAD_PORT, pid file'
 - hash: e86d6ba
   summary: 'fix(serve): apply /llm-review findings — pid_t wrap, atomic write, honest stop'
+closed: 2026-08-06
 ---
 
 # Serve process management: stop, GLASSPAD_PORT, PID file
