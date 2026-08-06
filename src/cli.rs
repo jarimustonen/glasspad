@@ -105,6 +105,36 @@ fn emit_json_line(payload: &serde_json::Value) {
     let _ = std::io::stdout().flush();
 }
 
+// --- version --------------------------------------------------------------
+
+/// `glasspad version` — report the installed CLI version so tooling (the homebase
+/// fleet-updater) can version-gate installs, matching the sibling CLIs
+/// (`issuectl --version`, `ossctl version`, `orchestratectl version`).
+///
+/// Under `--json`, glasspad's flat AI-first §10 envelope
+/// (`{schema_version, name, version, warnings}`) on stdout — the data channel —
+/// so a consumer can `jq -r .version` directly. Otherwise the same
+/// `glasspad <version>` line clap's built-in `--version` prints, on stdout. The
+/// version is the compile-time `CARGO_PKG_VERSION`, the single source of truth
+/// shared with `Cargo.toml`.
+pub fn version(json: bool) {
+    let name = env!("CARGO_PKG_NAME");
+    let ver = env!("CARGO_PKG_VERSION");
+    if json {
+        let payload = json!({
+            "schema_version": SCHEMA_VERSION,
+            "name": name,
+            "version": ver,
+            // Present (empty) for cross-command uniformity: callers read
+            // `warnings` unconditionally across every envelope (see `data`).
+            "warnings": [],
+        });
+        emit_json_line(&payload);
+    } else {
+        println!("{name} {ver}");
+    }
+}
+
 // --- serve ----------------------------------------------------------------
 
 /// `glasspad serve [dir]` — serve a live directory as a space, or (with no dir)

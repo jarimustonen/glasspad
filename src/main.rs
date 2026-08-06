@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "glasspad",
+    version,
     about = "AI scratchpad for rich HTML artifact views"
 )]
 struct Cli {
@@ -76,6 +77,9 @@ enum Commands {
         #[arg(long)]
         meta: bool,
     },
+    /// Report the installed CLI version (for version-gating; use --json for a
+    /// machine-readable envelope). Mirrors the built-in `--version` / `-V` flag.
+    Version,
     /// Output or install the Claude Code skill (the CLI's operating manual).
     Skill {
         /// Install to .claude/skills/. Project-level by default, --user for ~/.claude/
@@ -101,6 +105,7 @@ async fn main() {
             no_browser,
         } => cli::open(space, port, json, no_browser),
         Commands::Data { file, format, meta } => cli::data(file, format, meta, json),
+        Commands::Version => cli::version(json),
         Commands::Skill {
             install_claude,
             user,
