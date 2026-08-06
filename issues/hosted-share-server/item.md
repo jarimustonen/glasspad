@@ -2,7 +2,7 @@
 created: 2026-08-06
 updated: 2026-08-06
 type: feature
-status: in-progress
+status: done
 priority: high
 related: ['@markdown-template-render']
 blocked_by: ['@markdown-template-render']
@@ -11,6 +11,7 @@ commits:
   summary: hosted share-server run mode + publish client
 - hash: 8b11be2
   summary: apply 4-model llm-review findings (auth/tenant/rebinding)
+closed: 2026-08-06
 ---
 
 # Hosted share-server run mode (public read, multi-agent ingest)
