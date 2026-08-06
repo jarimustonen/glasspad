@@ -78,17 +78,16 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: hosted-share-server   ← start here on resume
-(markdown-template-render landed 2026-08-06 — render path delivered; dropped from the graph)
+GLOBAL HEAD-OF-LINE: skill-routing-guidance   ← start here on resume
+(hosted-share-server landed 2026-08-06 — 0.3.0 headline path COMPLETE; version now 0.3.0 in Cargo.toml)
 
 LANE B — CLI/server (src/cli.rs, src/server.rs, render modules)
-  ▶ hosted-share-server        (render-path dep delivered — now unblocked)
     static-build-output        (optional/low)
     serve-process-mgmt         (0.2.2/low)
     version-commit-stamp       (0.2.2/low, follow-up to version-command; touches version code)
 
 UNLANED — confirmed no shared hot files, run anytime:
-    skill-routing-guidance     after hosted-share-server (documents serve vs publish vs preview)
+  ▶ skill-routing-guidance     (hosted-share-server dep delivered — now unblocked; docs serve vs publish vs preview)
 ```
 <!-- execution-dag:end -->
 
