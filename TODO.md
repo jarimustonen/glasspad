@@ -78,13 +78,14 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none — backlog empty; 0.3.0 cut 2026-08-06)
+GLOBAL HEAD-OF-LINE: release-mac-github-runner   ← durable release-infra fix
 
-All 0.3.0 work landed and dropped from the graph:
-  markdown-template-render · hosted-share-server · skill-routing-guidance ·
-  static-build-output · serve-process-mgmt · version-commit-stamp
+0.3.0 shipped to crates.io 2026-08-06; all six feature issues landed and dropped.
+The cargo-dist GitHub Release + Homebrew are BLOCKED on the self-hosted `hauis`
+mac runner (git-400); this fix moves that build to a GitHub-hosted runner.
 
-No active non-epic issues. Next round: file new work, then re-populate lanes.
+LANE C — release infra (dist-workspace.toml, .github/workflows/release.yml)
+  ▶ release-mac-github-runner   (re-route mac build off self-hosted → macos-14)
 ```
 <!-- execution-dag:end -->
 
