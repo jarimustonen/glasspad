@@ -36,12 +36,10 @@ hosting = "github"
 # id-token / attestations permissions to the publishing job.
 github-attestations = true
 
-# Route the macOS build to the self-hosted `hauis` runner (Apple Silicon), matching
-# the sibling repos. The two Linux targets stay on GitHub-hosted ubuntu runners.
-# Gotcha (infra/machines/hauis.md): a job's actions/checkout writes an auth
-# extraheader into the symlinked global ~/.gitconfig; overlapping/cancelled mac
-# jobs on this single runner can leave a stale header → next checkout gets a git
-# 400. Mitigation: cut a release tag ONCE and let it finish (don't re-tag while a
-# mac job is in flight); do NOT set GIT_CONFIG_GLOBAL in the runner's .env.
+# Route the macOS build to a GitHub-hosted Apple-Silicon runner (`macos-14`), so
+# releases don't depend on the self-hosted `hauis` machine. The two Linux targets
+# stay on GitHub-hosted ubuntu runners. GitHub-hosted runners get a clean,
+# job-scoped checkout each run — no shared global ~/.gitconfig, so none of the
+# stale-auth-extraheader / git-400 hazard that the self-hosted single runner had.
 [dist.github-custom-runners]
-aarch64-apple-darwin = "self-hosted"
+aarch64-apple-darwin = "macos-14"
