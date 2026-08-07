@@ -2,8 +2,12 @@
 created: 2026-08-07
 updated: 2026-08-07
 type: task
-status: open
+status: done
 priority: high
+commits:
+- hash: 9deee1a
+  summary: route mac build to macos-14 runner
+closed: 2026-08-07
 ---
 
 # Route release macOS build to a GitHub-hosted runner (drop self-hosted hauis)
