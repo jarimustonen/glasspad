@@ -5,10 +5,14 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**glasspad 0.3.0 is PUBLISHED to crates.io** (2026-08-06) — the agent→HTML
-consolidation. crates.io `glasspad 0.3.0` is live and permanent. `main` carries
-0.3.0 (Cargo.toml) + tag `v0.3.0`. Prior baseline: 0.2.1 (2026-08-05, all three
-channels).
+**glasspad 0.3.0 is FULLY RELEASED** (2026-08-09) — crates.io + GitHub Release
+`v0.3.0` (mac + 2× Linux binaries, installer, `glasspad.rb` Homebrew formula) +
+Homebrew tap, all live. The agent→HTML consolidation. `main` carries 0.3.0
+(Cargo.toml) + tag `v0.3.0`. Prior baseline: 0.2.1 (2026-08-05, all three channels).
+
+The GitHub-Release completion (blocked since 2026-08-06 by hauis's mac job failing)
+was finished 2026-08-09 by rerunning the failed job on hauis after a **durable
+runner-gitconfig fix** — see below.
 
 **0.3.0 features landed this session (all green: fmt/clippy/test + `./test-security.sh`
 41 + Wave 2a; each had a multi-model `/llm-review`):**
@@ -25,28 +29,37 @@ channels).
 - ✅ `release-mac-github-runner` — mac release build moved off self-hosted `hauis`
   → GitHub-hosted `macos-14` (`dist-workspace.toml`); future releases don't touch `hauis`.
 
-## ⚠️ ▶ Start here (on return) — FINISH the 0.3.0 GitHub Release (a decision for Jari)
+## ✅ 0.3.0 GitHub Release — DONE (2026-08-09), via durable hauis fix
 
-crates.io 0.3.0 shipped, but the cargo-dist **GitHub Release `v0.3.0` and Homebrew
-formula did NOT get created**: `release.yml`'s `aarch64-apple-darwin` job failed
-(git HTTP 400 on the self-hosted `hauis` runner — stale auth entry in its shared
-`~/.gitconfig`; two runs failed identically). Only the two Linux binaries built.
-`release.yml` has **no `workflow_dispatch`** (tag-push only). The durable runner fix
-(`release-mac-github-runner`) is now landed on `main`, so the mac build will run on
-GitHub-hosted `macos-14` — but the **existing `v0.3.0` tag predates that commit**.
+Chose option (a): fix hauis + rerun `31112313027 --failed`, keeping the published
+`v0.3.0` tag (agent never touched the tag). The mac build ran **on hauis** and the
+Release + Homebrew jobs completed green.
 
-**Pick one to complete 0.3.0's GitHub Release + Homebrew (agent did NOT touch the
-published tag):**
-- **(a) Fix `hauis`, keep the tag.** On the `hauis` seat machine, clear the bad entry
-  in `/Users/jari/.gitconfig` (check `git config --global --list | grep -iE 'extraheader|proxy'`),
-  then `gh run rerun 31112313027 --failed`. Rebuilds only the mac job on the OLD
-  (self-hosted) config → completes Release + Homebrew. Simplest if the runner is handy.
-- **(b) Re-point the tag onto the runner fix.** `git tag -f v0.3.0 <commit-with-macos-14-fix>`
-  and force-push the tag → the whole release re-runs on GitHub-hosted `macos-14`, no
-  `hauis` dependency. Moves a published tag (crates.io re-publish is a harmless no-op).
-  Preferred if `hauis` is unavailable. **Cut once, let it finish** (don't re-tag mid-run).
+**Root cause (recurred multiple times) & durable fix** — the mac job failed because
+of the runner-gitconfig setup, NOT a one-off:
+- hauis's `~/.gitconfig` was a symlink → tracked `dotfiles/src/.gitconfig`, so
+  `actions/checkout` + cargo git ops polluted the tracked file. The 2026-08-08 fix
+  set `GIT_CONFIG_GLOBAL=~/.gitconfig-actions` per runner — which kept dotfiles clean
+  but **broke checkout auth** (checkout needs `--global == $HOME/.gitconfig`; the
+  override redirected the write → "Unable to replace auth placeholder"; earlier, with a
+  stale extraheader in that file, a duplicate-auth `HTTP 400`).
+- **Durable fix (2026-08-09):** `~/.gitconfig` is now a real file that `[include]`s the
+  dotfiles config. Git reads the include but never writes into it → debris stays in
+  top-level `~/.gitconfig`, dotfiles stays clean, AND checkout's `--global==$HOME`
+  invariant holds. `GIT_CONFIG_GLOBAL` removed from all 4 runner `.env` files; runners
+  restarted. **Full write-up committed to `homebase/infra/machines/hauis.md`.** Do NOT
+  re-add `GIT_CONFIG_GLOBAL` — that is the thing that breaks mac builds.
 
-Either way crates.io users already have 0.3.0.
+### ⚠️ ▶ Follow-up decision for Jari — revert the macOS→`macos-14` routing?
+
+`release-mac-github-runner` (commit `9deee1a`, on `main`) routes future mac builds to
+GitHub-hosted `macos-14` in `dist-workspace.toml`. That was done believing hauis was
+unreliable — now that hauis is durably fixed and is **the intended mac build machine**,
+main's config contradicts intent: the *next* release would build mac on `macos-14`, not
+hauis. If you want hauis to own mac builds again, revert that routing back to
+`aarch64-apple-darwin = "self-hosted"` (a small `dist-workspace.toml` change + `dist
+generate` to regenerate `release.yml`). Orchestrator can spawn a worktree for it on your
+go. (v0.3.0 itself already built on hauis — its tag predates 9deee1a.)
 
 ### Optional polish (no hard gate)
 
@@ -70,15 +83,16 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
+GLOBAL HEAD-OF-LINE: hosted-config-path-macos   ← two maalla.dev bugs, awaiting fix/defer call
 
-0.3.0 published to crates.io 2026-08-06; all feature + infra issues landed and
-dropped (incl. release-mac-github-runner). The only OPEN item is a decision, not
-code: finish the 0.3.0 GitHub Release + Homebrew — see "⚠️ ▶ Start here" above
-(option a: fix hauis + rerun; option b: re-point v0.3.0 tag). No worktree needed
-for either — they are release-ops steps for Jari.
+0.3.0 fully released 2026-08-09 (crates.io + GitHub Release + Homebrew). Two new
+hosted-share bugs filed 2026-08-09 from the glasspad.maalla.dev deploy. They touch
+disjoint files → parallel-safe.
 
-No active non-epic issues. Next code round: file new work, then re-populate lanes.
+LANE B — src/cli.rs + render/publish config
+  ▶ hosted-config-path-macos   publish config path: --help says ~/.config, macOS reads ~/Library/Application Support
+LANE C — src/hosted (host-serve response headers/routes)
+  ▶ hosted-noindex-missing     hosted /p/<slug> pages omit documented X-Robots-Tag: noindex
 ```
 <!-- execution-dag:end -->
 
@@ -104,13 +118,15 @@ Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+p
 
 ## Backlog
 
-- **0.3.0 agent→HTML consolidation — SHIPPED to crates.io 2026-08-06.** All items
-  (`markdown-template-render`, `hosted-share-server`, `skill-routing-guidance`,
-  `static-build-output`, `serve-process-mgmt`, `version-commit-stamp`) landed. Only
-  the GitHub-Release/Homebrew completion decision remains (see "⚠️ ▶ Start here").
-- `release-oss` (epic, high) — **effectively DONE**; close it.
-- No open feature backlog. Downstream homebase + tilictl consolidation is the next
-  forward work, gated on 0.3.0 (tracked in those repos).
+- **0.3.0 agent→HTML consolidation — FULLY RELEASED 2026-08-09** (crates.io + GitHub
+  Release + Homebrew). All feature/infra issues landed; GH-Release completion done.
+- **Two open bugs from the glasspad.maalla.dev deploy (2026-08-09), awaiting Jari's
+  fix/defer call:** `hosted-config-path-macos` (publish config path help vs macOS
+  reality) and `hosted-noindex-missing` (hosted `/p/<slug>` missing `noindex`).
+- **Follow-up decision:** revert the macOS→`macos-14` routing so hauis owns mac builds
+  again (see "⚠️ ▶ Follow-up decision" above).
+- Downstream homebase + tilictl consolidation is the next forward work, gated on 0.3.0
+  (tracked in those repos).
 
 ## Verify / deploy (localhost)
 
