@@ -2,11 +2,14 @@
 created: 2026-08-09
 updated: 2026-08-09
 type: feature
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 58cf078
   summary: 'feat(hosted): optional idempotency_key for POST /api/v1/pages'
+- hash: e1b7128
+  summary: 'harden(hosted): idempotency durability, isolation & mapping GC (review)'
+closed: 2026-08-09
 ---
 
 # hosted ingest idempotency key for POST /api/v1/pages
