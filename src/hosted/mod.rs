@@ -164,8 +164,10 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
 }
 
 /// Stamp `X-Robots-Tag: noindex, nofollow` on every hosted read response so a
-/// leaked capability URL cannot be indexed by a crawler ("hold the link, not
-/// indexed" — `skill.md` / the html-consolidation design G3). Purely **additive**:
+/// leaked capability URL is not indexed by a compliant crawler ("hold the link,
+/// not indexed" — `skill.md` / the html-consolidation design G3). This is
+/// advisory metadata, not an access-control boundary: the unguessable ~50-bit
+/// slug is the real confidentiality mechanism. Purely **additive**:
 /// the frozen CSP, `x-frame-options: DENY`, `referrer-policy: no-referrer`, and
 /// `cache-control: no-store` set by the shared read handlers are left untouched.
 /// **Host-serve mode ONLY** — the loopback `serve` router never carries this layer.
@@ -379,6 +381,37 @@ mod tests {
             .header("host", TEST_HOST)
             .body(Body::empty())
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn noindex_covers_base_libs_and_matched_404s_but_not_healthz() {
+        let root = tmp_root("noindex");
+        let (app, _, _) = app_with(&root);
+
+        // Base library at root carries noindex (a directly-shared asset URL).
+        let r = send(&app, get_req("/_gp/v1/bridge.js")).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers().get("x-robots-tag").unwrap().to_str().unwrap(),
+            "noindex, nofollow"
+        );
+
+        // A 404 from a *matched* read handler still passes through the layer.
+        let r = send(&app, get_req("/p/aaaaaaaaaaaaaaaaaaaaaaaaaa/_c/index")).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            r.headers().get("x-robots-tag").unwrap().to_str().unwrap(),
+            "noindex, nofollow"
+        );
+
+        // The liveness probe is not a hosted page — it must NOT carry noindex.
+        let r = send(&app, get_req("/healthz")).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert!(
+            r.headers().get("x-robots-tag").is_none(),
+            "healthz must not carry noindex"
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[tokio::test]
