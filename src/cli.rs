@@ -1910,7 +1910,10 @@ fn server_is_loopback(server: &str) -> bool {
 /// first candidate that exists wins.
 fn publish_config_candidates() -> Vec<PathBuf> {
     publish_config_candidates_from(
-        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        // Per the XDG spec an empty value is treated as unset (falls back to ~/.config).
+        std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from),
         dirs::home_dir(),
         dirs::config_dir(),
     )
@@ -1934,7 +1937,10 @@ fn publish_config_candidates_from(
     }
 
     // Backward-compat fallback: the platform config dir (macOS Application Support).
-    if let Some(dir) = platform_config_dir {
+    // Filter for absoluteness too — on Unix `dirs::config_dir()` echoes a relative
+    // `$XDG_CONFIG_HOME` verbatim, and a relative candidate would be read against the
+    // process CWD (an unintended file on multi-user/container hosts).
+    if let Some(dir) = platform_config_dir.filter(|p| p.is_absolute()) {
         let legacy = leaf(dir);
         if !candidates.contains(&legacy) {
             candidates.push(legacy);
@@ -1944,27 +1950,41 @@ fn publish_config_candidates_from(
     candidates
 }
 
-/// Load the optional publish config file. A missing file is fine (`None`s);
-/// a present-but-malformed file is a user error surfaced informatively. Reads the
-/// first existing path from [`publish_config_candidates`].
+/// Load the optional publish config file. A candidate that is simply absent
+/// (`NotFound`) is skipped so resolution advances to the next; a candidate that
+/// *exists* but cannot be read (permissions, a directory, non-UTF-8, …) or is
+/// malformed is a user error surfaced informatively — never silently swallowed
+/// into the legacy fallback, which could substitute a different server/api_key.
+/// Returns the config from the first candidate that exists.
 fn load_publish_config(json: bool) -> PublishConfig {
-    let Some((path, contents)) = publish_config_candidates()
-        .into_iter()
-        .find_map(|p| std::fs::read_to_string(&p).ok().map(|c| (p, c)))
-    else {
-        return PublishConfig::default(); // no config at any candidate path
-    };
-    match serde_yaml::from_str::<PublishConfig>(&contents) {
-        Ok(c) => c,
-        Err(e) => exit_error(
-            json,
-            1,
-            "invalid_config",
-            &format!("malformed {}: {e}", path.display()),
-            None,
-            None,
-        ),
+    for path in publish_config_candidates() {
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            // Genuinely absent → try the next candidate.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            // Exists but unreadable → do not fall through to a different config.
+            Err(e) => exit_error(
+                json,
+                1,
+                "unreadable_config",
+                &format!("cannot read {}: {e}", path.display()),
+                None,
+                None,
+            ),
+        };
+        return match serde_yaml::from_str::<PublishConfig>(&contents) {
+            Ok(c) => c,
+            Err(e) => exit_error(
+                json,
+                1,
+                "invalid_config",
+                &format!("malformed {}: {e}", path.display()),
+                None,
+                None,
+            ),
+        };
     }
+    PublishConfig::default() // no config at any candidate path
 }
 
 /// Resolve the `--template` reference for `publish`: a built-in name is sent
@@ -2403,12 +2423,14 @@ mod tests {
             ],
         );
 
-        // A relative XDG value is ignored (falls through to ~/.config).
+        // A relative XDG value is ignored (falls through to ~/.config). On Unix
+        // `dirs::config_dir()` echoes the same relative value; it must NOT become a
+        // CWD-relative candidate — only the absolute ~/.config path survives.
         assert_eq!(
             publish_config_candidates_from(
                 Some(PathBuf::from("relative/dir")),
                 Some(PathBuf::from("/home/u")),
-                None,
+                Some(PathBuf::from("relative/dir")),
             ),
             vec![cfg("/home/u/.config")],
         );

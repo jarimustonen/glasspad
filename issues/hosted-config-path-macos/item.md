@@ -2,8 +2,11 @@
 created: 2026-08-09
 updated: 2026-08-09
 type: bug
-status: open
+status: in-progress
 priority: normal
+commits:
+- hash: 755de91
+  summary: honor $XDG_CONFIG_HOME/~/.config on all platforms, legacy dirs::config_dir() fallback
 ---
 
 # publish config path: --help says ~/.config but macOS resolves to ~/Library/Application Support
