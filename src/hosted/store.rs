@@ -10,17 +10,30 @@
 //!
 //! Pages are **immutable**: a page is written once (to a temp path then atomically
 //! `rename`d in, so a crash never exposes a half-page) and never mutated — there is
-//! no update/overwrite/delete API, and `publish` always mints a **fresh random
-//! slug**, so one tenant can never overwrite another's page. The in-memory
+//! no update/overwrite/delete API, and `publish` mints a **fresh random slug** for
+//! every new page, so one tenant can never overwrite another's page. The in-memory
 //! [`Snapshot`] the read handlers serve is the serving source of truth; the on-disk
 //! tree is the persistence + GC source of truth.
 //!
 //! Retention/GC removes page directories older than the retention window and swaps
 //! a rebuilt snapshot so an expired page is promptly **no longer served**.
+//!
+//! **Idempotency keys** (optional). A publish may carry an `idempotency_key`. When
+//! present, the store durably records `key → slug` — under a **per-tenant**
+//! directory `<root>/idem/<tenant>/<sha256(key)>.json`, written (fsync + atomic
+//! rename) **after** the page files are durable — and a later publish with the same
+//! key returns the *same* page instead of minting a new one. This gives an API-key
+//! publisher exactly-once semantics across a lost receipt. A key whose page has
+//! since been GC'd/deleted ("dangling") falls through to a fresh create. The
+//! per-tenant directory is the isolation boundary: tenant A's key can only ever
+//! resolve to a slug tenant A recorded. No key → a fresh slug every time (the
+//! default path is unchanged).
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use sha2::{Digest, Sha256};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -51,10 +64,27 @@ const META_SCHEMA: u32 = 1;
 const ARTIFACT_FILE: &str = "artifact.html";
 const META_FILE: &str = "meta.json";
 
+/// Schema guard for the on-disk idempotency-mapping sidecar.
+const IDEM_SCHEMA: u32 = 1;
+
+/// One durable `key → slug` idempotency mapping. Stored one-per-file at
+/// `<root>/idem/<tenant>/<sha256(key)>.json`. `schema` guards the format; `slug`
+/// is validated against the space grammar on read (defense-in-depth: a hand-edited
+/// mapping cannot smuggle a bad slug into the lookup).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IdemRecord {
+    schema: u32,
+    slug: String,
+}
+
 /// The persistent page store. Holds the storage root and a handle to the
 /// [`ArtifactHost`] whose snapshot it keeps in sync on publish + GC.
 pub struct Store {
     pages_dir: PathBuf,
+    /// Root of the per-tenant idempotency-mapping tree (`<root>/idem/<tenant>/`).
+    /// A tenant's mappings live only under its own subdirectory, so a key lookup
+    /// is scoped to the authenticated tenant by construction.
+    idem_dir: PathBuf,
     host: Arc<ArtifactHost>,
     /// Serializes the read-snapshot → mutate-disk → swap-snapshot critical section
     /// across `publish` and `gc`. Without it, two concurrent publishes (or a
@@ -71,6 +101,10 @@ pub struct Store {
 pub struct Published {
     pub slug: String,
     pub title: String,
+    /// `true` when this call minted a new page; `false` when an idempotency key
+    /// replayed an already-published page. The ingest handler maps this to `201`
+    /// vs `200`.
+    pub created: bool,
 }
 
 impl Store {
@@ -82,8 +116,11 @@ impl Store {
     pub fn open(root: &Path, host: Arc<ArtifactHost>) -> std::io::Result<Self> {
         let pages_dir = root.join("pages");
         std::fs::create_dir_all(&pages_dir)?;
+        let idem_dir = root.join("idem");
+        std::fs::create_dir_all(&idem_dir)?;
         let store = Store {
             pages_dir,
+            idem_dir,
             host,
             mutation: std::sync::Mutex::new(()),
         };
@@ -194,17 +231,38 @@ impl Store {
     /// and meta atomically, and inserts the new single-artifact space into the live
     /// snapshot via the host's atomic swap. Returns the minted slug and resolved
     /// title. Enforces [`MAX_PAGES`].
+    ///
+    /// When `idempotency_key` is `Some`, the publish is exactly-once for that
+    /// (tenant, key): a repeat with a key whose page is still served returns that
+    /// same page rather than minting a new one, and the durable `key → slug` mapping
+    /// is written **after** the page is durable (see [`Store::write_page`] and
+    /// [`Store::write_idem`]) so a crash never leaves a mapping pointing at a page
+    /// that isn't on disk. A dangling key (mapped page GC'd/deleted) falls through
+    /// to a fresh create. `None` → a fresh slug every time.
     pub fn publish(
         &self,
         tenant: &str,
         html: String,
         title_override: Option<String>,
+        idempotency_key: Option<&str>,
     ) -> Result<Published, PublishError> {
-        // Serialize the whole read→write→swap window so concurrent publishes (and
-        // GC) can't lose each other's snapshot updates. Held across the blocking
-        // disk write; ingest calls this on a blocking thread (`spawn_blocking`).
+        // Serialize the whole lookup→write→swap window so concurrent publishes (and
+        // GC) can't lose each other's snapshot updates, and so two concurrent
+        // same-key publishes can't both mint a page (the second sees the first's
+        // mapping). Held across the blocking disk write; ingest calls this on a
+        // blocking thread (`spawn_blocking`).
         let _guard = self.mutation.lock().expect("store mutation lock poisoned");
         let current = self.host.snapshot();
+
+        // Idempotency fast-path: a recorded key whose page is still served returns
+        // it (checked before the capacity gate — returning an existing page must not
+        // be blocked by a full store).
+        if let Some(key) = idempotency_key
+            && let Some(existing) = self.lookup_idempotent(tenant, key, &current)?
+        {
+            return Ok(existing);
+        }
+
         if current.spaces.len() >= MAX_PAGES {
             return Err(PublishError::Full);
         }
@@ -228,6 +286,16 @@ impl Store {
         self.write_page(&slug, &html, &meta)
             .map_err(PublishError::Io)?;
 
+        // Record the durable key → slug mapping only AFTER the page is on disk and
+        // fsync'd. Ordering is the crash-safety contract: if we crash between the two
+        // writes, at worst an orphan page exists with no mapping — the caller retries
+        // and we create fresh (safe). We never persist a mapping to a page that isn't
+        // durable, so a key can never resolve to a missing/half-written page.
+        if let Some(key) = idempotency_key {
+            self.write_idem(tenant, key, &slug)
+                .map_err(PublishError::Io)?;
+        }
+
         // Clone-modify-swap: readers in flight keep the old Arc; new readers see the
         // added page. (O(n) rebuild is acceptable at this iteration's scale; a
         // future Arc-shared Space body would make it O(1) — see plan §6.)
@@ -235,7 +303,112 @@ impl Store {
         spaces.insert(slug.clone(), one_artifact_space(html, title.clone()));
         self.host.swap(Snapshot { spaces });
 
-        Ok(Published { slug, title })
+        Ok(Published {
+            slug,
+            title,
+            created: true,
+        })
+    }
+
+    /// Resolve an idempotency key to an already-published page for `tenant`, or
+    /// `None` if there is no live mapping. Reads the per-tenant mapping sidecar; a
+    /// missing file (no key yet), a corrupt/invalid record, or a **dangling** slug
+    /// (mapped page no longer in the served snapshot — GC'd/deleted) all return
+    /// `None` so the caller falls through to a fresh create. Isolation is by path:
+    /// only `<idem>/<tenant>/…` is consulted, so one tenant's key never resolves to
+    /// another tenant's page.
+    fn lookup_idempotent(
+        &self,
+        tenant: &str,
+        key: &str,
+        current: &Snapshot,
+    ) -> Result<Option<Published>, PublishError> {
+        let path = self.idem_path(tenant, key);
+        let bytes = match read_capped(&path, MAX_META_BYTES) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(PublishError::Io(e)),
+        };
+        if bytes.len() as u64 > MAX_META_BYTES {
+            // An oversize mapping file is corrupt/hostile — ignore it and create fresh.
+            eprintln!(
+                "glasspad host: idempotency mapping {} exceeds {MAX_META_BYTES} bytes; ignoring",
+                path.display()
+            );
+            return Ok(None);
+        }
+        let rec: IdemRecord = match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "glasspad host: bad idempotency mapping {}: {e}; ignoring",
+                    path.display()
+                );
+                return Ok(None);
+            }
+        };
+        if rec.schema != IDEM_SCHEMA || !valid_space(&rec.slug) {
+            eprintln!(
+                "glasspad host: idempotency mapping {} has invalid schema/slug; ignoring",
+                path.display()
+            );
+            return Ok(None);
+        }
+        // Dangling check: only return the page if it is still served. A GC'd/deleted
+        // page is absent from the snapshot, so the key falls through to a fresh create.
+        match current.space(&rec.slug) {
+            Some(sp) => {
+                let title = sp
+                    .artifacts
+                    .get(SINGLE_SLUG)
+                    .map(|a| a.title.clone())
+                    .unwrap_or_else(|| rec.slug.clone());
+                Ok(Some(Published {
+                    slug: rec.slug,
+                    title,
+                    created: false,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Filesystem path of the mapping sidecar for `(tenant, key)`. The key is hashed
+    /// (SHA-256, hex) so an arbitrary client-supplied string becomes a fixed-length,
+    /// path-safe, collision-resistant filename — a raw key could contain `/`, `..`,
+    /// or (on a case-insensitive filesystem) collide with a differently-cased key.
+    /// `tenant` is a validated space name (`valid_space`), safe as a path component.
+    fn idem_path(&self, tenant: &str, key: &str) -> PathBuf {
+        self.idem_dir
+            .join(tenant)
+            .join(format!("{}.json", sha256_hex(key.as_bytes())))
+    }
+
+    /// Durably write the `key → slug` mapping for `tenant` (fsync + atomic rename).
+    /// Called only **after** the page is durable, so the mapping never outlives its
+    /// page across a crash. The tmp file is fsync'd, renamed into place, and the
+    /// containing directory fsync'd so the rename itself survives a crash.
+    fn write_idem(&self, tenant: &str, key: &str, slug: &str) -> std::io::Result<()> {
+        let tenant_dir = self.idem_dir.join(tenant);
+        std::fs::create_dir_all(&tenant_dir)?;
+        let hash = sha256_hex(key.as_bytes());
+        let final_path = tenant_dir.join(format!("{hash}.json"));
+        let tmp_path = tenant_dir.join(format!(".{hash}.tmp"));
+        let rec = IdemRecord {
+            schema: IDEM_SCHEMA,
+            slug: slug.to_string(),
+        };
+        let json = serde_json::to_vec(&rec)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let staged = (|| -> std::io::Result<()> {
+            write_file_synced(&tmp_path, &json)?;
+            std::fs::rename(&tmp_path, &final_path)?;
+            fsync_dir(&tenant_dir)
+        })();
+        if staged.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        staged
     }
 
     /// A slug present in neither the current snapshot nor on disk. Bounded retries
@@ -250,9 +423,12 @@ impl Store {
         Err(PublishError::SlugExhausted)
     }
 
-    /// Atomically materialize a page directory: write both files into a `.<slug>.tmp`
-    /// staging dir, then `rename` it into place, so a reader never sees a page dir
-    /// that exists but lacks its artifact/meta.
+    /// Atomically + **durably** materialize a page directory: write both files
+    /// (fsync'd) into a `.<slug>.tmp` staging dir, fsync the staging dir, `rename`
+    /// it into place, then fsync `pages_dir` so the rename survives a crash. A reader
+    /// never sees a page dir that exists but lacks its artifact/meta, and once this
+    /// returns the page is durable — which is the precondition for recording an
+    /// idempotency mapping that points at it.
     fn write_page(&self, slug: &str, html: &str, meta: &PageMeta) -> std::io::Result<()> {
         let final_dir = self.pages_dir.join(slug);
         let tmp_dir = self.pages_dir.join(format!(".{slug}.tmp"));
@@ -263,13 +439,18 @@ impl Store {
         // so a leaked `.<slug>.tmp` would otherwise never be reclaimed).
         let staged = (|| -> std::io::Result<()> {
             std::fs::create_dir_all(&tmp_dir)?;
-            std::fs::write(tmp_dir.join(ARTIFACT_FILE), html)?;
+            write_file_synced(&tmp_dir.join(ARTIFACT_FILE), html.as_bytes())?;
             let meta_json = serde_json::to_vec_pretty(meta)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            std::fs::write(tmp_dir.join(META_FILE), meta_json)?;
+            write_file_synced(&tmp_dir.join(META_FILE), &meta_json)?;
+            // Flush the staging dir so both file entries are durable before the
+            // rename that publishes them.
+            fsync_dir(&tmp_dir)?;
             // rename is atomic on the same filesystem; the staging dir is a sibling
             // so it shares the pages_dir filesystem.
-            std::fs::rename(&tmp_dir, &final_dir)
+            std::fs::rename(&tmp_dir, &final_dir)?;
+            // Flush the parent so the rename (the page's appearance) is itself durable.
+            fsync_dir(&self.pages_dir)
         })();
         if staged.is_err() {
             let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -337,6 +518,42 @@ fn one_artifact_space(html: String, title: String) -> Space {
     sp.nav = vec![SINGLE_SLUG.to_string()];
     sp.home = Some(SINGLE_SLUG.to_string());
     sp
+}
+
+/// Hex-encode the SHA-256 of `bytes` (64 lowercase hex chars). Used to turn an
+/// arbitrary idempotency key into a fixed-length, path-safe, collision-resistant
+/// filename.
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        // Two lowercase hex digits per byte; infallible into a String.
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+/// Write `bytes` to `path` and fsync the file so its contents are durable before
+/// the caller renames it into place (create truncates any stale tmp file).
+fn write_file_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
+}
+
+/// fsync a directory so a rename/create within it is durable. On Unix this flushes
+/// the directory entry; on other platforms a directory handle can't be fsync'd the
+/// same way, so it is a no-op (the deploy target is Unix — see the crate's
+/// `cfg(unix)` deps).
+#[cfg(unix)]
+fn fsync_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::File::open(dir)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn fsync_dir(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// Ceiling on a `meta.json` sidecar read — it is a handful of small fields, so a
@@ -419,7 +636,7 @@ mod tests {
         assert_eq!(store.page_count(), 0);
 
         let pub1 = store
-            .publish("acme", "<h1>Hello</h1>".into(), None)
+            .publish("acme", "<h1>Hello</h1>".into(), None, None)
             .unwrap();
         assert!(crate::artifact_host::valid_name(&pub1.slug));
         // Now served in the snapshot.
@@ -463,7 +680,7 @@ mod tests {
             let store = store.clone();
             handles.push(std::thread::spawn(move || {
                 store
-                    .publish("acme", format!("<h1>page {i}</h1>"), None)
+                    .publish("acme", format!("<h1>page {i}</h1>"), None, None)
                     .unwrap()
                     .slug
             }));
@@ -483,7 +700,9 @@ mod tests {
         let root = tmp_root("tenantmeta");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
-        let p = store.publish("globex", "<h1>x</h1>".into(), None).unwrap();
+        let p = store
+            .publish("globex", "<h1>x</h1>".into(), None, None)
+            .unwrap();
         let meta: PageMeta = serde_json::from_slice(
             &std::fs::read(root.join("pages").join(&p.slug).join("meta.json")).unwrap(),
         )
@@ -498,8 +717,12 @@ mod tests {
         let root = tmp_root("newslug");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
-        let a = store.publish("acme", "<h1>A</h1>".into(), None).unwrap();
-        let b = store.publish("acme", "<h1>B</h1>".into(), None).unwrap();
+        let a = store
+            .publish("acme", "<h1>A</h1>".into(), None, None)
+            .unwrap();
+        let b = store
+            .publish("acme", "<h1>B</h1>".into(), None, None)
+            .unwrap();
         assert_ne!(a.slug, b.slug, "publish must always mint a fresh slug");
         // Both pages coexist (immutable, no overwrite).
         assert_eq!(store.page_count(), 2);
@@ -511,7 +734,9 @@ mod tests {
         let root = tmp_root("gc");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
-        let p = store.publish("acme", "<h1>old</h1>".into(), None).unwrap();
+        let p = store
+            .publish("acme", "<h1>old</h1>".into(), None, None)
+            .unwrap();
 
         // Backdate the page's meta.created_at to 100 days ago on disk.
         let meta_path = root.join("pages").join(&p.slug).join("meta.json");
@@ -534,7 +759,9 @@ mod tests {
         let root = tmp_root("gckeep");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
-        let p = store.publish("acme", "<h1>new</h1>".into(), None).unwrap();
+        let p = store
+            .publish("acme", "<h1>new</h1>".into(), None, None)
+            .unwrap();
         let removed = store.gc(Duration::days(90)).unwrap();
         assert_eq!(removed, 0);
         assert!(h.snapshot().space(&p.slug).is_some());
@@ -547,13 +774,180 @@ mod tests {
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
         let a = store
-            .publish("acme", "<title>FromHtml</title><h1>x</h1>".into(), None)
+            .publish(
+                "acme",
+                "<title>FromHtml</title><h1>x</h1>".into(),
+                None,
+                None,
+            )
             .unwrap();
         assert_eq!(a.title, "FromHtml");
         let b = store
-            .publish("acme", "<h1>x</h1>".into(), Some("Override".into()))
+            .publish("acme", "<h1>x</h1>".into(), Some("Override".into()), None)
             .unwrap();
         assert_eq!(b.title, "Override");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn idempotent_repeat_returns_same_page_no_new_slug() {
+        let root = tmp_root("idem-repeat");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish("acme", "<h1>one</h1>".into(), None, Some("k-1"))
+            .unwrap();
+        // A repeat with the same key returns the SAME slug — no new page minted.
+        let again = store
+            .publish("acme", "<h1>changed body</h1>".into(), None, Some("k-1"))
+            .unwrap();
+        assert_eq!(
+            first.slug, again.slug,
+            "same key must return the first page"
+        );
+        assert_eq!(again.title, first.title, "repeat returns the stored title");
+        assert_eq!(
+            store.page_count(),
+            1,
+            "no duplicate page for a repeated key"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn different_key_mints_a_new_page() {
+        let root = tmp_root("idem-diff");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let a = store
+            .publish("acme", "<h1>a</h1>".into(), None, Some("k-a"))
+            .unwrap();
+        let b = store
+            .publish("acme", "<h1>b</h1>".into(), None, Some("k-b"))
+            .unwrap();
+        assert_ne!(a.slug, b.slug, "a distinct key must mint a fresh page");
+        assert_eq!(store.page_count(), 2);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn same_key_is_scoped_per_tenant() {
+        // Two tenants using the *same* key string must each get their own page —
+        // one tenant's key can never resolve to another's page.
+        let root = tmp_root("idem-tenant");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let a = store
+            .publish("acme", "<h1>acme</h1>".into(), None, Some("shared"))
+            .unwrap();
+        let b = store
+            .publish("globex", "<h1>globex</h1>".into(), None, Some("shared"))
+            .unwrap();
+        assert_ne!(
+            a.slug, b.slug,
+            "same key, different tenants → different pages"
+        );
+        // Each tenant's repeat still returns its own page.
+        let a2 = store
+            .publish("acme", "<h1>x</h1>".into(), None, Some("shared"))
+            .unwrap();
+        let b2 = store
+            .publish("globex", "<h1>y</h1>".into(), None, Some("shared"))
+            .unwrap();
+        assert_eq!(a.slug, a2.slug);
+        assert_eq!(b.slug, b2.slug);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn dangling_key_falls_through_to_fresh_create() {
+        // A key whose page has been GC'd must not resurrect it: the next publish with
+        // that key creates a fresh page (and re-points the mapping at the new slug).
+        let root = tmp_root("idem-dangling");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish("acme", "<h1>old</h1>".into(), None, Some("k"))
+            .unwrap();
+
+        // Backdate + GC the page so the mapping is now dangling.
+        let meta_path = root.join("pages").join(&first.slug).join("meta.json");
+        let mut meta: PageMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta.created_at = Utc::now() - Duration::days(100);
+        std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_eq!(store.gc(Duration::days(90)).unwrap(), 1);
+        assert!(h.snapshot().space(&first.slug).is_none());
+
+        // Same key again: dangling → fresh create.
+        let second = store
+            .publish("acme", "<h1>new</h1>".into(), None, Some("k"))
+            .unwrap();
+        assert_ne!(first.slug, second.slug, "dangling key must create fresh");
+        // …and the refreshed mapping now returns the NEW page on a further repeat.
+        let third = store
+            .publish("acme", "<h1>z</h1>".into(), None, Some("k"))
+            .unwrap();
+        assert_eq!(second.slug, third.slug, "mapping re-points at the new page");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn idempotency_mapping_survives_reopen() {
+        // The mapping is durable: after reopening the store, the same key still
+        // resolves to the first page (exactly-once across a restart).
+        let root = tmp_root("idem-reopen");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish("acme", "<h1>durable</h1>".into(), None, Some("k"))
+            .unwrap();
+        drop(store);
+
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        let again = store2
+            .publish("acme", "<h1>retry</h1>".into(), None, Some("k"))
+            .unwrap();
+        assert_eq!(first.slug, again.slug, "mapping must survive reopen");
+        assert_eq!(store2.page_count(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn corrupt_mapping_falls_through_to_fresh_create() {
+        // A hand-tampered/corrupt mapping file must not crash or return a bad page —
+        // it is ignored and the publish creates fresh.
+        let root = tmp_root("idem-corrupt");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish("acme", "<h1>a</h1>".into(), None, Some("k"))
+            .unwrap();
+        // Overwrite the mapping sidecar with garbage.
+        let path = store.idem_path("acme", "k");
+        std::fs::write(&path, b"not json").unwrap();
+        let second = store
+            .publish("acme", "<h1>b</h1>".into(), None, Some("k"))
+            .unwrap();
+        assert_ne!(first.slug, second.slug, "corrupt mapping → fresh create");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn no_key_mints_fresh_every_time() {
+        // The default path is unchanged: no key → a new slug on every publish.
+        let root = tmp_root("idem-nokey");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let a = store
+            .publish("acme", "<h1>a</h1>".into(), None, None)
+            .unwrap();
+        let b = store
+            .publish("acme", "<h1>a</h1>".into(), None, None)
+            .unwrap();
+        assert_ne!(a.slug, b.slug);
+        assert_eq!(store.page_count(), 2);
         std::fs::remove_dir_all(&root).ok();
     }
 }

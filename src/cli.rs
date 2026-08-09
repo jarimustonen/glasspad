@@ -1700,6 +1700,7 @@ pub async fn publish(
     markdown: bool,
     template: Option<String>,
     title: Option<String>,
+    idempotency_key: Option<String>,
     json: bool,
     no_open: bool,
 ) {
@@ -1757,6 +1758,11 @@ pub async fn publish(
     }
     if let Some(t) = &title {
         body.insert("title".into(), json!(t));
+    }
+    // An idempotency key is passed through verbatim; the server validates length
+    // and non-emptiness and enforces the exactly-once semantics.
+    if let Some(k) = resolve_setting(idempotency_key, "GLASSPAD_IDEMPOTENCY_KEY", None) {
+        body.insert("idempotency_key".into(), json!(k));
     }
 
     // Warn (non-fatal) if the bearer key would cross a plaintext connection to a

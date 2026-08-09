@@ -154,6 +154,11 @@ enum Commands {
         /// Override the resolved display title.
         #[arg(long)]
         title: Option<String>,
+        /// Optional idempotency key: a repeat publish with the same key returns the
+        /// first page (HTTP 200) instead of minting a new one — exactly-once for a
+        /// deterministic caller across a lost receipt.
+        #[arg(long)]
+        idempotency_key: Option<String>,
         /// Do not open the published URL in a browser.
         #[arg(long)]
         no_open: bool,
@@ -255,10 +260,19 @@ async fn main() {
             markdown,
             template,
             title,
+            idempotency_key,
             no_open,
         }) => {
             cli::publish(
-                file, server, api_key, markdown, template, title, json, no_open,
+                file,
+                server,
+                api_key,
+                markdown,
+                template,
+                title,
+                idempotency_key,
+                json,
+                no_open,
             )
             .await
         }

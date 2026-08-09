@@ -443,6 +443,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn idempotency_key_replays_first_page_201_then_200() {
+        let root = tmp_root("idem");
+        let (app, _, _) = app_with(&root);
+
+        // First publish with a key → 201 Created, mints a slug.
+        let r = send(
+            &app,
+            publish_req(
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>one</h1>", "idempotency_key": "digest-2026-08-09" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let first_slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+
+        // Repeat with the same key → 200 OK, SAME slug (no new page).
+        let r = send(
+            &app,
+            publish_req(
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>different body</h1>", "idempotency_key": "digest-2026-08-09" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK, "repeat must be 200, not 201");
+        let again_slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+        assert_eq!(first_slug, again_slug, "repeat must return the first slug");
+
+        // A different key → 201, fresh slug.
+        let r = send(
+            &app,
+            publish_req(
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>two</h1>", "idempotency_key": "digest-2026-08-10" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let other_slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+        assert_ne!(
+            first_slug, other_slug,
+            "a distinct key must mint a fresh page"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn idempotency_key_over_length_is_rejected() {
+        let root = tmp_root("idemlong");
+        let (app, _, _) = app_with(&root);
+        let long_key = "k".repeat(super::ingest::MAX_IDEMPOTENCY_KEY_CHARS + 1);
+        let r = send(
+            &app,
+            publish_req(
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>x</h1>", "idempotency_key": long_key }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let j = body_json(r).await;
+        assert_eq!(
+            j["error"]["code"].as_str().unwrap(),
+            "idempotency_key_too_long"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn empty_idempotency_key_is_rejected() {
+        let root = tmp_root("idemempty");
+        let (app, _, _) = app_with(&root);
+        let r = send(
+            &app,
+            publish_req(
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>x</h1>", "idempotency_key": "   " }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let j = body_json(r).await;
+        assert_eq!(
+            j["error"]["code"].as_str().unwrap(),
+            "idempotency_key_empty"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
     async fn published_page_is_served_sandboxed_under_public_origin() {
         let root = tmp_root("serve");
         let (app, _, _) = app_with(&root);

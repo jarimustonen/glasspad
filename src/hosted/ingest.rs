@@ -14,6 +14,11 @@
 //!   must carry one `{{content}}`).
 //!
 //! Optional `"title"` overrides the resolved display title.
+//!
+//! Optional `"idempotency_key"` makes the publish exactly-once for the
+//! authenticated tenant: a repeat with the same key returns the first page (`200`)
+//! instead of minting a new one (`201`). See [`crate::hosted::store`] for the
+//! durability + per-tenant-isolation contract.
 
 use axum::extract::rejection::JsonRejection;
 use axum::{
@@ -34,6 +39,11 @@ use super::HostedState;
 use super::auth::Tenant;
 use super::store::PublishError;
 
+/// Upper bound on an `idempotency_key` (characters). Keys are short deterministic
+/// caller-chosen strings; a longer value is rejected (AI-first §strict validation)
+/// rather than silently truncated or hashed regardless.
+pub const MAX_IDEMPOTENCY_KEY_CHARS: usize = 256;
+
 /// The ingest request body.
 #[derive(Deserialize)]
 pub struct PublishRequest {
@@ -41,6 +51,7 @@ pub struct PublishRequest {
     markdown: Option<String>,
     template: Option<String>,
     title: Option<String>,
+    idempotency_key: Option<String>,
 }
 
 /// `POST /api/v1/pages`. The [`Tenant`] is injected by the auth middleware (never
@@ -75,6 +86,30 @@ pub async fn publish(
         );
     }
 
+    // Validate the optional idempotency key: present means non-empty and bounded.
+    // (A whitespace-only key is a client bug — reject it rather than silently
+    // treating it as "no key".)
+    let idempotency_key = match &req.idempotency_key {
+        None => None,
+        Some(k) => {
+            if k.trim().is_empty() {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "idempotency_key_empty",
+                    "idempotency_key must be a non-empty string when provided",
+                );
+            }
+            if k.chars().count() > MAX_IDEMPOTENCY_KEY_CHARS {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "idempotency_key_too_long",
+                    &format!("idempotency_key exceeds {MAX_IDEMPOTENCY_KEY_CHARS} characters"),
+                );
+            }
+            Some(k.clone())
+        }
+    };
+
     // Resolve the artifact body from exactly one of html / markdown.
     let html = match resolve_body(&req) {
         Ok(h) => h,
@@ -86,7 +121,10 @@ pub async fn publish(
     let store = state.store.clone();
     let tenant_id = tenant.0.clone();
     let title = req.title.clone();
-    let result = tokio::task::spawn_blocking(move || store.publish(&tenant_id, html, title)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        store.publish(&tenant_id, html, title, idempotency_key.as_deref())
+    })
+    .await;
     let result = match result {
         Ok(r) => r,
         Err(join) => {
@@ -102,6 +140,13 @@ pub async fn publish(
     match result {
         Ok(published) => {
             let url = format!("{}{}/{}/", state.public_origin, state.mount, published.slug);
+            // A fresh page is `201 Created`; an idempotency-key replay of an
+            // already-published page is `200 OK` (same page, not newly created).
+            let status = if published.created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
             let payload = json!({
                 "schema_version": SCHEMA_VERSION,
                 "slug": published.slug,
@@ -109,7 +154,7 @@ pub async fn publish(
                 "title": published.title,
                 "warnings": [],
             });
-            (StatusCode::CREATED, axum::Json(payload)).into_response()
+            (status, axum::Json(payload)).into_response()
         }
         Err(PublishError::Full) => err(
             StatusCode::INSUFFICIENT_STORAGE,
