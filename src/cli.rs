@@ -1673,7 +1673,10 @@ fn emit_host_serving(
 // --- publish (client) -----------------------------------------------------
 
 /// Config the `publish` client reads (lowest precedence; flag > env > file). YAML
-/// at `${XDG_CONFIG_HOME:-~/.config}/glasspad/config.yaml`. Both fields optional.
+/// at `${XDG_CONFIG_HOME:-~/.config}/glasspad/config.yaml` on every platform. For
+/// backward compatibility an existing file at the platform `dirs::config_dir()`
+/// location (macOS `~/Library/Application Support/glasspad/config.yaml`) is still
+/// read as a fallback when no XDG-path file exists. Both fields optional.
 #[derive(Default, serde::Deserialize)]
 struct PublishConfig {
     server: Option<String>,
@@ -1900,15 +1903,56 @@ fn server_is_loopback(server: &str) -> bool {
     host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
 }
 
+/// Candidate config-file paths in precedence order: the documented XDG path
+/// (`$XDG_CONFIG_HOME`, else `~/.config`) first on every platform, then — for
+/// backward compatibility — the platform `dirs::config_dir()` location (on macOS
+/// `~/Library/Application Support`), which older installs may still use. The
+/// first candidate that exists wins.
+fn publish_config_candidates() -> Vec<PathBuf> {
+    publish_config_candidates_from(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        dirs::home_dir(),
+        dirs::config_dir(),
+    )
+}
+
+/// Pure candidate-ordering logic (env/home/config-dir passed in so it is testable).
+fn publish_config_candidates_from(
+    xdg_config_home: Option<PathBuf>,
+    home_dir: Option<PathBuf>,
+    platform_config_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let leaf = |base: PathBuf| base.join("glasspad").join("config.yaml");
+    let mut candidates = Vec::new();
+
+    // Documented, cross-platform path: $XDG_CONFIG_HOME (if set & absolute), else ~/.config.
+    let xdg = xdg_config_home
+        .filter(|p| p.is_absolute())
+        .or_else(|| home_dir.map(|h| h.join(".config")));
+    if let Some(dir) = xdg {
+        candidates.push(leaf(dir));
+    }
+
+    // Backward-compat fallback: the platform config dir (macOS Application Support).
+    if let Some(dir) = platform_config_dir {
+        let legacy = leaf(dir);
+        if !candidates.contains(&legacy) {
+            candidates.push(legacy);
+        }
+    }
+
+    candidates
+}
+
 /// Load the optional publish config file. A missing file is fine (`None`s);
-/// a present-but-malformed file is a user error surfaced informatively.
+/// a present-but-malformed file is a user error surfaced informatively. Reads the
+/// first existing path from [`publish_config_candidates`].
 fn load_publish_config(json: bool) -> PublishConfig {
-    let Some(path) = dirs::config_dir().map(|d| d.join("glasspad").join("config.yaml")) else {
-        return PublishConfig::default();
-    };
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return PublishConfig::default(), // absent/unreadable → no config
+    let Some((path, contents)) = publish_config_candidates()
+        .into_iter()
+        .find_map(|p| std::fs::read_to_string(&p).ok().map(|c| (p, c)))
+    else {
+        return PublishConfig::default(); // no config at any candidate path
     };
     match serde_yaml::from_str::<PublishConfig>(&contents) {
         Ok(c) => c,
@@ -2329,6 +2373,54 @@ mod tests {
                 .unwrap()
                 .title,
             "myspace"
+        );
+    }
+
+    #[test]
+    fn publish_config_prefers_xdg_then_falls_back_to_platform_dir() {
+        let cfg = |p: &str| PathBuf::from(p).join("glasspad").join("config.yaml");
+
+        // $XDG_CONFIG_HOME (absolute) wins; platform dir follows as fallback.
+        assert_eq!(
+            publish_config_candidates_from(
+                Some(PathBuf::from("/xdg")),
+                Some(PathBuf::from("/home/u")),
+                Some(PathBuf::from("/home/u/Library/Application Support")),
+            ),
+            vec![cfg("/xdg"), cfg("/home/u/Library/Application Support")],
+        );
+
+        // No XDG → ~/.config first, then the platform dir as backward-compat fallback.
+        assert_eq!(
+            publish_config_candidates_from(
+                None,
+                Some(PathBuf::from("/home/u")),
+                Some(PathBuf::from("/home/u/Library/Application Support")),
+            ),
+            vec![
+                cfg("/home/u/.config"),
+                cfg("/home/u/Library/Application Support")
+            ],
+        );
+
+        // A relative XDG value is ignored (falls through to ~/.config).
+        assert_eq!(
+            publish_config_candidates_from(
+                Some(PathBuf::from("relative/dir")),
+                Some(PathBuf::from("/home/u")),
+                None,
+            ),
+            vec![cfg("/home/u/.config")],
+        );
+
+        // On Linux the XDG path and platform dir coincide → no duplicate candidate.
+        assert_eq!(
+            publish_config_candidates_from(
+                None,
+                Some(PathBuf::from("/home/u")),
+                Some(PathBuf::from("/home/u/.config")),
+            ),
+            vec![cfg("/home/u/.config")],
         );
     }
 
