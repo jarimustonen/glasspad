@@ -83,16 +83,17 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: hosted-config-path-macos   ← two maalla.dev bugs, awaiting fix/defer call
+GLOBAL HEAD-OF-LINE: hosted-config-path-macos   ← 3 open issues, awaiting Jari's fix/defer/prioritize call
 
-0.3.0 fully released 2026-08-09 (crates.io + GitHub Release + Homebrew). Two new
-hosted-share bugs filed 2026-08-09 from the glasspad.maalla.dev deploy. They touch
-disjoint files → parallel-safe.
+0.3.0 fully released 2026-08-09 (crates.io + GitHub Release + Homebrew). Three issues
+filed 2026-08-09 from the glasspad.maalla.dev / digest-cron migration. Lane B and Lane C
+are disjoint (parallel-safe); within Lane C, sequence (shared src/hosted surface).
 
 LANE B — src/cli.rs + render/publish config
-  ▶ hosted-config-path-macos   publish config path: --help says ~/.config, macOS reads ~/Library/Application Support
-LANE C — src/hosted (host-serve response headers/routes)
-  ▶ hosted-noindex-missing     hosted /p/<slug> pages omit documented X-Robots-Tag: noindex
+  ▶ hosted-config-path-macos   [bug] publish config path: --help says ~/.config, macOS reads ~/Library/Application Support
+LANE C — src/hosted (host-serve routes/headers + ingest)
+  ▶ hosted-noindex-missing     [bug] hosted /p/<slug> pages omit documented X-Robots-Tag: noindex
+    particularly-offbeat-dust  [feature] idempotency_key for POST /api/v1/pages (src/hosted/ingest.rs); non-blocking
 ```
 <!-- execution-dag:end -->
 
