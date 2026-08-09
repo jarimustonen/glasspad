@@ -2,11 +2,16 @@
 created: 2026-08-09
 updated: 2026-08-09
 type: bug
-status: in-progress
+status: fixed
 priority: normal
 commits:
 - hash: 755de91
   summary: honor $XDG_CONFIG_HOME/~/.config on all platforms, legacy dirs::config_dir() fallback
+- hash: c1f9b4e
+  summary: surface unreadable/malformed config, don't leak relative XDG (llm-review fixes)
+- hash: 767768c
+  summary: record resolution + rationale in issue
+closed: 2026-08-09
 ---
 
 # publish config path: --help says ~/.config but macOS resolves to ~/Library/Application Support
