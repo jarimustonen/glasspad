@@ -2,8 +2,12 @@
 created: 2026-08-09
 updated: 2026-08-09
 type: task
-status: open
+status: done
 priority: normal
+commits:
+- hash: 468a26dd4678a3db12bf17e3ec92b2cf84f04eba
+  summary: 'ci(dist): revert mac release build to self-hosted hauis runner'
+closed: 2026-08-09
 ---
 
 # Revert macOS release build back to self-hosted hauis runner
