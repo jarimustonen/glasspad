@@ -94,6 +94,8 @@ LANE B — src/cli.rs + render/publish config
 LANE C — src/hosted (host-serve routes/headers + ingest)
   ▶ hosted-noindex-missing     [bug] hosted /p/<slug> pages omit documented X-Robots-Tag: noindex
     particularly-offbeat-dust  [feature] idempotency_key for POST /api/v1/pages (src/hosted/ingest.rs); non-blocking
+LANE D — dist-workspace.toml + .github/workflows/release.yml (CI config)
+  ▶ mac-release-self-hosted    [task] revert macOS build macos-14 → self-hosted hauis (now durably fixed)
 ```
 <!-- execution-dag:end -->
 
