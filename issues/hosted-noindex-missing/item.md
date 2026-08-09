@@ -2,11 +2,14 @@
 created: 2026-08-09
 updated: 2026-08-09
 type: bug
-status: in-progress
+status: fixed
 priority: normal
 commits:
 - hash: 21d4d76
   summary: 'fix(hosted): X-Robots-Tag noindex on hosted read routes'
+- hash: d0a0dfc
+  summary: 'test(hosted): noindex regression coverage + accurate doc wording'
+closed: 2026-08-09
 ---
 
 # hosted share pages do not emit the documented noindex directive
