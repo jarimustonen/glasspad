@@ -83,19 +83,13 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: hosted-config-path-macos   ← 3 open issues, awaiting Jari's fix/defer/prioritize call
+GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
 
-0.3.0 fully released 2026-08-09 (crates.io + GitHub Release + Homebrew). Three issues
-filed 2026-08-09 from the glasspad.maalla.dev / digest-cron migration. Lane B and Lane C
-are disjoint (parallel-safe); within Lane C, sequence (shared src/hosted surface).
-
-LANE B — src/cli.rs + render/publish config
-  ▶ hosted-config-path-macos   [bug] publish config path: --help says ~/.config, macOS reads ~/Library/Application Support
-LANE C — src/hosted (host-serve routes/headers + ingest)
-  ▶ hosted-noindex-missing     [bug] hosted /p/<slug> pages omit documented X-Robots-Tag: noindex
-    particularly-offbeat-dust  [feature] idempotency_key for POST /api/v1/pages (src/hosted/ingest.rs); non-blocking
-LANE D — dist-workspace.toml + .github/workflows/release.yml (CI config)
-  ▶ mac-release-self-hosted    [task] revert macOS build macos-14 → self-hosted hauis (now durably fixed)
+0.3.0 fully released; all four 2026-08-09 issues landed on main and dropped:
+hosted-config-path-macos (fixed), hosted-noindex-missing (fixed),
+particularly-offbeat-dust (done), mac-release-self-hosted (done). Green gate green
+(fmt/clippy/test + test-security.sh 41 + Wave 2a). No active non-epic issues.
+Next code round: file new work, then re-populate lanes.
 ```
 <!-- execution-dag:end -->
 
@@ -123,11 +117,18 @@ Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+p
 
 - **0.3.0 agent→HTML consolidation — FULLY RELEASED 2026-08-09** (crates.io + GitHub
   Release + Homebrew). All feature/infra issues landed; GH-Release completion done.
-- **Two open bugs from the glasspad.maalla.dev deploy (2026-08-09), awaiting Jari's
-  fix/defer call:** `hosted-config-path-macos` (publish config path help vs macOS
-  reality) and `hosted-noindex-missing` (hosted `/p/<slug>` missing `noindex`).
-- **Follow-up decision:** revert the macOS→`macos-14` routing so hauis owns mac builds
-  again (see "⚠️ ▶ Follow-up decision" above).
+- **2026-08-09 round — all four landed + green:** `hosted-config-path-macos` (fixed —
+  publish now honors `$XDG_CONFIG_HOME`/`~/.config` on all platforms, old
+  `dirs::config_dir()` path still read as fallback), `hosted-noindex-missing` (fixed —
+  `X-Robots-Tag: noindex, nofollow` on hosted read routes, host-serve only + regression
+  test), `particularly-offbeat-dust` (done — optional `idempotency_key` on
+  `POST /api/v1/pages`, per-tenant scoped, fsync+atomic mapping), `mac-release-self-hosted`
+  (done — mac build reverted `macos-14` → self-hosted hauis).
+- **Optional follow-up (low, not filed):** `version --json`'s commit stamp uses
+  `option_env!(GLASSPAD_COMMIT)`, which cargo/sccache doesn't re-bake on incremental
+  local rebuilds when only the build-script SHA changes — a stale/`null` local stamp
+  until a clean rebuild. Clean CI/release builds are always correct, so this is a
+  dev-ergonomics nit, not a shipped defect. File only if it annoys in practice.
 - Downstream homebase + tilictl consolidation is the next forward work, gated on 0.3.0
   (tracked in those repos).
 
