@@ -36,10 +36,12 @@ hosting = "github"
 # id-token / attestations permissions to the publishing job.
 github-attestations = true
 
-# Route the macOS build to a GitHub-hosted Apple-Silicon runner (`macos-14`), so
-# releases don't depend on the self-hosted `hauis` machine. The two Linux targets
-# stay on GitHub-hosted ubuntu runners. GitHub-hosted runners get a clean,
-# job-scoped checkout each run — no shared global ~/.gitconfig, so none of the
-# stale-auth-extraheader / git-400 hazard that the self-hosted single runner had.
+# Route the macOS build to the self-hosted `hauis` runner (Apple Silicon), the
+# intended mac build machine — it owns mac builds again. The two Linux targets
+# stay on GitHub-hosted ubuntu runners. hauis previously hit stale-auth-extraheader
+# / git-400 failures from a broken global ~/.gitconfig `GIT_CONFIG_GLOBAL` override;
+# that is durably fixed (2026-08-09 `[include]`-split gitconfig fix — see
+# `homebase/infra/machines/hauis.md`), so the `macos-14` GitHub-hosted routing added
+# in 9deee1a is no longer needed and is reverted here.
 [dist.github-custom-runners]
-aarch64-apple-darwin = "macos-14"
+aarch64-apple-darwin = "self-hosted"
