@@ -148,14 +148,34 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
         .layer(DefaultBodyLimit::max(ingest_body_limit))
         .with_state(state);
 
+    // Read: space routes under /p, base libs at root. The shell emits /p/…
+    // links via the host's mount so nested paths resolve. Hosted read responses
+    // carry `X-Robots-Tag: noindex, nofollow` (below) — host-serve mode ONLY.
+    let read = Router::new()
+        .nest(MOUNT, artifact_host::spaces_router(host.clone()))
+        .merge(artifact_host::gp_router(host))
+        .layer(middleware::from_fn(add_noindex));
+
     Router::new()
         .route("/healthz", get(healthz))
         .merge(ingest)
-        // Read: space routes under /p, base libs at root. The shell emits /p/…
-        // links via the host's mount so nested paths resolve.
-        .nest(MOUNT, artifact_host::spaces_router(host.clone()))
-        .merge(artifact_host::gp_router(host))
+        .merge(read)
         .layer(middleware::from_fn_with_state(expected, public_host_guard))
+}
+
+/// Stamp `X-Robots-Tag: noindex, nofollow` on every hosted read response so a
+/// leaked capability URL cannot be indexed by a crawler ("hold the link, not
+/// indexed" — `skill.md` / the html-consolidation design G3). Purely **additive**:
+/// the frozen CSP, `x-frame-options: DENY`, `referrer-policy: no-referrer`, and
+/// `cache-control: no-store` set by the shared read handlers are left untouched.
+/// **Host-serve mode ONLY** — the loopback `serve` router never carries this layer.
+async fn add_noindex(req: Request, next: Next) -> Response {
+    let mut resp = next.run(req).await;
+    resp.headers_mut().insert(
+        "x-robots-tag",
+        header::HeaderValue::from_static("noindex, nofollow"),
+    );
+    resp
 }
 
 async fn healthz() -> impl IntoResponse {
@@ -427,10 +447,20 @@ mod tests {
             !csp.contains("127.0.0.1"),
             "loopback leaked into hosted csp: {csp}"
         );
+        // Hosted content carries noindex so a leaked capability URL is not crawled.
+        assert_eq!(
+            r.headers().get("x-robots-tag").unwrap().to_str().unwrap(),
+            "noindex, nofollow"
+        );
 
         // The shell frames the /p-mounted content path.
         let r = send(&app, get_req(format!("/p/{slug}/"))).await;
         assert_eq!(r.status(), StatusCode::OK);
+        // The shell route carries noindex too (same "hold the link" contract).
+        assert_eq!(
+            r.headers().get("x-robots-tag").unwrap().to_str().unwrap(),
+            "noindex, nofollow"
+        );
         let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
             .await
             .unwrap();

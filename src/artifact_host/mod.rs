@@ -589,6 +589,11 @@ mod tests {
         assert_eq!(header(&resp, "x-content-type-options"), "nosniff");
         assert_eq!(header(&resp, "referrer-policy"), "no-referrer");
         assert!(header(&resp, "permissions-policy").contains("geolocation=()"));
+        // noindex is a hosted-mode-only header; loopback serve must NOT carry it.
+        assert!(
+            resp.headers().get("x-robots-tag").is_none(),
+            "loopback serve must not emit noindex"
+        );
     }
 
     #[tokio::test]
