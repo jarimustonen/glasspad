@@ -514,6 +514,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn misspelled_idempotency_key_field_is_rejected_not_silently_dropped() {
+        // deny_unknown_fields guards the exactly-once contract: a camelCased/hyphenated
+        // idempotency key must 400, not silently mint a fresh page every time.
+        let root = tmp_root("idemunknown");
+        let (app, _, _) = app_with(&root);
+        let r = send(
+            &app,
+            publish_req(
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>x</h1>", "idempotencyKey": "k" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
     async fn empty_idempotency_key_is_rejected() {
         let root = tmp_root("idemempty");
         let (app, _, _) = app_with(&root);
@@ -680,11 +698,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn client_supplied_slug_is_ignored_no_cross_tenant_overwrite() {
-        // A tenant cannot target another's page: the ingest body has no slug field,
-        // and any client-supplied `slug`/`tenant` is ignored (serde drops unknown
-        // fields). The minted slug is fresh + random, so a chosen "victim" slug is
-        // never written — cross-tenant overwrite is structurally impossible.
+    async fn client_supplied_slug_is_rejected_no_cross_tenant_overwrite() {
+        // A tenant cannot target another's page: the ingest body has no slug/tenant
+        // field, and `deny_unknown_fields` now *rejects* any client-supplied
+        // `slug`/`tenant` outright (400) rather than silently ignoring it. Either way
+        // no chosen "victim" slug is ever written — cross-tenant overwrite is
+        // structurally impossible.
         let root = tmp_root("noslug");
         let (app, _, _) = app_with(&root);
         let r = send(
@@ -699,9 +718,7 @@ mod tests {
             ),
         )
         .await;
-        assert_eq!(r.status(), StatusCode::CREATED);
-        let slug = body_json(r).await["slug"].as_str().unwrap().to_string();
-        assert_ne!(slug, "victim", "client-supplied slug must be ignored");
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
         // The chosen slug was never created.
         let r = send(&app, get_req("/p/victim/_c/index")).await;
         assert_eq!(r.status(), StatusCode::NOT_FOUND);

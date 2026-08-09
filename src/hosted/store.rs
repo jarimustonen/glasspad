@@ -24,10 +24,13 @@
 //! rename) **after** the page files are durable — and a later publish with the same
 //! key returns the *same* page instead of minting a new one. This gives an API-key
 //! publisher exactly-once semantics across a lost receipt. A key whose page has
-//! since been GC'd/deleted ("dangling") falls through to a fresh create. The
-//! per-tenant directory is the isolation boundary: tenant A's key can only ever
-//! resolve to a slug tenant A recorded. No key → a fresh slug every time (the
-//! default path is unchanged).
+//! since been GC'd/deleted ("dangling") falls through to a fresh create, and GC
+//! reclaims the now-dead mapping so the idem tree stays bounded to live pages.
+//! Isolation is layered: the per-tenant directory scopes which mapping is read, the
+//! record records its owning tenant, and the mapped page's own `meta.json` must
+//! record the same tenant — so a misplaced/hand-edited mapping can never hand one
+//! tenant another tenant's page. No key → a fresh slug every time (the default path
+//! is unchanged).
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -69,11 +72,13 @@ const IDEM_SCHEMA: u32 = 1;
 
 /// One durable `key → slug` idempotency mapping. Stored one-per-file at
 /// `<root>/idem/<tenant>/<sha256(key)>.json`. `schema` guards the format; `slug`
-/// is validated against the space grammar on read (defense-in-depth: a hand-edited
-/// mapping cannot smuggle a bad slug into the lookup).
+/// is validated against the space grammar on read; `tenant` records the owner so a
+/// mapping read for the wrong tenant (a misplaced/restored file) is rejected rather
+/// than honored (defense-in-depth on top of the per-tenant directory scoping).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IdemRecord {
     schema: u32,
+    tenant: String,
     slug: String,
 }
 
@@ -118,6 +123,10 @@ impl Store {
         std::fs::create_dir_all(&pages_dir)?;
         let idem_dir = root.join("idem");
         std::fs::create_dir_all(&idem_dir)?;
+        // Persist the `pages`/`idem` directory entries themselves before any write
+        // relies on them being present after a crash (fsync of a child dir does not
+        // persist the child's entry in its parent).
+        fsync_dir(root)?;
         let store = Store {
             pages_dir,
             idem_dir,
@@ -127,6 +136,14 @@ impl Store {
         let snap = store.scan_disk();
         store.host.swap(snap);
         Ok(store)
+    }
+
+    /// Acquire the mutation lock, recovering the guard if a previous holder panicked
+    /// (poisoning it). The only state guarded is on-disk plus a fresh snapshot read
+    /// on each entry, so a poisoned lock is safe to re-take — recovering keeps one
+    /// panic from permanently bricking all publishes/GC.
+    fn lock_mutation(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.mutation.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// The number of pages currently served (snapshot space count).
@@ -251,7 +268,7 @@ impl Store {
         // same-key publishes can't both mint a page (the second sees the first's
         // mapping). Held across the blocking disk write; ingest calls this on a
         // blocking thread (`spawn_blocking`).
-        let _guard = self.mutation.lock().expect("store mutation lock poisoned");
+        let _guard = self.lock_mutation();
         let current = self.host.snapshot();
 
         // Idempotency fast-path: a recorded key whose page is still served returns
@@ -311,12 +328,14 @@ impl Store {
     }
 
     /// Resolve an idempotency key to an already-published page for `tenant`, or
-    /// `None` if there is no live mapping. Reads the per-tenant mapping sidecar; a
-    /// missing file (no key yet), a corrupt/invalid record, or a **dangling** slug
-    /// (mapped page no longer in the served snapshot — GC'd/deleted) all return
-    /// `None` so the caller falls through to a fresh create. Isolation is by path:
-    /// only `<idem>/<tenant>/…` is consulted, so one tenant's key never resolves to
-    /// another tenant's page.
+    /// `None` if there is no live, owned mapping. Reads the per-tenant mapping
+    /// sidecar; a missing file (no key yet), a corrupt/invalid record, a **dangling**
+    /// slug (mapped page no longer in the served snapshot — GC'd/deleted), or a page
+    /// **not owned by `tenant`** all return `None` so the caller falls through to a
+    /// fresh create. Isolation is layered: (1) only `<idem>/<tenant>/…` is consulted;
+    /// (2) the record carries its owning tenant and must match; (3) the mapped page's
+    /// own `meta.json` must record the same tenant. So a misplaced/hand-edited mapping
+    /// can never hand one tenant another tenant's page.
     fn lookup_idempotent(
         &self,
         tenant: &str,
@@ -347,30 +366,55 @@ impl Store {
                 return Ok(None);
             }
         };
-        if rec.schema != IDEM_SCHEMA || !valid_space(&rec.slug) {
+        // Reject a record with the wrong schema, an invalid slug, or one whose
+        // recorded owner is not the requesting tenant (a misplaced/restored mapping).
+        if rec.schema != IDEM_SCHEMA || !valid_space(&rec.slug) || rec.tenant != tenant {
             eprintln!(
-                "glasspad host: idempotency mapping {} has invalid schema/slug; ignoring",
+                "glasspad host: idempotency mapping {} has invalid schema/slug/tenant; ignoring",
                 path.display()
             );
             return Ok(None);
         }
         // Dangling check: only return the page if it is still served. A GC'd/deleted
         // page is absent from the snapshot, so the key falls through to a fresh create.
-        match current.space(&rec.slug) {
-            Some(sp) => {
-                let title = sp
-                    .artifacts
-                    .get(SINGLE_SLUG)
-                    .map(|a| a.title.clone())
-                    .unwrap_or_else(|| rec.slug.clone());
-                Ok(Some(Published {
-                    slug: rec.slug,
-                    title,
-                    created: false,
-                }))
-            }
-            None => Ok(None),
+        let sp = match current.space(&rec.slug) {
+            Some(sp) => sp,
+            None => return Ok(None),
+        };
+        // Authoritative ownership check: the mapped page's own meta must record this
+        // tenant. This closes the isolation gap even if a mapping was hand-edited to
+        // name a slug owned by another tenant.
+        if !self.page_owned_by(&rec.slug, tenant) {
+            eprintln!(
+                "glasspad host: idempotency mapping {} points at a page not owned by {tenant}; ignoring",
+                path.display()
+            );
+            return Ok(None);
         }
+        let title = sp
+            .artifacts
+            .get(SINGLE_SLUG)
+            .map(|a| a.title.clone())
+            .unwrap_or_else(|| rec.slug.clone());
+        Ok(Some(Published {
+            slug: rec.slug,
+            title,
+            created: false,
+        }))
+    }
+
+    /// True iff the on-disk `meta.json` for `slug` records `tenant` as its owner. A
+    /// missing/unreadable/corrupt meta returns `false` (fail-closed: an unverifiable
+    /// page is not treated as owned).
+    fn page_owned_by(&self, slug: &str, tenant: &str) -> bool {
+        let meta_path = self.pages_dir.join(slug).join(META_FILE);
+        let bytes = match read_capped(&meta_path, MAX_META_BYTES) {
+            Ok(b) if b.len() as u64 <= MAX_META_BYTES => b,
+            _ => return false,
+        };
+        serde_json::from_slice::<PageMeta>(&bytes)
+            .map(|m| m.tenant == tenant && m.slug == slug)
+            .unwrap_or(false)
     }
 
     /// Filesystem path of the mapping sidecar for `(tenant, key)`. The key is hashed
@@ -387,15 +431,20 @@ impl Store {
     /// Durably write the `key → slug` mapping for `tenant` (fsync + atomic rename).
     /// Called only **after** the page is durable, so the mapping never outlives its
     /// page across a crash. The tmp file is fsync'd, renamed into place, and the
-    /// containing directory fsync'd so the rename itself survives a crash.
+    /// containing tenant directory fsync'd so the rename survives a crash; when the
+    /// tenant directory is created for the first time, `idem_dir` is fsync'd too so
+    /// the new directory entry is itself durable (without this, the very first key
+    /// for a tenant could vanish on a crash despite `write_idem` returning success).
     fn write_idem(&self, tenant: &str, key: &str, slug: &str) -> std::io::Result<()> {
         let tenant_dir = self.idem_dir.join(tenant);
+        let tenant_dir_is_new = !tenant_dir.exists();
         std::fs::create_dir_all(&tenant_dir)?;
         let hash = sha256_hex(key.as_bytes());
         let final_path = tenant_dir.join(format!("{hash}.json"));
         let tmp_path = tenant_dir.join(format!(".{hash}.tmp"));
         let rec = IdemRecord {
             schema: IDEM_SCHEMA,
+            tenant: tenant.to_string(),
             slug: slug.to_string(),
         };
         let json = serde_json::to_vec(&rec)
@@ -403,7 +452,11 @@ impl Store {
         let staged = (|| -> std::io::Result<()> {
             write_file_synced(&tmp_path, &json)?;
             std::fs::rename(&tmp_path, &final_path)?;
-            fsync_dir(&tenant_dir)
+            fsync_dir(&tenant_dir)?;
+            if tenant_dir_is_new {
+                fsync_dir(&self.idem_dir)?;
+            }
+            Ok(())
         })();
         if staged.is_err() {
             let _ = std::fs::remove_file(&tmp_path);
@@ -462,17 +515,29 @@ impl Store {
     /// rebuild + swap the snapshot so expired pages are no longer served. Returns
     /// the number removed. The snapshot swap happens **after** disk removal, and the
     /// new snapshot is rebuilt by re-scanning disk, so the served set exactly
-    /// matches what survives on disk (no window serving a deleted page).
+    /// matches what survives on disk (no window serving a deleted page). Also reclaims
+    /// idempotency mappings whose page is gone and leftover staging entries from a
+    /// crashed write, bounding both trees to what is actually live.
     pub fn gc(&self, retention: Duration) -> std::io::Result<usize> {
         // Same lock as `publish`: GC's scan+swap must not race a publish's swap
         // (which would let GC's rebuilt snapshot clobber a just-published page, or
-        // a stale publish resurrect a page GC just deleted).
-        let _guard = self.mutation.lock().expect("store mutation lock poisoned");
+        // a stale publish resurrect a page GC just deleted). Holding it also means no
+        // write is mid-flight, so any `.<…>.tmp` staging entry is a crash remnant we
+        // can safely reap.
+        let _guard = self.lock_mutation();
         let cutoff = Utc::now() - retention;
         let mut removed = 0usize;
         let rd = std::fs::read_dir(&self.pages_dir)?;
         for entry in rd.flatten() {
             let dir = entry.path();
+            let name = entry.file_name();
+            // Reap a leftover `.<slug>.tmp` staging dir from a crashed `write_page`
+            // (a distinct slug is minted each time, so it would otherwise never be
+            // reclaimed).
+            if name.to_string_lossy().starts_with('.') {
+                let _ = std::fs::remove_dir_all(&dir);
+                continue;
+            }
             if !dir.is_dir() {
                 continue;
             }
@@ -492,11 +557,71 @@ impl Store {
             }
         }
         if removed > 0 {
-            // Rebuild the served snapshot from what remains on disk.
+            // Make the removals durable, then rebuild + swap the served snapshot from
+            // what remains on disk.
+            fsync_dir(&self.pages_dir)?;
             let snap = self.scan_disk();
+            self.sweep_idem_mappings(&snap);
             self.host.swap(snap);
+        } else {
+            // No page expired, but still reclaim any pre-existing dangling mappings /
+            // leftover mapping tmp files (e.g. from a prior crash) against the live set.
+            let snap = self.host.snapshot();
+            self.sweep_idem_mappings(&snap);
         }
         Ok(removed)
+    }
+
+    /// Delete idempotency mappings that no longer point at a served page, plus any
+    /// leftover `.<hash>.tmp` staging files, across every tenant. A mapping is dead
+    /// once its page is GC'd (a repeat with that key already falls through to a fresh
+    /// create); reclaiming it here bounds the idem tree to live pages + one GC pass.
+    /// Best-effort: individual failures are logged, not fatal.
+    fn sweep_idem_mappings(&self, live: &Snapshot) {
+        let tenants = match std::fs::read_dir(&self.idem_dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                eprintln!(
+                    "glasspad host: GC cannot read idem dir {}: {e}",
+                    self.idem_dir.display()
+                );
+                return;
+            }
+        };
+        for tenant_entry in tenants.flatten() {
+            let tenant_dir = tenant_entry.path();
+            if !tenant_dir.is_dir() {
+                continue;
+            }
+            let files = match std::fs::read_dir(&tenant_dir) {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            for file_entry in files.flatten() {
+                let path = file_entry.path();
+                let name = file_entry.file_name();
+                let name = name.to_string_lossy();
+                // Reap leftover staging files from a crashed `write_idem`.
+                if name.starts_with('.') {
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+                // Delete a mapping whose target slug is no longer served, or which is
+                // unreadable/corrupt (either way it can no longer resolve to a page).
+                let dead = match read_capped(&path, MAX_META_BYTES) {
+                    Ok(b) if b.len() as u64 <= MAX_META_BYTES => {
+                        match serde_json::from_slice::<IdemRecord>(&b) {
+                            Ok(rec) => !live.spaces.contains_key(&rec.slug),
+                            Err(_) => true,
+                        }
+                    }
+                    _ => true,
+                };
+                if dead {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
     }
 
     fn read_created_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
@@ -948,6 +1073,116 @@ mod tests {
             .unwrap();
         assert_ne!(a.slug, b.slug);
         assert_eq!(store.page_count(), 2);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn concurrent_same_key_publishes_produce_one_page() {
+        // Many threads publishing the same (tenant, key) must yield exactly one page:
+        // the mutex serializes them, the first mints + records the mapping, the rest
+        // replay it. All returned slugs are identical.
+        let root = tmp_root("idem-concurrent");
+        let h = host();
+        let store = Arc::new(Store::open(&root, h.clone()).unwrap());
+        let mut handles = Vec::new();
+        for i in 0..24 {
+            let store = store.clone();
+            handles.push(std::thread::spawn(move || {
+                store
+                    .publish("acme", format!("<h1>{i}</h1>"), None, Some("same-key"))
+                    .unwrap()
+                    .slug
+            }));
+        }
+        let slugs: Vec<String> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let first = &slugs[0];
+        assert!(
+            slugs.iter().all(|s| s == first),
+            "all same-key publishes must return one slug, got {slugs:?}"
+        );
+        assert_eq!(store.page_count(), 1, "exactly one page for a shared key");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn cross_tenant_mapping_is_never_honored() {
+        // Isolation: even a hand-crafted mapping under tenant A that names a page
+        // owned by tenant B must NOT return B's page to A. A gets a fresh page.
+        let root = tmp_root("idem-crosstenant");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let victim = store
+            .publish("globex", "<h1>secret</h1>".into(), None, None)
+            .unwrap();
+
+        // (a) A mapping recording the wrong owner is rejected by the record check.
+        let tenant_dir = root.join("idem").join("acme");
+        std::fs::create_dir_all(&tenant_dir).unwrap();
+        let rec_wrong_owner = IdemRecord {
+            schema: IDEM_SCHEMA,
+            tenant: "globex".into(),
+            slug: victim.slug.clone(),
+        };
+        std::fs::write(
+            store.idem_path("acme", "k1"),
+            serde_json::to_vec(&rec_wrong_owner).unwrap(),
+        )
+        .unwrap();
+        let r1 = store
+            .publish("acme", "<h1>mine</h1>".into(), None, Some("k1"))
+            .unwrap();
+        assert_ne!(
+            r1.slug, victim.slug,
+            "wrong-owner record must not leak B's page"
+        );
+
+        // (b) A mapping recording A as owner but pointing at B's slug is rejected by
+        // the authoritative page-meta ownership check.
+        let rec_forged = IdemRecord {
+            schema: IDEM_SCHEMA,
+            tenant: "acme".into(),
+            slug: victim.slug.clone(),
+        };
+        std::fs::write(
+            store.idem_path("acme", "k2"),
+            serde_json::to_vec(&rec_forged).unwrap(),
+        )
+        .unwrap();
+        let r2 = store
+            .publish("acme", "<h1>mine2</h1>".into(), None, Some("k2"))
+            .unwrap();
+        assert_ne!(
+            r2.slug, victim.slug,
+            "forged mapping must not leak B's page"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn gc_reclaims_dangling_idem_mappings() {
+        // Once a page is GC'd its mapping is dead weight; GC removes it so the idem
+        // tree stays bounded to live pages.
+        let root = tmp_root("idem-gc");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>x</h1>".into(), None, Some("k"))
+            .unwrap();
+        let mapping = store.idem_path("acme", "k");
+        assert!(mapping.is_file(), "mapping written");
+
+        // Backdate + GC the page.
+        let meta_path = root.join("pages").join(&p.slug).join("meta.json");
+        let mut meta: PageMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta.created_at = Utc::now() - Duration::days(100);
+        std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_eq!(store.gc(Duration::days(90)).unwrap(), 1);
+
+        assert!(
+            !mapping.exists(),
+            "GC must reclaim the now-dangling idem mapping"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

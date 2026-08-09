@@ -4,6 +4,9 @@ updated: 2026-08-09
 type: feature
 status: in-progress
 priority: normal
+commits:
+- hash: 58cf078
+  summary: 'feat(hosted): optional idempotency_key for POST /api/v1/pages'
 ---
 
 # hosted ingest idempotency key for POST /api/v1/pages

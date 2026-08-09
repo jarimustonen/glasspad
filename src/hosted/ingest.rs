@@ -44,8 +44,11 @@ use super::store::PublishError;
 /// rather than silently truncated or hashed regardless.
 pub const MAX_IDEMPOTENCY_KEY_CHARS: usize = 256;
 
-/// The ingest request body.
+/// The ingest request body. `deny_unknown_fields` is deliberate: a misspelled
+/// `idempotency_key` (e.g. camelCase or hyphenated) would otherwise be silently
+/// dropped and defeat the exactly-once contract — instead it is a `400`.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublishRequest {
     html: Option<String>,
     markdown: Option<String>,
