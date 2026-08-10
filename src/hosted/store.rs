@@ -151,6 +151,33 @@ impl Store {
         self.host.snapshot().spaces.len()
     }
 
+    /// The authenticated owner tenant recorded in `slug`'s `meta.json`, or `None`
+    /// if the page is absent/unreadable or its meta names a different slug. This is
+    /// the authority the return-channel read scoping uses: a tenant may read a
+    /// page's submissions only when this equals its authenticated id.
+    pub fn page_tenant(&self, slug: &str) -> Option<String> {
+        let meta_path = self.pages_dir.join(slug).join(META_FILE);
+        let bytes = read_capped(&meta_path, MAX_META_BYTES).ok()?;
+        if bytes.len() as u64 > MAX_META_BYTES {
+            return None;
+        }
+        serde_json::from_slice::<PageMeta>(&bytes)
+            .ok()
+            .filter(|m| m.slug == slug)
+            .map(|m| m.tenant)
+    }
+
+    /// The currently-served artifact body for `slug` (the single-artifact page's
+    /// `index`), or `None` if the page is not served. Used to compute the artifact
+    /// content-version a submission answered — server-side, never from the payload.
+    pub fn page_body(&self, slug: &str) -> Option<String> {
+        self.host
+            .snapshot()
+            .space(slug)?
+            .artifact(SINGLE_SLUG)
+            .map(|a| a.html.clone())
+    }
+
     /// Scan the whole `pages/` tree into a fresh [`Snapshot`]. Each subdirectory is
     /// one page; unreadable/corrupt/oversize/invalid pages are skipped + logged.
     fn scan_disk(&self) -> Snapshot {

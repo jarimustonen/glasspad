@@ -28,6 +28,7 @@ pub mod auth;
 pub mod ingest;
 pub mod slug;
 pub mod store;
+pub mod submit;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -46,6 +47,7 @@ use tokio::net::TcpListener;
 
 use crate::artifact_host::space;
 use crate::artifact_host::{self, ArtifactHost};
+use crate::submissions::SubmissionStore;
 use auth::KeyTable;
 use store::Store;
 
@@ -61,6 +63,8 @@ const GC_INTERVAL: StdDuration = StdDuration::from_secs(3600);
 #[derive(Clone)]
 pub struct HostedState {
     pub store: Arc<Store>,
+    /// The return-channel submission store (per-page persisted user input).
+    pub submissions: Arc<SubmissionStore>,
     /// The canonical public origin (`scheme://host[:port]`) for returned URLs.
     pub public_origin: String,
     /// The URL mount for read routes (`/p`).
@@ -144,9 +148,12 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
     let ingest_body_limit = space::MAX_FILE_BYTES as usize + 128 * 1024;
     let ingest = Router::new()
         .route("/api/v1/pages", post(ingest::publish))
-        .route_layer(middleware::from_fn_with_state(keys, auth::ingest_auth))
+        .route_layer(middleware::from_fn_with_state(
+            keys.clone(),
+            auth::ingest_auth,
+        ))
         .layer(DefaultBodyLimit::max(ingest_body_limit))
-        .with_state(state);
+        .with_state(state.clone());
 
     // Read: space routes under /p, base libs at root. The shell emits /p/…
     // links via the host's mount so nested paths resolve. Hosted read responses
@@ -156,10 +163,14 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
         .merge(artifact_host::gp_router(host))
         .layer(middleware::from_fn(add_noindex));
 
+    // Return-channel routes: a public shell-callable submit + API-key-scoped reads.
+    let submissions = submit::router(state, keys);
+
     Router::new()
         .route("/healthz", get(healthz))
         .merge(ingest)
         .merge(read)
+        .merge(submissions)
         .layer(middleware::from_fn_with_state(expected, public_host_guard))
 }
 
@@ -243,12 +254,17 @@ pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle,
         Store::open(&config.store_root, host.clone())
             .map_err(|e| format!("cannot open store {}: {e}", config.store_root.display()))?,
     );
+    let submissions = SubmissionStore::open(&config.store_root.join("submissions"))
+        .map_err(|e| format!("cannot open submission store: {e}"))?;
 
     // Run retention GC ONCE synchronously before serving, so pages already past
     // retention at startup are not served for up to an hour after a restart.
     let retention = Duration::days(config.retention_days);
     if let Err(e) = store.gc(retention) {
         eprintln!("glasspad host: initial GC failed: {e}");
+    }
+    if let Err(e) = submissions.gc(retention) {
+        eprintln!("glasspad host: initial submission GC failed: {e}");
     }
     let pages = store.page_count();
 
@@ -257,10 +273,11 @@ pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle,
         .map_err(|e| format!("cannot bind {}: {e}", config.bind))?;
 
     // Retention GC: hourly thereafter, off the async workers (fs on the blocking pool).
-    spawn_gc(store.clone(), retention);
+    spawn_gc(store.clone(), submissions.clone(), retention);
 
     let state = HostedState {
         store: store.clone(),
+        submissions,
         public_origin: config.public_origin.clone(),
         mount: MOUNT.to_string(),
     };
@@ -292,8 +309,8 @@ impl RunHandle {
     }
 }
 
-/// Spawn the periodic retention-GC task.
-fn spawn_gc(store: Arc<Store>, retention: Duration) {
+/// Spawn the periodic retention-GC task (pages + return-channel submissions).
+fn spawn_gc(store: Arc<Store>, submissions: Arc<SubmissionStore>, retention: Duration) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(GC_INTERVAL);
         // Skip the immediate first tick so startup isn't followed by an instant GC.
@@ -301,10 +318,30 @@ fn spawn_gc(store: Arc<Store>, retention: Duration) {
         loop {
             ticker.tick().await;
             let store = store.clone();
-            match tokio::task::spawn_blocking(move || store.gc(retention)).await {
-                Ok(Ok(n)) if n > 0 => eprintln!("glasspad host: GC removed {n} expired page(s)"),
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => eprintln!("glasspad host: GC error: {e}"),
+            let subs = submissions.clone();
+            match tokio::task::spawn_blocking(move || {
+                let pages = store.gc(retention);
+                let subs_removed = subs.gc(retention);
+                (pages, subs_removed)
+            })
+            .await
+            {
+                Ok((pages, subs)) => {
+                    match pages {
+                        Ok(n) if n > 0 => {
+                            eprintln!("glasspad host: GC removed {n} expired page(s)")
+                        }
+                        Ok(_) => {}
+                        Err(e) => eprintln!("glasspad host: GC error: {e}"),
+                    }
+                    match subs {
+                        Ok(n) if n > 0 => {
+                            eprintln!("glasspad host: GC removed {n} expired submission(s)")
+                        }
+                        Ok(_) => {}
+                        Err(e) => eprintln!("glasspad host: submission GC error: {e}"),
+                    }
+                }
                 Err(e) => eprintln!("glasspad host: GC task panicked: {e}"),
             }
         }
@@ -339,9 +376,11 @@ mod tests {
             MOUNT.to_string(),
         ));
         let store = Arc::new(Store::open(root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
         let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}")).unwrap());
         let state = HostedState {
             store: store.clone(),
+            submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
         };
@@ -785,9 +824,11 @@ mod tests {
             MOUNT.to_string(),
         ));
         let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
         let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}\nglobex:{key2}")).unwrap());
         let state = HostedState {
             store: store.clone(),
+            submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
         };
@@ -865,6 +906,217 @@ mod tests {
         // Health check is exempt (probed by IP), even with a foreign/absent Host.
         let r = send(&app, Request::get("/healthz").body(Body::empty()).unwrap()).await;
         assert_eq!(r.status(), StatusCode::OK);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- return channel (submissions) ---------------------------------------
+
+    fn submit_req(slug: &str, origin: Option<&str>, body: serde_json::Value) -> Request<Body> {
+        let mut b = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/v1/pages/{slug}/submit"))
+            .header("host", TEST_HOST)
+            .header("content-type", "application/json");
+        if let Some(o) = origin {
+            b = b.header("origin", o);
+        }
+        b.body(Body::from(body.to_string())).unwrap()
+    }
+
+    fn read_req(uri: &str, bearer: Option<&str>) -> Request<Body> {
+        let mut b = Request::get(uri).header("host", TEST_HOST);
+        if let Some(t) = bearer {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::empty()).unwrap()
+    }
+
+    async fn publish_slug(app: &Router, body: serde_json::Value) -> String {
+        body_json(send(app, publish_req(Some(KEY), body)).await).await["slug"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn submit_then_owner_reads_but_other_tenant_cannot() {
+        let root = tmp_root("subs-read");
+        let key2 = "fedcba9876543210fedcba9876543210";
+        let host = Arc::new(ArtifactHost::new_public(
+            "https://pad.example.com".into(),
+            MOUNT.to_string(),
+        ));
+        let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
+        let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}\nglobex:{key2}")).unwrap());
+        let state = HostedState {
+            store: store.clone(),
+            submissions,
+            public_origin: "https://pad.example.com".into(),
+            mount: MOUNT.to_string(),
+        };
+        let app = build_router(state, host, keys);
+
+        // acme publishes a page.
+        let slug = publish_slug(&app, serde_json::json!({ "html": "<h1>form</h1>" })).await;
+
+        // A visitor (the shell) submits — public write, no API key, same-origin.
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": { "answer": "yes" } }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+
+        // The OWNER (acme) can read the submission back.
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{slug}/submissions"), Some(KEY)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let j = body_json(r).await;
+        assert_eq!(j["submissions"].as_array().unwrap().len(), 1);
+        assert_eq!(j["submissions"][0]["data"]["answer"], "yes");
+        assert!(j["cursor"].as_u64().unwrap() >= 1);
+
+        // A DIFFERENT tenant (globex) cannot read acme's page submissions — 404.
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{slug}/submissions"), Some(key2)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+
+        // An unauthenticated read is rejected (reads require the owner's key).
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{slug}/submissions"), None),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_foreign_origin_csrf() {
+        let root = tmp_root("subs-csrf");
+        let (app, _, _) = app_with(&root);
+        let slug = publish_slug(&app, serde_json::json!({ "html": "<h1>x</h1>" })).await;
+        // A cross-site page's fetch carries its own Origin → rejected.
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://evil.example"),
+                serde_json::json!({ "data": {} }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert_eq!(body_json(r).await["error"]["code"], "bad_origin");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn submit_binds_slug_from_url_not_payload() {
+        // Anti-spoof: a submission whose payload names another slug is still bound to
+        // the URL-path slug (the payload `slug` field is ignored). The victim page
+        // receives nothing.
+        let root = tmp_root("subs-spoof");
+        let (app, _, _) = app_with(&root);
+        let victim = publish_slug(&app, serde_json::json!({ "html": "<h1>victim</h1>" })).await;
+        let attacker = publish_slug(&app, serde_json::json!({ "html": "<h1>attacker</h1>" })).await;
+
+        // Submit to the attacker's own page, but claim the victim's slug in the body.
+        let r = send(
+            &app,
+            submit_req(
+                &attacker,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": { "x": 1 }, "slug": victim }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+
+        // The victim page has NO submission (the body's slug was ignored).
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{victim}/submissions"), Some(KEY)),
+        )
+        .await;
+        assert_eq!(
+            body_json(r).await["submissions"].as_array().unwrap().len(),
+            0
+        );
+        // The attacker's own page has it.
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{attacker}/submissions"), Some(KEY)),
+        )
+        .await;
+        assert_eq!(
+            body_json(r).await["submissions"].as_array().unwrap().len(),
+            1
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_stale_content_version() {
+        let root = tmp_root("subs-version");
+        let (app, _, _) = app_with(&root);
+        let slug = publish_slug(&app, serde_json::json!({ "html": "<h1>v</h1>" })).await;
+        // A wrong content-version echo is a cross-round mismatch → 409.
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": {}, "content_version": "deadbeefdeadbeef" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            body_json(r).await["error"]["code"],
+            "content_version_mismatch"
+        );
+
+        // The CORRECT (server-authoritative) version is accepted.
+        let cv = crate::submissions::content_version("<h1>v</h1>");
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": {}, "content_version": cv }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn submit_to_unknown_page_is_404() {
+        let root = tmp_root("subs-404");
+        let (app, _, _) = app_with(&root);
+        let r = send(
+            &app,
+            submit_req(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": {} }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
         std::fs::remove_dir_all(&root).ok();
     }
 

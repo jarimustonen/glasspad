@@ -227,7 +227,10 @@ impl SubmissionStore {
         let mut map = self.rate.lock().unwrap_or_else(|p| p.into_inner());
         // Prune this key's expired hits first.
         let entry = map.entry(key.to_string()).or_default();
-        while entry.front().is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW) {
+        while entry
+            .front()
+            .is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW)
+        {
             entry.pop_front();
         }
         if entry.len() >= RATE_MAX {
@@ -236,9 +239,7 @@ impl SubmissionStore {
         // Bound the map: if it has grown large, drop keys that have fully expired
         // (cheap amortized GC) before admitting a brand-new key.
         if map.len() > RATE_MAX_KEYS && !map.contains_key(key) {
-            map.retain(|_, hits| {
-                hits.iter().any(|t| now.duration_since(*t) < RATE_WINDOW)
-            });
+            map.retain(|_, hits| hits.iter().any(|t| now.duration_since(*t) < RATE_WINDOW));
             if map.len() > RATE_MAX_KEYS {
                 return false;
             }
@@ -262,8 +263,9 @@ impl SubmissionStore {
         data: serde_json::Value,
     ) -> Result<Submission, SubmitError> {
         // Size cap on the serialized payload (structural bound; never interpolated).
-        let data_bytes = serde_json::to_vec(&data)
-            .map_err(|e| SubmitError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+        let data_bytes = serde_json::to_vec(&data).map_err(|e| {
+            SubmitError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
         if data_bytes.len() > MAX_SUBMISSION_BYTES {
             return Err(SubmitError::TooLarge);
         }
@@ -641,7 +643,13 @@ mod tests {
         assert_eq!(page.submissions[0].id, s2.id);
 
         // A different key sees nothing.
-        assert!(store.list_since("other", 0, MAX_LIST).unwrap().submissions.is_empty());
+        assert!(
+            store
+                .list_since("other", 0, MAX_LIST)
+                .unwrap()
+                .submissions
+                .is_empty()
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -660,7 +668,14 @@ mod tests {
             .unwrap();
         assert!(s2.id > s1.id, "id counter must resume above on-disk max");
         // Both are still listed (the first survived the reopen).
-        assert_eq!(store2.list_since("abc", 0, MAX_LIST).unwrap().submissions.len(), 2);
+        assert_eq!(
+            store2
+                .list_since("abc", 0, MAX_LIST)
+                .unwrap()
+                .submissions
+                .len(),
+            2
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -670,7 +685,13 @@ mod tests {
         let store = SubmissionStore::open(&root).unwrap();
         let big = "x".repeat(MAX_SUBMISSION_BYTES + 1);
         let err = store
-            .submit("abc", "index", "acme", "v1", serde_json::json!({ "f": big }))
+            .submit(
+                "abc",
+                "index",
+                "acme",
+                "v1",
+                serde_json::json!({ "f": big }),
+            )
             .unwrap_err();
         assert!(matches!(err, SubmitError::TooLarge));
         std::fs::remove_dir_all(&root).ok();
@@ -703,9 +724,10 @@ mod tests {
             .unwrap();
         // Backdate the on-disk record.
         let page = store.list_since("abc", 0, MAX_LIST).unwrap();
-        let path = root.join("abc").join(format!("{}.json", page.submissions[0].id));
-        let mut rec: Submission =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let path = root
+            .join("abc")
+            .join(format!("{}.json", page.submissions[0].id));
+        let mut rec: Submission = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         rec.created_at = Utc::now() - ChronoDuration::days(10);
         std::fs::write(&path, serde_json::to_vec(&rec).unwrap()).unwrap();
 
@@ -730,12 +752,24 @@ mod tests {
         // Land a submission shortly after the wait begins.
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            s.submit("abc", "index", "acme", "v1", serde_json::json!({"ok": true}))
-                .unwrap();
-        });
-        let outcome = wait(store.clone(), "abc".into(), 0, Duration::from_secs(5), MAX_LIST)
-            .await
+            s.submit(
+                "abc",
+                "index",
+                "acme",
+                "v1",
+                serde_json::json!({"ok": true}),
+            )
             .unwrap();
+        });
+        let outcome = wait(
+            store.clone(),
+            "abc".into(),
+            0,
+            Duration::from_secs(5),
+            MAX_LIST,
+        )
+        .await
+        .unwrap();
         match outcome {
             WaitOutcome::Ready(page) => {
                 assert_eq!(page.submissions.len(), 1);

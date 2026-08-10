@@ -1,0 +1,339 @@
+//! Return-channel HTTP surface for the **hosted** share server.
+//!
+//! Three endpoints implement the agent↔human round-trip for a hosted page
+//! (`issues/artifact-return-channel/{design,models-comparison}.md`):
+//!
+//! * `POST /api/v1/pages/{slug}/submit` — the **write**, called by the trusted
+//!   shell (a browser), **not** the artifact. It is *public by design* — the
+//!   unguessable capability slug is the capability, exactly as page read is — so
+//!   it carries no API key (the shell can't; it is served to every visitor). CSRF
+//!   is closed by an `Origin` allowlist, and floods by a size cap + per-page rate
+//!   limit. The submission's `slug`, owning `tenant`, and `content_version` are
+//!   all bound **server-side** from the trusted request context (the URL path and
+//!   the page's own stored meta/body) — never from the artifact-supplied payload.
+//! * `GET /api/v1/pages/{slug}/submissions?since=<cursor>` — the **plain poll**
+//!   (A1 fallback). API-key authenticated and per-tenant scoped: a tenant may read
+//!   a page's submissions only when it owns that page.
+//! * `GET /api/v1/pages/{slug}/submissions/wait?since=<cursor>&timeout=<secs>` —
+//!   the **server-side long-poll** (A3 primary). Same auth/scoping, holds the
+//!   connection until a submission after the cursor lands or the timeout fires.
+//!
+//! The read endpoints are gated by [`auth::ingest_auth`]; the submit endpoint is
+//! not, so it is registered on a separate sub-router without that layer.
+
+use axum::extract::rejection::JsonRejection;
+use axum::{
+    Extension, Router,
+    extract::{DefaultBodyLimit, Path, Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use serde::Deserialize;
+use serde_json::json;
+
+use crate::cli::SCHEMA_VERSION;
+use crate::submissions::{
+    self, DEFAULT_WAIT_SECS, MAX_LIST, MAX_SUBMISSION_BYTES, MAX_WAIT_SECS, SubmitError,
+    WaitOutcome,
+};
+
+use super::HostedState;
+use super::auth::{self, Tenant};
+
+/// The single artifact slug a hosted page holds (its `index`).
+const HOSTED_ARTIFACT: &str = "index";
+
+/// Build the return-channel routes. The submit route is public (shell-callable);
+/// the read routes carry the ingest API-key auth layer. Both live under
+/// `/api/v1/pages/{slug}/…` at the origin root (the shell's `connect-src 'self'`
+/// permits the same-origin POST/GET).
+pub fn router(state: HostedState, keys: std::sync::Arc<auth::KeyTable>) -> Router {
+    // Public write: no API key (the capability slug is the capability). A tight
+    // body limit — a submission is a form answer, not a file — plus CSRF/flood
+    // defenses inside the handler.
+    let submit_body_limit = MAX_SUBMISSION_BYTES + 16 * 1024;
+    let submit = Router::new()
+        .route("/api/v1/pages/{slug}/submit", post(submit))
+        .layer(DefaultBodyLimit::max(submit_body_limit))
+        .with_state(state.clone());
+
+    // Authenticated + per-tenant-scoped reads.
+    let read = Router::new()
+        .route("/api/v1/pages/{slug}/submissions", get(list))
+        .route("/api/v1/pages/{slug}/submissions/wait", get(wait))
+        .route_layer(axum::middleware::from_fn_with_state(
+            keys,
+            auth::ingest_auth,
+        ))
+        .with_state(state);
+
+    submit.merge(read)
+}
+
+/// Submit request body from the trusted shell. `data` is the untrusted user
+/// payload (size-bounded, stored opaque). `content_version` is the artifact's
+/// self-reported version echo (validated against the server's authoritative value
+/// — cross-round protection). `slug` is accepted (the shared shell sends it for
+/// the loopback path) but **ignored** here: hosted binds the slug from the URL.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitRequest {
+    data: serde_json::Value,
+    #[serde(default)]
+    content_version: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    slug: Option<String>,
+}
+
+/// `POST /api/v1/pages/{slug}/submit`.
+async fn submit(
+    State(state): State<HostedState>,
+    Path(slug): Path<String>,
+    headers: HeaderMap,
+    body: Result<axum::Json<SubmitRequest>, JsonRejection>,
+) -> Response {
+    // CSRF: a cross-site browser fetch always carries an `Origin`; require it to
+    // name our own public origin. A request with no `Origin` is not a cross-site
+    // browser POST (server-to-server / curl), so it is allowed.
+    if !origin_ok(&headers, std::slice::from_ref(&state.public_origin)) {
+        return err(
+            StatusCode::FORBIDDEN,
+            "bad_origin",
+            "cross-origin submit rejected",
+        );
+    }
+
+    let axum::Json(req) = match body {
+        Ok(b) => b,
+        Err(rej) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "invalid_json",
+                &format!("request body is not valid JSON for this endpoint: {rej}"),
+            );
+        }
+    };
+
+    // The slug is bound from the URL path; the page must be served and its owner is
+    // read from its own meta (never the payload).
+    let Some(body_html) = state.store.page_body(&slug) else {
+        return err(StatusCode::NOT_FOUND, "no_such_page", "no such page");
+    };
+    let Some(tenant) = state.store.page_tenant(&slug) else {
+        return err(StatusCode::NOT_FOUND, "no_such_page", "no such page");
+    };
+    let server_version = submissions::content_version(&body_html);
+
+    // Cross-round protection: if the artifact echoed a content-version, it must
+    // match the page's current authoritative version, else the submission is for a
+    // round that no longer matches what is served.
+    if let Some(echo) = req.content_version.as_deref()
+        && echo != server_version
+    {
+        return err(
+            StatusCode::CONFLICT,
+            "content_version_mismatch",
+            "the submission answers a stale version of this page",
+        );
+    }
+
+    let store = state.submissions.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        store.submit(&slug, HOSTED_ARTIFACT, &tenant, &server_version, req.data)
+    })
+    .await;
+    match result {
+        Ok(Ok(sub)) => (
+            StatusCode::CREATED,
+            axum::Json(json!({
+                "schema_version": SCHEMA_VERSION,
+                "id": sub.id,
+                "content_version": sub.content_version,
+            })),
+        )
+            .into_response(),
+        Ok(Err(e)) => submit_error(e),
+        Err(join) => {
+            eprintln!("glasspad host: submit task panicked: {join}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the submission",
+            )
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ListQuery {
+    since: Option<u64>,
+}
+
+/// `GET /api/v1/pages/{slug}/submissions?since=<cursor>` — plain poll.
+async fn list(
+    State(state): State<HostedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(slug): Path<String>,
+    Query(q): Query<ListQuery>,
+) -> Response {
+    if let Some(resp) = authorize_read(&state, &tenant, &slug) {
+        return resp;
+    }
+    let since = q.since.unwrap_or(0);
+    let store = state.submissions.clone();
+    let key = slug.clone();
+    match tokio::task::spawn_blocking(move || store.list_since(&key, since, MAX_LIST)).await {
+        Ok(Ok(page)) => list_response(&page, false),
+        Ok(Err(e)) => {
+            eprintln!("glasspad host: list submissions error: {e}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not read submissions",
+            )
+        }
+        Err(join) => {
+            eprintln!("glasspad host: list task panicked: {join}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not read submissions",
+            )
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct WaitQuery {
+    since: Option<u64>,
+    timeout: Option<u64>,
+}
+
+/// `GET /api/v1/pages/{slug}/submissions/wait?since=<cursor>&timeout=<secs>` —
+/// server-side long-poll.
+async fn wait(
+    State(state): State<HostedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(slug): Path<String>,
+    Query(q): Query<WaitQuery>,
+) -> Response {
+    if let Some(resp) = authorize_read(&state, &tenant, &slug) {
+        return resp;
+    }
+    let since = q.since.unwrap_or(0);
+    let timeout = clamp_timeout(q.timeout);
+    match submissions::wait(state.submissions.clone(), slug, since, timeout, MAX_LIST).await {
+        Ok(WaitOutcome::Ready(page)) => list_response(&page, false),
+        Ok(WaitOutcome::TimedOut { cursor }) => list_response(
+            &submissions::ListPage {
+                submissions: Vec::new(),
+                cursor,
+            },
+            true,
+        ),
+        Ok(WaitOutcome::TooBusy) => err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too_many_waiters",
+            "the server is holding too many long-polls; retry with the plain poll",
+        ),
+        Err(e) => {
+            eprintln!("glasspad host: wait error: {e}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not read submissions",
+            )
+        }
+    }
+}
+
+/// A tenant may read a page's submissions only when it owns that page. Returns
+/// `Some(<404 response>)` to deny (a missing page or a page owned by another tenant
+/// both return an opaque "not found" — a tenant learns nothing about pages it does
+/// not own), or `None` to allow.
+fn authorize_read(state: &HostedState, tenant: &Tenant, slug: &str) -> Option<Response> {
+    match state.store.page_tenant(slug) {
+        Some(owner) if owner == tenant.0 => None,
+        _ => Some(err(
+            StatusCode::NOT_FOUND,
+            "no_such_page",
+            "no such page for this tenant",
+        )),
+    }
+}
+
+/// Clamp the requested long-poll timeout into `(0, MAX_WAIT_SECS]`, defaulting when
+/// unset, so a held connection is always bounded.
+fn clamp_timeout(secs: Option<u64>) -> std::time::Duration {
+    let s = secs.unwrap_or(DEFAULT_WAIT_SECS).clamp(1, MAX_WAIT_SECS);
+    std::time::Duration::from_secs(s)
+}
+
+/// True when the request either carries no `Origin` (not a cross-site browser POST)
+/// or carries one that exactly matches an allowed origin. A present-but-foreign
+/// `Origin` is rejected — the CSRF boundary.
+pub fn origin_ok(headers: &HeaderMap, allowed: &[String]) -> bool {
+    match headers.get(header::ORIGIN) {
+        None => true,
+        Some(v) => match v.to_str() {
+            Ok(o) => allowed.iter().any(|a| a == o),
+            Err(_) => false,
+        },
+    }
+}
+
+fn list_response(page: &submissions::ListPage, timed_out: bool) -> Response {
+    let items: Vec<serde_json::Value> = page
+        .submissions
+        .iter()
+        .map(|s| s.to_public_json())
+        .collect();
+    axum::Json(json!({
+        "schema_version": SCHEMA_VERSION,
+        "submissions": items,
+        "cursor": page.cursor,
+        "timed_out": timed_out,
+    }))
+    .into_response()
+}
+
+fn submit_error(e: SubmitError) -> Response {
+    match e {
+        SubmitError::TooLarge => err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "submission_too_large",
+            &e.to_string(),
+        ),
+        SubmitError::Full => err(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "submissions_full",
+            &e.to_string(),
+        ),
+        SubmitError::RateLimited => err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            &e.to_string(),
+        ),
+        SubmitError::Io(io) => {
+            eprintln!("glasspad host: submit storage error: {io}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the submission",
+            )
+        }
+    }
+}
+
+fn err(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        axum::Json(json!({
+            "schema_version": SCHEMA_VERSION,
+            "error": { "code": code, "message": message },
+        })),
+    )
+        .into_response()
+}
