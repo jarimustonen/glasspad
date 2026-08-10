@@ -293,6 +293,20 @@ fn space_nav(snap: &Snapshot, space: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Public artifact-body resolution (live snapshot first, else the demo fixtures) —
+/// the **same seam** the content route uses. The return channel binds a submission's
+/// content-version to this exact body, so a submit resolves an artifact wherever the
+/// content route would serve one (a live space or the built-in fixtures).
+pub fn resolve_artifact_html(snap: &Snapshot, space: &str, slug: &str) -> Option<String> {
+    find_artifact(snap, space, slug).map(|h| h.html)
+}
+
+/// The home slug for `space` (live, else fixtures) — the default submit target when
+/// the shell does not name a current slug. Public wrapper over [`space_home`].
+pub fn resolve_home(snap: &Snapshot, space: &str) -> Option<String> {
+    space_home(snap, space)
+}
+
 /// The home slug for a space (`index` > `home` > first in nav order).
 fn space_home(snap: &Snapshot, space: &str) -> Option<String> {
     if let Some(sp) = snap.space(space) {

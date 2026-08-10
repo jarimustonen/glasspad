@@ -476,6 +476,78 @@ async function main() {
       /\/demo\/nav-a(\?|$)/.test(page.url()) && page.url() !== beforeUrl, `url=${page.url()}`);
   }
 
+  // ---------------------------------------------------------------------
+  // TEST 10 — RETURN CHANNEL (the airlock). A fragment artifact calls
+  // `gp.submit()` (and submits a native <form>); the bridge postMessages the
+  // trusted shell, which POSTs to the same-origin submit endpoint. The artifact
+  // itself stays under `connect-src 'none'` (no egress) — the shell is the only
+  // thing that talks to the server. We assert the whole chain reaches the server
+  // (submitAccepted increments on a 2xx) AND that a wrong-source submit is ignored.
+  // ---------------------------------------------------------------------
+  {
+    const frameFor = (slug) =>
+      page.frames().find((f) => new RegExp(`/demo/_c/${slug}$`).test(f.url().replace(/[?#].*$/, "")));
+    const waitFrame = async (slug) => {
+      let f = null;
+      for (let i = 0; i < 80 && !(f = frameFor(slug)); i++) await page.waitForTimeout(50);
+      if (f) await f.waitForLoadState?.("load").catch(() => {});
+      return f;
+    };
+
+    await page.goto(`${BASE}/demo/submit`, { waitUntil: "load" });
+    const sub = await waitFrame("submit");
+    check("return: fragment artifact is framed + bridged (submit wrapped)", !!sub,
+      sub ? sub.url() : "no submit frame");
+
+    // The wrapped fragment carries the injected content-version meta the bridge echoes.
+    const hasCv = sub ? await sub.evaluate(
+      () => !!document.querySelector('meta[name="gp-content-version"]')).catch(() => false) : false;
+    check("return: wrapped artifact carries the gp-content-version meta (cross-round hook)", hasCv);
+
+    // The artifact CSP the BROWSER enforced on the framed content is still fully
+    // closed — no egress opened by the return channel.
+    const subCsp = await page.evaluate(async (base) => {
+      const r = await fetch(`${base}/demo/_c/submit`);
+      return r.headers.get("content-security-policy") || "";
+    }, BASE);
+    check("return/airlock: framed artifact CSP still `connect-src 'none'`",
+      /connect-src 'none'/.test(subCsp), subCsp.slice(0, 80));
+    check("return/airlock: artifact sandbox still grants NO allow-forms",
+      !/allow-forms/.test(subCsp), subCsp.slice(0, 80));
+
+    // (a) gp.submit() → shell → server. submitAccepted increments on the 2xx POST.
+    const before = await page.evaluate(() => window.__bridgeStats.submitAccepted || 0);
+    if (sub) await sub.evaluate(() => document.getElementById("go").click());
+    await page
+      .waitForFunction((b) => (window.__bridgeStats.submitAccepted || 0) > b, before, { timeout: 4000 })
+      .catch(() => {});
+    const after = await page.evaluate(() => window.__bridgeStats.submitAccepted || 0);
+    check("return: gp.submit routed through the shell and reached the server (2xx)",
+      after > before, `submitAccepted ${before}->${after}`);
+
+    // (b) A submit message from the TOP window (wrong source) is ignored — the shell
+    //     only trusts `event.source === frame.contentWindow`.
+    const srcBefore = await page.evaluate(() => window.__bridgeStats.rejectedSource);
+    const accBefore = await page.evaluate(() => window.__bridgeStats.submitAccepted || 0);
+    await page.evaluate(() => window.postMessage({ type: "submit", data: { x: 1 } }, "*"));
+    await page.waitForTimeout(150);
+    const srcAfter = await page.evaluate(() => window.__bridgeStats.rejectedSource);
+    const accAfter = await page.evaluate(() => window.__bridgeStats.submitAccepted || 0);
+    check("return: a submit from a NON-parent source is ignored by the shell",
+      srcAfter === srcBefore + 1 && accAfter === accBefore,
+      `rejectedSource ${srcBefore}->${srcAfter} submitAccepted ${accBefore}->${accAfter}`);
+
+    // (c) A native <form> submit (sandbox-blocked) is intercepted and routed too.
+    const fBefore = await page.evaluate(() => window.__bridgeStats.submitAccepted || 0);
+    if (sub) await sub.evaluate(() => document.getElementById("send").click());
+    await page
+      .waitForFunction((b) => (window.__bridgeStats.submitAccepted || 0) > b, fBefore, { timeout: 4000 })
+      .catch(() => {});
+    const fAfter = await page.evaluate(() => window.__bridgeStats.submitAccepted || 0);
+    check("return: native <form> submit is intercepted + routed through gp.submit",
+      fAfter > fBefore, `submitAccepted ${fBefore}->${fAfter}`);
+  }
+
   await browser.close();
 }
 

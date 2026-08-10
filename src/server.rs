@@ -129,24 +129,22 @@ async fn loopback_submit(
     };
 
     // Resolve the artifact (the shell's current slug, else the space home) and its
-    // authoritative content-version from the served snapshot — never the payload.
+    // authoritative content-version from the served body — via the same seam the
+    // content route uses (live snapshot, else fixtures), never the payload.
     let snap = host.snapshot();
-    let Some(sp) = snap.space(&space) else {
-        return sub_err(StatusCode::NOT_FOUND, "no_such_space", "no such space");
-    };
     let slug = req
         .slug
         .clone()
-        .or_else(|| sp.home.clone())
+        .or_else(|| artifact_host::resolve_home(&snap, &space))
         .unwrap_or_else(|| SINGLE_SLUG.to_string());
-    let Some(artifact) = sp.artifact(&slug) else {
+    let Some(body) = artifact_host::resolve_artifact_html(&snap, &space, &slug) else {
         return sub_err(
-            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_FOUND,
             "no_such_artifact",
             "no such artifact in this space",
         );
     };
-    let version = submissions::content_version(&artifact.html);
+    let version = submissions::content_version(&body);
     if let Some(echo) = req.content_version.as_deref()
         && echo != version
     {

@@ -76,6 +76,10 @@ static FIXTURES: &[Fixture] = &[
         slug: "inject",
         html: INJECT,
     },
+    Fixture {
+        slug: "submit",
+        html: SUBMIT,
+    },
 ];
 
 /// Benign home artifact — links the real `base.css`, loads the real `charts.js`
@@ -340,6 +344,25 @@ const INJECT: &str = r#"<!doctype html>
 <h1>Injection probe target</h1>
 <p>The hostile string lives in this artifact's title; the trusted nav must render it inert.</p>
 </body></html>
+"#;
+
+/// Return-channel demo — a benign **fragment** (no `<!doctype>`, so it is wrapped
+/// and gets `bridge.js` + the injected `gp-content-version` meta). It exercises the
+/// airlock end-to-end: `gp.submit()` (the `#go` button) and a native `<form>`
+/// submit (blocked by the sandbox, intercepted by the bridge) both postMessage the
+/// trusted shell, which POSTs to `/{space}/_gp/submit`. The adversarial suite drives
+/// it and asserts the whole chain reaches the server (a 2xx, `submitAccepted`
+/// increments) while a wrong-source submit is ignored — all with the artifact still
+/// under `connect-src 'none'` and no `allow-forms`.
+const SUBMIT: &str = r#"<h1>Return channel</h1>
+<p>Send input back to the authoring agent through the trusted shell.</p>
+<form id="f"><input name="who" value="ada"><button id="send" type="submit">Send form</button></form>
+<button id="go" type="button">gp.submit()</button>
+<script>
+document.getElementById("go").addEventListener("click", function () {
+  window.gp.submit({ picked: "yes", n: 42 });
+});
+</script>
 "#;
 
 /// `/_gp/v1/*` pinned base libraries (Wave 2b).

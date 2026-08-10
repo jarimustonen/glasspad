@@ -121,6 +121,17 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   never a bare origin (re-opens `/api/*`), never a foreign host.
 - The artifact iframe is `sandbox="allow-scripts allow-top-navigation-by-user-activation"`.
   No `allow-same-origin`.
+- **Return channel = the shell is the airlock; the artifact stays frozen.** An
+  interactive artifact sends user input back via `gp.submit(data)` (bridge.js) →
+  `postMessage({type:"submit",…})` → the trusted shell (`connect-src 'self'`) POSTs
+  it to `/{space}/_gp/submit` (loopback) / `/api/v1/pages/{slug}/submit` (hosted).
+  The **artifact keeps `connect-src 'none'` and no `allow-forms`** — do **not** add
+  either. The server binds the submission's slug/space + owning tenant +
+  content-version from the *trusted request context* (URL path + stored page
+  meta/body), never the payload; the submit endpoint is `Origin`-allowlisted (CSRF),
+  size + rate capped; hosted reads are API-key + per-tenant scoped. See
+  `issues/artifact-return-channel/`. The store + long-poll are in `src/submissions.rs`;
+  handlers in `hosted/submit.rs` (hosted) and `server.rs` (loopback).
 
 ## Testing
 

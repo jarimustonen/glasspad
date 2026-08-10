@@ -154,9 +154,60 @@
     return false;
   };
 
-  // A native form submit is blocked by the sandbox (no `allow-forms`), but the
-  // `submit` event still fires — intercept it and route the fields through the one
-  // audited helper, so an author can write an ordinary <form> and it "just works".
+  // Serialize a <form>'s fields into a plain object. Only string values (a File
+  // input has no real data in the null-origin sandbox and would not serialize);
+  // repeated names collapse into an array so checkbox groups / multi-selects
+  // round-trip.
+  function serializeForm(form) {
+    var data = {};
+    try {
+      new FormData(form).forEach(function (value, name) {
+        if (typeof value !== "string") return;
+        if (Object.prototype.hasOwnProperty.call(data, name)) {
+          if (!Array.isArray(data[name])) data[name] = [data[name]];
+          data[name].push(value);
+        } else {
+          data[name] = value;
+        }
+      });
+    } catch (e) {
+      /* FormData unavailable — submit whatever was collected (possibly empty) */
+    }
+    return data;
+  }
+
+  // A native form submit is blocked by the sandbox (no `allow-forms`) — and, per the
+  // HTML form-submission algorithm, the sandbox check runs BEFORE the `submit` event
+  // would fire, so a `submit` listener never sees it. Intercept the submit CONTROL's
+  // CLICK instead (clicks are not sandbox-gated): a click on a submit button/input
+  // inside a <form> serializes the form and routes it through the one audited helper,
+  // so an author can write an ordinary <form> and it "just works".
+  document.addEventListener(
+    "click",
+    function (event) {
+      if (!FRAMED || event.defaultPrevented) return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      var t = event.target && event.target.closest
+        ? event.target.closest("button, input[type=submit], input[type=image]")
+        : null;
+      if (!t) return;
+      // A submit control: a <button> whose type resolves to "submit" (the default),
+      // or an <input type=submit|image>. A type="button"/"reset" control is not one.
+      var isSubmit =
+        (t.tagName === "BUTTON" && t.type === "submit") ||
+        (t.tagName === "INPUT" && (t.type === "submit" || t.type === "image"));
+      if (!isSubmit) return;
+      var form = t.form || (t.closest ? t.closest("form") : null);
+      if (!form) return;
+      event.preventDefault();
+      window.gp.submit(serializeForm(form));
+    },
+    false
+  );
+
+  // Belt-and-braces: in any NON-sandboxed embedding the `submit` event does fire
+  // (e.g. Enter-to-submit, `form.requestSubmit()`); route it too. Under the frozen
+  // sandbox this never runs, so it changes nothing there.
   document.addEventListener(
     "submit",
     function (event) {
@@ -164,24 +215,7 @@
       var form = event.target;
       if (!form || form.tagName !== "FORM") return;
       event.preventDefault();
-      var data = {};
-      try {
-        new FormData(form).forEach(function (value, name) {
-          // Only string fields (skip File inputs — the null-origin sandbox has no
-          // real file access, and a File would not serialize). Repeated names
-          // collapse into an array so multi-selects/checkbox groups round-trip.
-          if (typeof value !== "string") return;
-          if (Object.prototype.hasOwnProperty.call(data, name)) {
-            if (!Array.isArray(data[name])) data[name] = [data[name]];
-            data[name].push(value);
-          } else {
-            data[name] = value;
-          }
-        });
-      } catch (e) {
-        /* FormData unavailable — submit an empty object rather than throwing */
-      }
-      window.gp.submit(data);
+      window.gp.submit(serializeForm(form));
     },
     false
   );

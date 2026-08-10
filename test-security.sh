@@ -22,6 +22,10 @@ SUITE_DIR="tests/security"
 # existing EXIT-trap cleanup() removes it (the later traps all chain through it).
 export GLASSPAD_PID_FILE="$(mktemp -u "${TMPDIR:-/tmp}/glasspad-sec-pid.XXXXXX")"
 
+# Isolate the return-channel submission store to a hermetic temp dir so this suite's
+# `serve` invocations never write to the developer's real ~/.glasspad/submissions.
+export GLASSPAD_STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/glasspad-sec-state.XXXXXX")"
+
 echo "==> Building glasspad"
 cargo build 2>&1 | tail -1
 
@@ -37,7 +41,7 @@ pkill -f "target/debug/glasspad serve" 2>/dev/null || true
 sleep 0.5
 ./target/debug/glasspad serve --port "$PORT" >/tmp/glasspad-sec-test.log 2>&1 &
 SERVER_PID=$!
-cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -f "$GLASSPAD_PID_FILE" 2>/dev/null || true; }
+cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -f "$GLASSPAD_PID_FILE" 2>/dev/null || true; rm -rf "$GLASSPAD_STATE_DIR" 2>/dev/null || true; }
 trap cleanup EXIT
 
 # Wait for the server to answer.
@@ -139,6 +143,43 @@ echo "$(hdr "$SB/myspace/inject" content-security-policy)" | grep -q "require-tr
 CSP="$(hdr "$SB/myspace/_c/index" content-security-policy)"
 echo "$CSP" | grep -q "connect-src 'none';"; scheck $? "artifact connect-src stays 'none' (fully closed)"
 ! echo "$CSP" | grep -q "/_gp/reload"; scheck $? "SSE path is not named in the artifact CSP"
+
+# ---------------------------------------------------------------------------
+# Return channel (the airlock). The trusted shell POSTs a submission; the ARTIFACT
+# never gains egress. These are server-side HTTP checks (a browser can't help with
+# CSRF/rate/spoof at the network layer); the browser drives the full artifact→shell
+# →server chain in run.mjs above.
+# ---------------------------------------------------------------------------
+LB_ORIGIN="http://127.0.0.1:$SPACE_PORT"
+sub_post() { # origin  body  -> http_code
+  curl -s -o /dev/null -w '%{http_code}' -X POST "$SB/myspace/_gp/submit" \
+    -H "Origin: $1" -H 'content-type: application/json' -d "$2"
+}
+
+# AIRLOCK REGRESSION (MUST hold): the artifact CSP is still `connect-src 'none'`
+# AND the sandbox grants NO `allow-forms` — the return channel opened no egress.
+! echo "$CSP" | grep -q "allow-forms"; scheck $? "airlock: artifact sandbox still has NO allow-forms"
+echo "$CSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "airlock: artifact sandbox tokens unchanged (no new grant)"
+
+# Same-origin submit is accepted; a cross-origin (CSRF) submit is rejected.
+[ "$(sub_post "$LB_ORIGIN" '{"data":{"a":1},"slug":"index"}')" = "201" ]; scheck $? "return: same-origin submit accepted (201)"
+[ "$(sub_post "http://evil.example" '{"data":{}}')" = "403" ]; scheck $? "return: cross-origin submit rejected (CSRF 403)"
+
+# Content-version / cross-round mismatch is rejected (409).
+[ "$(sub_post "$LB_ORIGIN" '{"data":{},"content_version":"00000000deadbeef","slug":"index"}')" = "409" ]; scheck $? "return: stale content-version rejected (409)"
+
+# Cross-space spoof: a submission is bound to the URL-path space (myspace), never a
+# payload field. A submit to myspace lands under myspace; an unrelated space is empty.
+sub_post "$LB_ORIGIN" '{"data":{"tag":"bound"},"slug":"sales"}' >/dev/null
+curl -s "$SB/myspace/_gp/submissions" | grep -q '"key":"myspace"'; scheck $? "return: submission keyed by the URL-path space, not a payload field"
+curl -s "$SB/otherspace/_gp/submissions" | grep -q '"submissions":\[\]'; scheck $? "return: an unrelated space has no submissions (no cross-space leak)"
+
+# Flood / rate limit: a burst of submits eventually 429s (per-space rate cap).
+RL=0
+for i in $(seq 1 40); do
+  [ "$(sub_post "$LB_ORIGIN" '{"data":{"i":'"$i"'}}')" = "429" ] && RL=1 && break
+done
+[ "$RL" = "1" ]; scheck $? "return: a submit flood is rate-limited (429)"
 
 kill "$SPACE_PID" 2>/dev/null || true
 sleep 0.3

@@ -111,6 +111,53 @@ glasspad open dashboard
 # ...edit files; the browser reloads on save.
 ```
 
+## Return channel: get user input back (interactive artifacts)
+
+An artifact can send user input **back to you** — a form answer, a button choice,
+a wizard step — so an agent↔human round-trip through a rich UI works. The artifact
+never gets network access; input flows `artifact → trusted shell → server → you`,
+and you read it with `glasspad await-submission`.
+
+**Author side (in a fragment artifact).** Call `gp.submit(data)` with any
+JSON-serializable value, or just write an ordinary `<form>` — clicking its submit
+button is intercepted and routed for you:
+
+```html
+<h1>Approve the deploy?</h1>
+<button type="button" onclick="gp.submit({approved: true})">Ship it</button>
+<button type="button" onclick="gp.submit({approved: false})">Hold</button>
+
+<!-- …or a plain form: -->
+<form><input name="note"><button type="submit">Send</button></form>
+```
+
+`gp.submit` is available in **fragment** artifacts (they get the bridge). A
+full-document artifact owns its page; keep to fragments for forms.
+
+**Agent side — run `await-submission` BACKGROUNDED.** It blocks on a server-side
+long-poll and returns the human's answer as its result, so you fire it in the
+background and get re-invoked with the answer when the user submits — no polling
+loop:
+
+```bash
+# Loopback: --port targets your local `serve`/`create`. Run it backgrounded.
+glasspad await-submission myspace --port 3000 --timeout 120 --json
+# → {"timed_out":false,"submissions":[{"id":1,"data":{"approved":true},...}],"cursor":1}
+
+# Hosted: a --server (or $GLASSPAD_SERVER) + API key; <slug> is the page slug.
+glasspad await-submission <slug> --server https://pad.example.com --json
+```
+
+- The **slug** is the space name (loopback) or the page slug (hosted).
+- On a submission: stdout is one compact JSON submission per line; exit `0`.
+- On **timeout**: a distinct result `{"timed_out":true,"cursor":N}` and exit `3`
+  — re-arm with `--since N` (to skip what you already saw) or give up.
+- `--since <cursor>` only returns submissions after that id (dedupe across arms);
+  `--timeout <secs>` bounds the hold (1–300, default 30).
+
+The typical loop: `publish`/`serve` an interactive page → `await-submission`
+backgrounded → act on the returned `data` → (optionally) publish the next step.
+
 ## Rules enforced on load (informative errors, no silent fixups)
 
 - Slug/space names: lowercase `[a-z0-9-]`, start alphanumeric, ≤64 chars.
