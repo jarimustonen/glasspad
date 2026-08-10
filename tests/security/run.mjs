@@ -346,34 +346,39 @@ async function main() {
         stillLight === "light", `data-theme=${stillLight}`);
     }
 
-    // (a) EXTERNAL link is NOT intercepted by the bridge — done on a FRESH load so
-    //     the blocked foreign navigation can't contaminate the earlier assertions.
-    //     The proof of non-interception is that `accepted` does NOT change (the
-    //     bridge emitted no navigate); the foreign nav itself is separately
-    //     contained by the shell's `frame-src 'self'` (proven in TEST 1b).
+    // (a) EXTERNAL link is NOT intercepted by the bridge — and, per the wrapped
+    //     fragment's `<base target="_top">`, it breaks OUT of the null-origin sandbox
+    //     to the TOP-LEVEL tab instead of navigating in-frame (issue
+    //     hosted-interpage-link-refused: an in-frame nav would hit the target page's
+    //     `x-frame-options: DENY` shell → "refused to connect"). If the bridge had
+    //     (wrongly) intercepted it, it would `preventDefault` and the top would stay
+    //     put with only the iframe swapping — so "the top navigated away from the
+    //     shell to the link's real destination" proves BOTH non-interception and the
+    //     top-level break-out. Fresh load so the tear-down can't taint earlier state.
     await page.goto(`${BASE}/demo/nav-a`, { waitUntil: "load" });
     const navA2 = await waitFrame("nav-a");
     if (navA2) await navA2.waitForSelector("#to-ext").catch(() => {});
-    const accBeforeExt = await page.evaluate(() => window.__bridgeStats.accepted);
     if (navA2) await navA2.evaluate(() => document.getElementById("to-ext").click());
-    await page.waitForTimeout(300);
-    const accAfterExt = await page.evaluate(() => window.__bridgeStats.accepted);
-    check("bridge-nav: EXTERNAL link is not intercepted by the bridge (no navigate emitted)",
-      accAfterExt === accBeforeExt,
-      `accepted ${accBeforeExt}->${accAfterExt}`);
+    await page.waitForTimeout(600);
+    const topAfterExt = page.url();
+    check("bridge-nav: EXTERNAL link is not intercepted — it breaks out to the TOP-LEVEL tab (base target=_top)",
+      !/\/demo\/nav-a(\?|#|$)/.test(topAfterExt),
+      `top url=${topAfterExt}`);
 
     // (a2) A ROOT-RELATIVE (absolute-path) same-origin link is likewise NOT
-    //      intercepted — only path-relative links are. Fresh load; the browser
-    //      does the same-origin frame nav, the bridge emits no navigate.
+    //      intercepted by the bridge (only path-relative links are). It too breaks
+    //      out to the TOP level via `<base target="_top">`, loading the content route
+    //      as a sandboxed top-level direct-open — NOT an in-frame bridge swap (which
+    //      would keep the top at /demo/nav-a). Proof: the top URL is now the target
+    //      content route itself.
     await page.goto(`${BASE}/demo/nav-a`, { waitUntil: "load" });
     const navA3 = await waitFrame("nav-a");
     if (navA3) await navA3.waitForSelector("#to-abs").catch(() => {});
-    const accBeforeAbs = await page.evaluate(() => window.__bridgeStats.accepted);
     if (navA3) await navA3.evaluate(() => document.getElementById("to-abs").click());
-    await page.waitForTimeout(300);
-    const accAfterAbs = await page.evaluate(() => window.__bridgeStats.accepted);
-    check("bridge-nav: ABSOLUTE-PATH link is not intercepted (only path-relative links are)",
-      accAfterAbs === accBeforeAbs, `accepted ${accBeforeAbs}->${accAfterAbs}`);
+    await page.waitForTimeout(600);
+    const topAfterAbs = page.url();
+    check("bridge-nav: ABSOLUTE-PATH link is not intercepted — it breaks out to the TOP-LEVEL content route (not a bridge swap)",
+      /\/demo\/_c\/nav-b(\?|#|$)/.test(topAfterAbs), `top url=${topAfterAbs}`);
   }
 
   // ---------------------------------------------------------------------

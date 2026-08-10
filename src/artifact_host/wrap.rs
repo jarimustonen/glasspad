@@ -146,6 +146,19 @@ fn skip_prelude(html: &str) -> &str {
 /// way a trailing `<body>` tag could. It only attaches listeners, so it needs no
 /// body. (A *hostile* fragment can still refuse to cooperate — it owns its DOM —
 /// but "auto-injected into every fragment" is now a reliable property.)
+///
+/// `<base target="_top">` makes the document's default hyperlink target the
+/// **top-level** browsing context, so a link to *another* hosted page breaks out
+/// of the null-origin sandbox instead of navigating in-frame into a shell served
+/// `x-frame-options: DENY` + `frame-ancestors 'none'` (which the browser refuses
+/// → "refused to connect"). The content iframe already carries the
+/// `allow-top-navigation-by-user-activation` sandbox flag, so a user click may
+/// perform that top navigation. This does NOT weaken isolation: `<base>` has no
+/// `href` (so `base-uri 'none'` has nothing to restrict, and subresource URLs are
+/// unaffected — it governs only the default link target), and it does not disturb
+/// the bridge's **same-space** relative-link swap: the bridge reads each anchor's
+/// own `target` *attribute* (which `<base>` never sets) and `preventDefault`s
+/// before any navigation, so those links still swap in place.
 pub fn wrap_fragment(fragment: &str, theme: Theme) -> String {
     format!(
         r#"<!doctype html>
@@ -154,6 +167,7 @@ pub fn wrap_fragment(fragment: &str, theme: Theme) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<base target="_top">
 <link rel="stylesheet" href="/_gp/v1/base.css">
 <script src="/_gp/v1/bridge.js" defer></script>
 </head>
@@ -241,6 +255,16 @@ mod tests {
     fn wrap_injects_theme_base_css_and_bridge() {
         let out = wrap_fragment("<h1>hi</h1>", Theme::Dark);
         assert!(out.contains(r#"data-theme="dark""#));
+        // The default hyperlink target is the top-level context, so a link to
+        // another hosted page breaks out of the sandbox instead of navigating the
+        // frame into an `x-frame-options: DENY` shell.
+        assert!(out.contains(r#"<base target="_top">"#));
+        // `<base>` sits in <head> before the untrusted fragment so it governs the
+        // fragment's links, and carries no `href` (nothing for `base-uri 'none'`
+        // to reject, subresource URLs untouched).
+        let base_pos = out.find(r#"<base target="_top">"#).unwrap();
+        assert!(base_pos < out.find("</head>").unwrap());
+        assert!(base_pos < out.find("<h1>hi</h1>").unwrap());
         assert!(out.contains(r#"<link rel="stylesheet" href="/_gp/v1/base.css">"#));
         // bridge.js is injected in <head>, BEFORE the untrusted fragment bytes.
         assert!(out.contains(r#"<script src="/_gp/v1/bridge.js" defer></script>"#));
@@ -276,6 +300,25 @@ mod tests {
         let wrapped = render_artifact(frag, Theme::Auto);
         assert!(wrapped.contains("bridge.js"));
         assert_ne!(wrapped, frag);
+    }
+
+    #[test]
+    fn interpage_link_carries_top_level_navigation_intent() {
+        // Regression (issue hosted-interpage-link-refused): a fragment that links to
+        // ANOTHER hosted page must render with `<base target="_top">` so the click
+        // navigates the top-level tab, not the sandboxed frame (whose target shell is
+        // served `x-frame-options: DENY` → "refused to connect"). The absolute link
+        // itself is preserved verbatim; only the default target changes.
+        let frag = r#"<a href="https://glasspad.maalla.dev/p/nzmfhhskgustkzlknzktygy6uu/">Lue syväluotaus »</a>"#;
+        let out = render_artifact(frag, Theme::Auto);
+        assert!(
+            out.contains(r#"<base target="_top">"#),
+            "inter-page link must carry top-level navigation intent"
+        );
+        assert!(
+            out.contains(r#"href="https://glasspad.maalla.dev/p/nzmfhhskgustkzlknzktygy6uu/""#),
+            "the link itself must be preserved"
+        );
     }
 
     #[test]

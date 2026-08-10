@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.3.1] - 2026-08-10
+
+### Fixed
+
+- **Hosted `/p/` pages: a link to another hosted page no longer shows "refused to
+  connect".** A link inside a fragment-wrapped artifact navigated *within* the
+  null-origin sandboxed iframe to the target page's shell, which is served
+  `x-frame-options: DENY` + CSP `frame-ancestors 'none'` — so the browser refused to
+  frame it. Wrapped fragments now carry `<base target="_top">`, so an inter-page link
+  breaks out to the top-level tab (permitted by the content iframe's existing
+  `allow-top-navigation-by-user-activation` sandbox flag) and loads normally. Sandbox
+  isolation is unchanged: `<base>` has no `href` (nothing for `base-uri 'none'` to
+  restrict, subresource URLs untouched), it grants the artifact no capability it did
+  not already have (a full document could always author `target="_top"` links), and the
+  bridge's same-space in-place swap still works (it reads each anchor's own `target`
+  attribute, which `<base>` never sets).
+
 ## [0.3.0] - 2026-08-06
 
 The agent→browser-HTML consolidation: glasspad becomes the single canonical surface

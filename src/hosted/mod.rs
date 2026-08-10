@@ -616,6 +616,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interpage_link_renders_with_top_level_navigation_intent() {
+        // Regression (issue hosted-interpage-link-refused): a hosted page whose body
+        // links to ANOTHER hosted `/p/` page must serve its content route with
+        // `<base target="_top">`, so clicking the link breaks out of the sandboxed
+        // iframe (top-level nav, permitted by the `allow-top-navigation-by-user-
+        // activation` sandbox flag) instead of navigating in-frame into a shell
+        // served `x-frame-options: DENY` → Chrome's "refused to connect". The link is
+        // a fragment body, so it flows through `wrap::render_artifact`. Isolation is
+        // preserved: the frozen artifact CSP (sandbox, `connect-src 'none'`) is
+        // unchanged (asserted by the sibling serve/hostile tests).
+        let root = tmp_root("interpage");
+        let (app, _, _) = app_with(&root);
+        let body = "<p>See also <a href=\"https://pad.example.com/p/other0slug00000000000000/\">the deep dive »</a></p>";
+        let r = send(
+            &app,
+            publish_req(Some(KEY), serde_json::json!({ "html": body })),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        // The content iframe sandbox permits user-activated top navigation.
+        let csp = r
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            csp.contains("allow-top-navigation-by-user-activation"),
+            "sandbox must permit top navigation: {csp}"
+        );
+        let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8_lossy(&bytes);
+        assert!(
+            html.contains(r#"<base target="_top">"#),
+            "inter-page link must render with top-level navigation intent"
+        );
+        // The link itself is unchanged — the fix is the default target, not the href.
+        assert!(html.contains("https://pad.example.com/p/other0slug00000000000000/"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
     async fn hostile_body_cannot_widen_csp_on_hosted_route() {
         let root = tmp_root("hostile");
         let (app, _, _) = app_with(&root);
