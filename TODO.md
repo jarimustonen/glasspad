@@ -5,14 +5,21 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**glasspad 0.3.0 is FULLY RELEASED** (2026-08-09) — crates.io + GitHub Release
-`v0.3.0` (mac + 2× Linux binaries, installer, `glasspad.rb` Homebrew formula) +
-Homebrew tap, all live. The agent→HTML consolidation. `main` carries 0.3.0
-(Cargo.toml) + tag `v0.3.0`. Prior baseline: 0.2.1 (2026-08-05, all three channels).
+**glasspad 0.4.0 is FULLY RELEASED** (2026-08-10) — crates.io `0.4.0`, GitHub
+Release `v0.4.0` (12 assets: mac `aarch64-apple-darwin` + 2× Linux tarballs,
+`installer.sh`, `glasspad.rb`), Homebrew tap `homebrew-glasspad` (`version "0.4.0"`),
+all live and verified. `main` carries 0.4.0 (`Cargo.toml`) + tag `v0.4.0` (commit
+`b6dad4c`). This shipped the **artifact return channel** (`gp.submit` /
+`await-submission`) that had landed on main since 0.3.1. Prior baselines: 0.3.1
+(2026-08-10, hosted inter-page link fix), 0.3.0 (2026-08-09, agent→HTML consolidation).
 
-The GitHub-Release completion (blocked since 2026-08-06 by hauis's mac job failing)
-was finished 2026-08-09 by rerunning the failed job on hauis after a **durable
-runner-gitconfig fix** — see below.
+**The release was a single clean tag push** (`git push origin v0.4.0`), both
+workflows green off the tag; **the macOS build ran on `hauis` in ~1m and passed** —
+first tag-triggered release since the 2026-08-09 durable gitconfig fix, which held
+clean (no re-runs, no manual intervention).
+
+The 0.3.0 GitHub-Release completion (blocked 2026-08-06→09 by hauis's mac job) was
+finished 2026-08-09 via the same **durable runner-gitconfig fix** — see below.
 
 **Round 2026-08-09/10 (this session) — 5 units landed on main, full green gate
 (fmt/clippy/test + `./test-security.sh`, now 48 checks + Wave 2a), issue tracker now empty:**
@@ -69,24 +76,28 @@ of the runner-gitconfig setup, NOT a one-off:
 
 ## ▶ Start here (on return)
 
-**No pending code work.** 0.3.0 fully released; the 2026-08-09/10 round's four units + the
-`artifact-return-channel` feature all landed and are green; issue tracker + DAG empty.
-`main == origin`, clean. Next round: file new work, then re-populate lanes — or pick from
-*Optional polish* below.
+**No pending code work; nothing in flight.** 0.4.0 fully released and verified on all
+three channels; issue tracker + DAG empty; `main == origin` (b6dad4c), clean tree. The
+return channel is now shippable/demoable on the deployed maalla.dev. Next round: file
+new work, then re-populate lanes — or pick from the candidates below.
 
-_Shipped 2026-08-10:_ `artifact-return-channel` — interactive artifacts can now return
-user input to the creating agent via `gp.submit()` → trusted-shell airlock → server →
-`glasspad await-submission` (backgrounded server-side long-poll). Hosted (API-key,
-per-tenant) + loopback (Origin-gated). **Artifact sandbox stayed frozen** (`connect-src
-'none'` + no `allow-forms`, regression-asserted); `test-security.sh` now 48 checks (+7
-return-channel) + Wave 2a. NOT yet released — lands in the next version bump. A later
-increment could add A2 (SSE) / B2 (multi-round); the versioned submission record already
-leaves room. Recommended next follow-up: document the round-trip in the agent-facing skill
-guidance if not already covered, and consider a patch/minor release to ship it.
+**Candidate next work (no hard gate, pick or defer):**
+- **Return-channel A2/B2 increment** — A2 (SSE transport) / B2 (multi-round); the
+  versioned submission record already leaves room (`issues/artifact-return-channel/models-comparison.md`).
+- **Agent-facing skill doc** — document the `gp.submit` → `await-submission` round-trip
+  in the skill guidance if not already covered.
+- **Optional polish** (below): cosmetic LICENSE/contact confirms, close `release-oss`
+  epic, `version-commit-stamp` provenance follow-up.
+- **Downstream** homebase + tilictl consolidation, gated on the shipped glasspad (tracked
+  in those repos).
 
-_Resolved this round:_ the macOS→`macos-14` routing question — **reverted to self-hosted
-`hauis`** (`mac-release-self-hosted`, done). Mac release builds run on hauis again; the
-runner is durably fixed (see below), so the next tag push will build mac on hauis.
+_Released this round (2026-08-10):_ **0.4.0** — cut end-to-end with standing release
+autonomy on a green gate (fmt + clippy -D warnings + test + `cargo publish --dry-run` +
+`./test-security.sh` 48 + Wave 2a). CHANGELOG `[Unreleased]` had been left empty when the
+feature landed; this round wrote the return-channel entry as `[0.4.0]`. The generic
+`ossctl release cut` engine was deliberately **not** used — its `publish-all` phase does a
+*local* `cargo publish`, which CLAUDE.md forbids (CI-side token only); the repo's
+tag-push→CI recipe was used instead (as for 0.3.0/0.3.1).
 
 ### Optional polish (no hard gate)
 
@@ -112,7 +123,7 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 ```
 GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
 
-artifact-return-channel shipped + green 2026-08-10 and dropped. No active non-epic issues.
+0.4.0 released 2026-08-10 (artifact-return-channel shipped). No active non-epic issues.
 Next code round: file new work, then re-populate lanes.
 ```
 <!-- execution-dag:end -->
@@ -156,12 +167,10 @@ Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+p
   local rebuilds when only the build-script SHA changes — a stale/`null` local stamp
   until a clean rebuild. Clean CI/release builds are always correct, so this is a
   dev-ergonomics nit, not a shipped defect. File only if it annoys in practice.
-- **`artifact-return-channel` shipped to main 2026-08-10, NOT yet released** (crates/
-  maalla.dev still run 0.3.1 without it). Natural next action: **cut a release** (a minor,
-  e.g. 0.4.0 — new public API surface: `gp.submit`, submit/poll/wait endpoints,
-  `glasspad await-submission`). Bump `Cargo.toml` + `CHANGELOG.md`, tag+push (mac builds on
-  hauis now). Agent has standing release autonomy. Until then the feature can't be demoed on
-  the deployed maalla.dev.
+- **`artifact-return-channel` — RELEASED in 0.4.0 (2026-08-10)** (crates.io + GitHub
+  Release + Homebrew, all live). New public API surface — `gp.submit`, submit/poll/wait
+  endpoints, `glasspad await-submission` — shipped via the tag-push→CI recipe; mac built on
+  hauis. Now demoable on deployed maalla.dev.
 - **Later increment for the return channel:** A2 (SSE transport) / B2 (multi-round) — the
   versioned submission record already leaves room; see `models-comparison.md`.
 - Downstream homebase + tilictl consolidation is the next forward work, gated on 0.3.0
