@@ -2,11 +2,14 @@
 created: 2026-08-10
 updated: 2026-08-10
 type: feature
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 93340b4
   summary: 'feat(return-channel): B2 multi-round — agent re-renders in place'
+- hash: 1e09b61
+  summary: 'fix(return-channel): apply llm-review findings (B2 security + correctness)'
+closed: 2026-08-10
 ---
 
 # Return channel B2 — multi-round (agent re-renders in response)
