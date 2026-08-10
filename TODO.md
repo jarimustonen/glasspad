@@ -14,6 +14,17 @@ The GitHub-Release completion (blocked since 2026-08-06 by hauis's mac job faili
 was finished 2026-08-09 by rerunning the failed job on hauis after a **durable
 runner-gitconfig fix** — see below.
 
+**Round 2026-08-09/10 (this session) — 4 units landed on main, full green gate
+(fmt/clippy/test + `./test-security.sh` 41 + Wave 2a), issue tracker now empty:**
+- ✅ `hosted-config-path-macos` — `publish` honors `$XDG_CONFIG_HOME`/`~/.config` on all
+  platforms (matches `--help`); old `dirs::config_dir()` path still read as fallback.
+- ✅ `hosted-noindex-missing` — `X-Robots-Tag: noindex, nofollow` on hosted read routes
+  (host-serve only; loopback `serve` untouched) + regression test.
+- ✅ `particularly-offbeat-dust` — optional `idempotency_key` on `POST /api/v1/pages`
+  (per-tenant scoped, fsync + atomic mapping; no key → today's behaviour byte-for-byte).
+- ✅ `mac-release-self-hosted` — **reverted** the mac release build `macos-14` →
+  self-hosted `hauis`, now that hauis is durably fixed and is the intended mac machine.
+
 **0.3.0 features landed this session (all green: fmt/clippy/test + `./test-security.sh`
 41 + Wave 2a; each had a multi-model `/llm-review`):**
 - ✅ `markdown-template-render` — `glasspad render <file.md> [--template …]`, server-side
@@ -26,8 +37,9 @@ runner-gitconfig fix** — see below.
 - ✅ `version-commit-stamp` — real git SHA in `version --json`.
 - ✅ `skill-routing-guidance` — serve vs render vs publish vs build guidance in `src/skill.md`.
 - (Earlier: `prose-theme`, `version-command`.)
-- ✅ `release-mac-github-runner` — mac release build moved off self-hosted `hauis`
-  → GitHub-hosted `macos-14` (`dist-workspace.toml`); future releases don't touch `hauis`.
+- ✅ `release-mac-github-runner` — mac release build was moved off `hauis` → GitHub-hosted
+  `macos-14` (2026-08-07), then **reverted back to self-hosted `hauis` 2026-08-09**
+  (`mac-release-self-hosted`) once hauis was durably fixed. Mac builds run on hauis again.
 
 ## ✅ 0.3.0 GitHub Release — DONE (2026-08-09), via durable hauis fix
 
@@ -50,16 +62,16 @@ of the runner-gitconfig setup, NOT a one-off:
   restarted. **Full write-up committed to `homebase/infra/machines/hauis.md`.** Do NOT
   re-add `GIT_CONFIG_GLOBAL` — that is the thing that breaks mac builds.
 
-### ⚠️ ▶ Follow-up decision for Jari — revert the macOS→`macos-14` routing?
+## ▶ Start here (on return)
 
-`release-mac-github-runner` (commit `9deee1a`, on `main`) routes future mac builds to
-GitHub-hosted `macos-14` in `dist-workspace.toml`. That was done believing hauis was
-unreliable — now that hauis is durably fixed and is **the intended mac build machine**,
-main's config contradicts intent: the *next* release would build mac on `macos-14`, not
-hauis. If you want hauis to own mac builds again, revert that routing back to
-`aarch64-apple-darwin = "self-hosted"` (a small `dist-workspace.toml` change + `dist
-generate` to regenerate `release.yml`). Orchestrator can spawn a worktree for it on your
-go. (v0.3.0 itself already built on hauis — its tag predates 9deee1a.)
+**No pending code work.** 0.3.0 fully released; the 2026-08-09/10 round's four units all
+landed on main and are green; issue tracker + execution DAG are empty. `main == origin`,
+clean. Next round: file new work, then re-populate lanes — or pick from *Optional polish*
+below.
+
+_Resolved this round:_ the macOS→`macos-14` routing question — **reverted to self-hosted
+`hauis`** (`mac-release-self-hosted`, done). Mac release builds run on hauis again; the
+runner is durably fixed (see below), so the next tag push will build mac on hauis.
 
 ### Optional polish (no hard gate)
 
@@ -70,7 +82,7 @@ go. (v0.3.0 itself already built on hauis — its tag predates 9deee1a.)
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-06)
+## Execution DAG (2026-08-10)
 
 Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
 (never copied here). Merge each round (drop landed, add active, keep existing order).
@@ -101,9 +113,12 @@ Next code round: file new work, then re-populate lanes.
 
 Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+push.
 **Caveats learned this stint:**
-- **The macOS build now runs on a GitHub-hosted `macos-14` runner** (moved off the
-  self-hosted `hauis` on 2026-08-07, `release-mac-github-runner`) — no more shared-
-  gitconfig git-400. The v0.2.x/v0.3.0 tags predate the switch and still used `hauis`.
+- **The macOS build runs on the self-hosted `hauis` runner** (`dist-workspace.toml`:
+  `aarch64-apple-darwin = "self-hosted"`). Hauis's runner-gitconfig was durably fixed
+  2026-08-09 (`~/.gitconfig` `[include]` split replacing the broken `GIT_CONFIG_GLOBAL`
+  override; write-up in `homebase/infra/machines/hauis.md`). **Do NOT re-add
+  `GIT_CONFIG_GLOBAL` to any runner `.env`** — that is what broke mac builds. (Interlude:
+  2026-08-07→09 the mac build was briefly routed to GitHub-hosted `macos-14`, then reverted.)
 - **Cut a tag ONCE and let it finish** — still good hygiene; don't re-tag mid-run.
 - **`release.yml` has no `workflow_dispatch`** — a failed release can only be re-run
   (`gh run rerun <id> --failed`) or re-triggered by re-pointing the tag; there is no
