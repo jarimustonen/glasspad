@@ -103,23 +103,23 @@ do not run it in parallel with work on those files.
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: artifact-return-channel   ← scheduled; direction decided 2026-08-10
+GLOBAL HEAD-OF-LINE: artifact-return-channel
 
-0.3.0 fully released; the four 2026-08-09 issues all landed and dropped. One scheduled
-feature now in its own lane.
-
-LANE E — artifact return channel (bridge.js + src/artifact_host/{headers,mod} + src/server.rs
-         + src/hosted ingest + src/cli.rs + test-security.sh Wave)
-  ▶ artifact-return-channel   [feature] hosted form/input back to the creating agent via the
-     trusted shell as airlock; artifact sandbox stays frozen (connect-src 'none').
-     Direction DECIDED (hosted target, loopback rides along). Still to settle before/at build:
-     consumption transport + one-shot vs multi-round — pro/cons in
-     issues/artifact-return-channel/models-comparison.md (recommendation: A1 poll + A3
-     await-submission, B1 one-shot, versioned submission record). Design:
-     issues/artifact-return-channel/design.md. Big multi-file unit → likely /worktree-code
-     (reviewed) or a design-first spinoff; NEW Wave security cases are mandatory.
+LANE E — artifact return channel
+  ▶ artifact-return-channel   collision: bridge.js/headers.rs/mod.rs/server.rs/hosted/cli.rs
 ```
 <!-- execution-dag:end -->
+
+**Lane E — `artifact-return-channel` (head-of-line, scheduled 2026-08-10).** Hosted
+form/input back to the creating agent via the trusted shell as an airlock; the artifact
+sandbox stays frozen (`connect-src 'none'`). Direction DECIDED — hosted target, loopback
+rides along. Two sub-choices settled at/before build (pro/cons + recommendation in
+`issues/artifact-return-channel/models-comparison.md`): consumption transport (rec: A1 poll
++ A3 `await-submission`) and one-shot vs multi-round (rec: B1 one-shot + versioned submission
+record). Design: `issues/artifact-return-channel/design.md`. Big multi-file unit spanning
+`bridge.js`, `src/artifact_host/{headers,mod}.rs`, `src/server.rs`, `src/hosted/`, `src/cli.rs`
+— collides with Lanes A/B, don't parallelise. NEW Wave security cases mandatory; use
+`/worktree-code` (reviewed) or a design-first spinoff with `/llm-review`.
 
 ## How to cut a release (the recipe, now automated)
 
