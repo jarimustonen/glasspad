@@ -164,6 +164,36 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// Block on the next user submission an interactive artifact sent back, then
+    /// print it (the return channel's agent-facing surface).
+    ///
+    /// Run it BACKGROUNDED: it rides a server-side long-poll and returns the human's
+    /// answer as its result (stdout = one compact JSON submission per line under
+    /// `--json` the full `{submissions, cursor, timed_out}` envelope). On timeout it
+    /// exits 3 with a distinct "no submission" result so you can re-arm from the
+    /// returned cursor. Mode mirrors `publish`: a `--server` (or $GLASSPAD_SERVER)
+    /// targets the hosted server (`<slug>` = page slug, API-key auth); with none it
+    /// targets the local `serve` on `--port` (`<slug>` = space name, no auth).
+    AwaitSubmission {
+        /// The page slug (hosted) or space name (loopback) to await input for.
+        slug: String,
+        /// Only return submissions with an id greater than this cursor (default 0).
+        #[arg(long, default_value_t = 0)]
+        since: u64,
+        /// Seconds to hold before returning a "timed-out" result (1..=300).
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        /// Hosted server base URL (selects hosted mode), e.g. https://pad.example.com.
+        #[arg(long)]
+        server: Option<String>,
+        /// Bearer API key for the hosted read (required in hosted mode).
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Loopback port. Passing it forces loopback mode (targets the local
+        /// `serve`) even when a hosted server is configured.
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+    },
     /// Stop the running loopback server (`serve` / `create` / `render`).
     ///
     /// Reads the pid file at ~/.glasspad/server.pid (override with $GLASSPAD_PID_FILE)
@@ -277,6 +307,14 @@ async fn main() {
             )
             .await
         }
+        Some(Commands::AwaitSubmission {
+            slug,
+            since,
+            timeout,
+            server,
+            api_key,
+            port,
+        }) => cli::await_submission(slug, since, timeout, server, api_key, port, json).await,
         Some(Commands::Stop) => cli::stop(json),
         Some(Commands::Open {
             space,

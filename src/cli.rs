@@ -2040,6 +2040,191 @@ fn resolve_publish_template(reference: &str, json: bool) -> String {
     read_capped_utf8_file(Path::new(reference), "template", "template_not_found", json)
 }
 
+// --- await-submission (return-channel client) -----------------------------
+
+/// `glasspad await-submission <slug> [--since <cursor>] [--timeout <secs>]
+/// [--server <url>] [--api-key <key>] [--port <port>] [--json]` — block on the
+/// next user submission an interactive artifact sent back, then print it.
+///
+/// This is the **primary agent-facing surface** of the return channel (design
+/// A3): the agent runs it **backgrounded** and gets the human's answer as the
+/// command's return value — no polling loop, no cursor bookkeeping. It rides a
+/// **server-side long-poll** (`…/submissions/wait`), so it wastes no requests
+/// while nothing arrives, and it always returns within `--timeout` with a
+/// **distinct** "timed-out, no submission" result (exit code 3) so a backgrounded
+/// caller can re-arm from the returned `cursor` or give up.
+///
+/// Mode selection: an explicit `--server` selects the **hosted** server (API-key
+/// auth, `<slug>` = the page slug); an explicit `--port` (a loopback-only concept)
+/// selects the **loopback** `serve` process even when a hosted server is configured
+/// (`<slug>` = the space name, no auth — loopback only); with neither flag it uses
+/// `$GLASSPAD_SERVER`/config if set, else loopback on the default port.
+#[allow(clippy::too_many_arguments)]
+pub async fn await_submission(
+    slug: String,
+    since: u64,
+    timeout: u64,
+    server: Option<String>,
+    api_key: Option<String>,
+    port: Option<u16>,
+    json: bool,
+) {
+    // The slug/space addressing token obeys the same grammar the router enforces.
+    if !artifact_host::valid_space(&slug) {
+        exit_error(
+            json,
+            1,
+            "invalid_slug",
+            "slug must be lowercase [a-z0-9-], start alphanumeric, ≤64 chars, and not be reserved",
+            Some(&slug),
+            None,
+        );
+    }
+    let timeout = timeout.clamp(1, crate::submissions::MAX_WAIT_SECS);
+
+    let cfg = load_publish_config(json);
+    // Mode selection: an explicit `--server` forces hosted; an explicit `--port`
+    // (a loopback-only concept) forces loopback even when a hosted server is
+    // configured; otherwise fall back to the configured/env server, else loopback.
+    let server_flag = server.filter(|s| !s.trim().is_empty());
+    let server = match (server_flag, port) {
+        (Some(s), _) => Some(s),
+        (None, Some(_)) => None,
+        (None, None) => resolve_setting(None, "GLASSPAD_SERVER", cfg.server),
+    };
+
+    // Build the wait URL + optional bearer per mode.
+    let (url, bearer) = match server {
+        Some(server) => {
+            let api_key =
+                resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
+                    exit_error(
+                        json,
+                        1,
+                        "missing_api_key",
+                        "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` \
+                         to ~/.config/glasspad/config.yaml (a hosted --server requires a key)",
+                        None,
+                        None,
+                    )
+                });
+            if server.starts_with("http://") && !server_is_loopback(&server) {
+                eprintln!(
+                    "warning: awaiting over plaintext http:// to a non-local host sends the API \
+                     key in the clear; prefer https://"
+                );
+            }
+            let base = server.trim_end_matches('/');
+            (
+                format!(
+                    "{base}/api/v1/pages/{slug}/submissions/wait?since={since}&timeout={timeout}"
+                ),
+                Some(api_key),
+            )
+        }
+        None => {
+            // Loopback: target the local `serve` process on the resolved port.
+            let port = resolve_port(port, json);
+            (
+                format!(
+                    "http://127.0.0.1:{port}/{slug}/_gp/submissions/wait?since={since}&timeout={timeout}"
+                ),
+                None,
+            )
+        }
+    };
+
+    // The HTTP timeout must outlast the server-side long-poll so the *server*
+    // returns the "timed out" result first (rather than the client aborting).
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(timeout + 15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
+    };
+    let mut request = client.get(&url);
+    if let Some(k) = &bearer {
+        request = request.bearer_auth(k);
+    }
+    let resp = match request.send().await {
+        Ok(r) => r,
+        Err(e) => exit_error(
+            json,
+            2,
+            "request_failed",
+            &format!("cannot reach {url}: {e}"),
+            None,
+            None,
+        ),
+    };
+
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let msg = payload
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("the server rejected the wait");
+        let code = payload
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("await_rejected");
+        let exit = if status.is_client_error() { 1 } else { 2 };
+        exit_error(
+            json,
+            exit,
+            code,
+            &format!("{msg} (HTTP {})", status.as_u16()),
+            None,
+            None,
+        );
+    }
+
+    let submissions = payload
+        .get("submissions")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let cursor = payload
+        .get("cursor")
+        .and_then(|c| c.as_u64())
+        .unwrap_or(since);
+    let timed_out = payload
+        .get("timed_out")
+        .and_then(|t| t.as_bool())
+        .unwrap_or(submissions.is_empty());
+
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "timed_out": timed_out,
+            "submissions": submissions,
+            "cursor": cursor,
+            "warnings": [],
+        }));
+    } else if timed_out {
+        eprintln!("no submission before the {timeout}s timeout (re-arm from cursor {cursor})");
+    } else {
+        // stdout is the data channel: one compact JSON submission per line, so a
+        // backgrounded caller can read the answer directly.
+        for s in &submissions {
+            println!("{}", serde_json::to_string(s).unwrap_or_default());
+        }
+        eprintln!(
+            "received {} submission(s) (next cursor {cursor})",
+            submissions.len()
+        );
+    }
+    // Exit code encodes the outcome: 0 = at least one submission, 3 = timed out with
+    // none (a distinct, non-error status so a backgrounded agent can branch on it).
+    std::process::exit(if timed_out { 3 } else { 0 });
+}
+
 // --- data (legacy-format helper) ------------------------------------------
 
 /// `glasspad data <file> [--format] [--meta]` — parse a legacy CSV/JSON/mbox
