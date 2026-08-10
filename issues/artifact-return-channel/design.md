@@ -1,9 +1,16 @@
 # Design sketch — artifact → agent return channel
 
-**Status: SKETCH for a go/no-go decision. Not approved to build.** This explores how an
-interactive Glasspad artifact (forms, buttons, wizard steps) could send user input *back*
-to the agent that created the space, and what it would cost against the frozen security
-contract. Jari's call whether any of this proceeds.
+**Status: DESIGN — scheduled (own DAG lane). Direction decided 2026-08-10.** This is how an
+interactive Glasspad artifact (forms, buttons, wizard steps) sends user input *back* to the
+agent that created the space, without weakening the frozen security contract.
+
+**Decided direction (2026-08-10):**
+- **Target = the hosted model.** The return channel is built for hosted share pages
+  (`/p/<slug>`, multi-tenant, API-key). The **loopback `serve`** path falls out for free (the
+  same shell→server→sink plumbing, with a trivial local sink) and rides along.
+- Consumption model (how the agent receives submissions) and one-shot-vs-multi-round are
+  compared with pro/cons in a **separate doc**: [`models-comparison.md`](models-comparison.md).
+  Those two choices are still open and decided there.
 
 ## Goal
 
@@ -53,16 +60,19 @@ Three hops, each already or minimally within the model:
 3. **Server → agent (delivery).** The agent that ran the server consumes submissions. Mode-
    dependent (see below).
 
-## Delivery to the agent (the part that needs a real decision)
+## Delivery to the agent
 
-- **loopback `serve`** — the agent *is* the operator of the `glasspad serve` process, so the
-  natural sink is local: append each submission as a JSONL line to a file the agent tails
-  (`--submissions-file <path>`), or expose `glasspad submissions <space> --follow` that
-  streams them, or block with `glasspad await-submission <space> --timeout`. Fits the AI-
-  first CLI conventions (JSONL, `--json`, no prompts).
-- **hosted** — persist submissions per page (per-tenant scoped, exactly like the
-  `idempotency_key` mapping just landed), agent polls `GET /api/v1/pages/<slug>/submissions`
-  with its API key. Needs retention/GC like pages have.
+Target is **hosted**; loopback is the byproduct. The *transport* (how the agent receives
+submissions) is a separate choice compared in [`models-comparison.md`](models-comparison.md).
+
+- **hosted (primary)** — persist submissions per page (per-tenant scoped, exactly like the
+  `idempotency_key` mapping just landed), agent retrieves them with its API key. Needs
+  retention/GC like pages have. Transport options (poll / SSE-stream / `await-submission`
+  wrapper / webhook) → `models-comparison.md`.
+- **loopback `serve` (byproduct)** — the agent operates the `glasspad serve` process itself,
+  so the same shell→server plumbing lands in a trivial local sink: JSONL file it tails
+  (`--submissions-file`), stdout, or `glasspad await-submission`. Near-zero latency, no auth
+  needed (loopback). Falls out of the hosted work at near-zero extra cost.
 
 ## Security analysis — why this does NOT reopen exfil
 
@@ -88,16 +98,14 @@ The fear is "any outbound path = exfil." It isn't, because of *what data can rea
 - Confirm the artifact CSP is **still** `connect-src 'none'` + no `allow-forms` after the
   change (regression assert) — the whole design depends on the airlock, not a hole.
 
-## Options (pick the ambition level)
+## Scope (decided: hosted, loopback rides along)
 
-- **A — loopback-only, minimal.** Bridge `gp.submit()` + shell mediator + `POST /_gp/submit`
-  + JSONL submissions file / `await-submission`. Serves the "agent shows a form locally,
-  reads the answer" use case. Smallest new surface; hosted untouched. **Recommended first
-  step** if this proceeds.
-- **B — hosted too.** Adds per-tenant persisted submissions + polling API + retention/GC.
-  Bigger; only worth it if remote human-in-the-loop (maalla.dev-style) is a real need.
-- **C — richer protocol.** Typed form schemas, server-side validation, multi-round
-  (agent updates the artifact in response). Much larger; almost certainly premature.
+The build targets **hosted** end-to-end: bridge `gp.submit()` → shell mediator →
+`POST /api/v1/pages/<slug>/submit` → per-tenant persisted submissions → agent retrieval
+(transport per `models-comparison.md`). The **loopback** sink (JSONL/`await-submission`) is
+wired from the same shell→server path and ships alongside. Still-open sub-choices, both in
+`models-comparison.md`: the **consumption transport** and **one-shot vs multi-round** (a
+richer typed-schema / server-validation protocol is a later increment, not the first cut).
 
 ## Rough blast radius (Option A)
 
@@ -109,12 +117,10 @@ The fear is "any outbound path = exfil." It isn't, because of *what data can rea
 - `src/skill.md` — document the round-trip pattern for calling agents.
 - `test-security.sh` — new Wave cases (flood, spoof, cross-space, CSP-still-frozen).
 
-## Open questions for Jari
+## Open questions
 
-1. Is the real need **loopback** (agent + local human at the same machine) or **hosted**
-   (remote human, maalla.dev)? Decides A vs B.
-2. Agent consumption model: block-and-wait (`await-submission`) vs. tail a JSONL stream vs.
-   poll? (AI-first CLI leans JSONL stream / `--json`.)
-3. One-shot submit, or multi-round (agent re-renders in response to input)? A vs C.
-4. Is this worth opening at all now, or park until a concrete use case (e.g. digest/openclaw
-   needing a human approval step) forces it?
+1. ~~loopback vs hosted~~ — **DECIDED 2026-08-10: hosted is the target; loopback rides along.**
+2. Consumption transport (poll / SSE-stream / `await-submission` / webhook) — **open**, pro/cons
+   in `models-comparison.md`.
+3. One-shot vs multi-round — **open**, pro/cons in `models-comparison.md`.
+4. ~~open now or park~~ — **DECIDED: scheduled, own DAG lane.**

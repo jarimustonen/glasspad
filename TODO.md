@@ -64,10 +64,15 @@ of the runner-gitconfig setup, NOT a one-off:
 
 ## ▶ Start here (on return)
 
-**No pending code work.** 0.3.0 fully released; the 2026-08-09/10 round's four units all
-landed on main and are green; issue tracker + execution DAG are empty. `main == origin`,
-clean. Next round: file new work, then re-populate lanes — or pick from *Optional polish*
-below.
+**Scheduled: `artifact-return-channel` (Lane E, head-of-line).** 0.3.0 fully released; the
+2026-08-09/10 round's four units all landed and are green; `main == origin`, clean. The next
+build is the return-channel feature — **direction decided (hosted target, loopback rides
+along)**, but two sub-choices are settled at/before build from
+`issues/artifact-return-channel/models-comparison.md` (consumption transport; one-shot vs
+multi-round). Read `design.md` + `models-comparison.md` first; it's a big multi-file unit that
+touches the frozen security boundary, so it needs new Wave security cases and review
+(`/worktree-code` or a design-first spinoff with `/llm-review`). *Optional polish* below is
+lower priority.
 
 _Resolved this round:_ the macOS→`macos-14` routing question — **reverted to self-hosted
 `hauis`** (`mac-release-self-hosted`, done). Mac release builds run on hauis again; the
@@ -92,27 +97,29 @@ second lane's hot file (spawn-time exclusion).
 
 Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A);
 `src/cli.rs` + `src/server.rs` + render modules (Lane B). `src/skill.md` is docs-only.
+Lane E (artifact return channel) spans `bridge.js` + `src/artifact_host/{headers,mod}.rs`
++ `src/server.rs` + `src/hosted/` ingest + `src/cli.rs` — so it **collides with Lanes A/B**;
+do not run it in parallel with work on those files.
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
+GLOBAL HEAD-OF-LINE: artifact-return-channel   ← scheduled; direction decided 2026-08-10
 
-0.3.0 fully released; all four 2026-08-09 issues landed on main and dropped:
-hosted-config-path-macos (fixed), hosted-noindex-missing (fixed),
-particularly-offbeat-dust (done), mac-release-self-hosted (done). Green gate green
-(fmt/clippy/test + test-security.sh 41 + Wave 2a). No SCHEDULED code work.
-One open design-sketch awaiting a go/no-go (not in a lane) — see Adjacent backlog.
-Next code round: decide the sketch or file new work, then re-populate lanes.
+0.3.0 fully released; the four 2026-08-09 issues all landed and dropped. One scheduled
+feature now in its own lane.
+
+LANE E — artifact return channel (bridge.js + src/artifact_host/{headers,mod} + src/server.rs
+         + src/hosted ingest + src/cli.rs + test-security.sh Wave)
+  ▶ artifact-return-channel   [feature] hosted form/input back to the creating agent via the
+     trusted shell as airlock; artifact sandbox stays frozen (connect-src 'none').
+     Direction DECIDED (hosted target, loopback rides along). Still to settle before/at build:
+     consumption transport + one-shot vs multi-round — pro/cons in
+     issues/artifact-return-channel/models-comparison.md (recommendation: A1 poll + A3
+     await-submission, B1 one-shot, versioned submission record). Design:
+     issues/artifact-return-channel/design.md. Big multi-file unit → likely /worktree-code
+     (reviewed) or a design-first spinoff; NEW Wave security cases are mandatory.
 ```
 <!-- execution-dag:end -->
-
-### Adjacent backlog (not scheduled — awaiting a decision, not in a lane)
-
-- `artifact-return-channel` (feature, open) — **design sketch only, awaiting go/no-go.**
-  How an interactive artifact could return form/input to the creating agent via the trusted
-  shell as an airlock (artifact sandbox stays frozen). Full design in
-  `issues/artifact-return-channel/design.md`. Do NOT spawn a build until Jari answers the
-  "Open questions" (loopback vs hosted; agent consumption model; go/no-go).
 
 ## How to cut a release (the recipe, now automated)
 

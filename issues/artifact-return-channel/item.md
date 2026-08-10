@@ -10,8 +10,9 @@ priority: normal
 
 ## Description
 
-**Design SKETCH awaiting a go/no-go decision — not approved to build.** Full sketch in
-[`design.md`](design.md).
+**Scheduled (own DAG lane). Direction decided 2026-08-10: build for the hosted model;
+loopback rides along.** Design in [`design.md`](design.md); transport & interaction-shape
+pro/cons in [`models-comparison.md`](models-comparison.md).
 
 Can a Glasspad artifact collect user interaction (form submit, button choice, wizard step)
 and return that input to the agent that created the space? Today: **no, by design** — the
@@ -27,7 +28,8 @@ channel, as `bridge.js` navigation does), shell validates + POSTs to a new serve
 carry agent-embedded or user-typed data (null origin, no fetch), the channel opens **no new
 exfil vector**.
 
-Needs, before any build: a go/no-go, the loopback-vs-hosted decision, the agent-consumption
-model, and new Wave adversarial cases (flood, cross-space spoof, CSP-still-frozen regression).
-See design.md → "Open questions for Jari".
+Settled at/before build (see models-comparison.md): the consumption transport (recommendation:
+A1 polling + A3 `await-submission`) and one-shot vs multi-round (recommendation: B1 one-shot
+with a versioned submission record so SSE + multi-round are additive later). Mandatory: new
+Wave adversarial cases (flood, cross-space/cross-round spoof, CSP-still-frozen regression).
 
