@@ -2,8 +2,9 @@
 created: 2026-08-10
 updated: 2026-08-10
 type: feature
-status: in-progress
+status: done
 priority: normal
+closed: 2026-08-10
 ---
 
 # Return channel: interactive artifact form/input back to the creating agent
