@@ -83,6 +83,13 @@ symlink, injection, vega/eval). Run it after any change to the host, headers,
 CSP, or bridge — it must stay green. Legacy data formats (CSV/JSON/mbox) parse
 via the optional `glasspad data` CLI helper, not the host.
 
+**Green-gate gotcha — false `version_cli` failure.** `cargo test` may report a
+spurious `commit … got: Null` in `tests/version_cli.rs`: `build.rs` stamps the git
+SHA into `option_env!(GLASSPAD_COMMIT)`, but cargo/sccache doesn't re-bake it on an
+incremental rebuild when only the build-script SHA changed, so the local binary keeps a
+stale/`null` stamp. Fix: `rm -rf target/debug/build/glasspad-* && cargo test`. Clean
+CI/release builds never hit this — it is a local-incremental artifact, not a real defect.
+
 Use `./test-browser.sh` for ad-hoc browser automation (requires Brave > View >
 Developer > Allow JavaScript from Apple Events). Always check
 `./test-browser.sh errors` first.
