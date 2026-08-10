@@ -121,10 +121,11 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
+GLOBAL HEAD-OF-LINE: return-channel-multi-round   ← start here on resume
 
-0.4.0 released 2026-08-10 (artifact-return-channel shipped). No active non-epic issues.
-Next code round: file new work, then re-populate lanes.
+LANE B — src/server.rs + src/submissions.rs + src/cli.rs (return-channel core)
+  ▶ return-channel-multi-round
+    return-channel-sse   after return-channel-multi-round (needs B2's session/push plumbing)
 ```
 <!-- execution-dag:end -->
 
