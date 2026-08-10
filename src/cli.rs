@@ -1917,6 +1917,171 @@ pub async fn publish(
     }
 }
 
+/// `glasspad push-round <slug> <file> [--server <url>] [--api-key <key>] [--markdown
+/// [--template <ref>]]` — the B2 **multi-round** client. Re-render an already-published
+/// hosted page in response to a submission: it POSTs the new body to
+/// `/api/v1/pages/<slug>/rounds` (API-key auth, owner-scoped) and the server swaps the
+/// live page's content in place for every connected viewer, then prints
+/// `{slug, round, content_version}`. Config precedence mirrors `publish`
+/// (flag > `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY` > config file). The new
+/// `content_version` is the value the next submission for this round will echo.
+pub async fn push_round(
+    slug: String,
+    file: PathBuf,
+    server: Option<String>,
+    api_key: Option<String>,
+    markdown: bool,
+    template: Option<String>,
+    json: bool,
+) {
+    let cfg = load_publish_config(json);
+    let server = resolve_setting(server, "GLASSPAD_SERVER", cfg.server).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_server",
+            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
+             to ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        )
+    });
+    let api_key = resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_api_key",
+            "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` to \
+             ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        )
+    });
+
+    // Read the new round source (bounded, UTF-8) — the same strict checks `publish` uses.
+    let noun = if markdown { "markdown" } else { "html" };
+    let content = read_capped_utf8_file(&file, noun, "no_such_path", json);
+
+    let mut body = serde_json::Map::new();
+    if markdown {
+        body.insert("markdown".into(), json!(content));
+        if let Some(t) = &template {
+            let resolved = resolve_publish_template(t, json);
+            body.insert("template".into(), json!(resolved));
+        }
+    } else {
+        if template.is_some() {
+            exit_error(
+                json,
+                1,
+                "template_without_markdown",
+                "--template only applies with --markdown (raw HTML is pushed verbatim)",
+                None,
+                None,
+            );
+        }
+        body.insert("html".into(), json!(content));
+    }
+
+    if server.starts_with("http://") && !server_is_loopback(&server) {
+        eprintln!(
+            "warning: pushing a round over plaintext http:// to a non-local host sends the API \
+             key in the clear; prefer https://"
+        );
+    }
+
+    let url = format!(
+        "{}/api/v1/pages/{}/rounds",
+        server.trim_end_matches('/'),
+        slug
+    );
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
+    };
+    let resp = client
+        .post(&url)
+        .bearer_auth(&api_key)
+        .json(&serde_json::Value::Object(body))
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => exit_error(
+            json,
+            2,
+            "request_failed",
+            &format!("cannot reach {url}: {e}"),
+            None,
+            None,
+        ),
+    };
+
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let msg = payload
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("the server rejected the round push");
+        let code = payload
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("push_round_rejected");
+        let exit = if status.is_client_error() { 1 } else { 2 };
+        exit_error(
+            json,
+            exit,
+            code,
+            &format!("{msg} (HTTP {})", status.as_u16()),
+            None,
+            None,
+        );
+    }
+
+    let round = payload.get("round").and_then(|r| r.as_u64());
+    let content_version = payload
+        .get("content_version")
+        .and_then(|c| c.as_str())
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
+    let (round, content_version) = match (round, content_version) {
+        (Some(r), Some(cv)) => (r, cv),
+        _ => exit_error(
+            json,
+            2,
+            "malformed_response",
+            &format!(
+                "server returned {} but no round/content_version in the body",
+                status.as_u16()
+            ),
+            None,
+            None,
+        ),
+    };
+
+    if json {
+        let out = json!({
+            "schema_version": SCHEMA_VERSION,
+            "pushed": true,
+            "slug": slug,
+            "round": round,
+            "content_version": content_version,
+            "warnings": [],
+        });
+        emit_json_line(&out);
+    } else {
+        eprintln!("pushed round {round} of '{slug}' (content_version {content_version})");
+    }
+}
+
 /// Resolve one setting by precedence: explicit flag > environment variable > config
 /// file value. An empty/whitespace flag or env value is treated as unset (AI-first
 /// §1 — no silent empties). Returns `None` if unset at every level.

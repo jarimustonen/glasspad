@@ -184,6 +184,86 @@ done
 kill "$SPACE_PID" 2>/dev/null || true
 sleep 0.3
 
+# ---------------------------------------------------------------------------
+# B2 multi-round (return-channel round push). The authoring agent re-renders a
+# LIVE hosted page (`POST /api/v1/pages/<slug>/rounds`) and the connected shell
+# swaps the content in place — reusing the reload SSE carrier. The gate here:
+# each pushed round MUST stay inside the frozen null-origin sandbox (no new egress,
+# no `allow-forms`), a submission for a STALE round is rejected, and only the
+# owning tenant may push a round. These are hosted-server HTTP checks.
+# ---------------------------------------------------------------------------
+echo "==> Running B2 multi-round (hosted round-push) probes"
+HOST_PORT=$((PORT+2))
+HOST_ORIGIN="http://127.0.0.1:$HOST_PORT"
+KEYA="0123456789abcdef0123456789abcdef"
+KEYB="fedcba9876543210fedcba9876543210"
+KEYFILE="$WORK/keys.txt"
+printf 'acme:%s\nglobex:%s\n' "$KEYA" "$KEYB" > "$KEYFILE"
+mkdir -p "$WORK/hoststore"
+pkill -f "target/debug/glasspad host-serve" 2>/dev/null || true
+sleep 0.3
+./target/debug/glasspad host-serve --bind "127.0.0.1:$HOST_PORT" \
+  --public-host "$HOST_ORIGIN" --api-key-file "$KEYFILE" --store "$WORK/hoststore" \
+  >/tmp/glasspad-host-test.log 2>&1 &
+HOST_PID=$!
+cleanup_host() { kill "${HOST_PID:-0}" 2>/dev/null || true; }
+trap 'cleanup; cleanup_space; cleanup_host' EXIT
+for _ in $(seq 1 40); do
+  if curl -fsS "$HOST_ORIGIN/healthz" >/dev/null 2>&1; then break; fi
+  sleep 0.25
+done
+
+# acme publishes a fragment page (round 0).
+PUB="$(curl -s -X POST "$HOST_ORIGIN/api/v1/pages" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d '{"html":"<h1>round zero</h1>"}')"
+HSLUG="$(printf '%s' "$PUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
+[ -n "$HSLUG" ]; scheck $? "b2: published a hosted page for the round exchange"
+
+# The round-0 content route is frozen-sandboxed (baseline, pre-push).
+HCSP0="$(hdr "$HOST_ORIGIN/p/$HSLUG/_c/index" content-security-policy)"
+echo "$HCSP0" | grep -q "connect-src 'none';"; scheck $? "b2: round 0 keeps connect-src 'none'"
+# Its content-version is what a stale round-0 submission will echo.
+CV0="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index" | sed -n 's/.*name="gp-content-version" content="\([0-9a-f]*\)".*/\1/p')"
+[ -n "$CV0" ]; scheck $? "b2: round 0 inlines its content-version for the bridge"
+
+# acme pushes round 1 (a re-render in response). 200 with a new round + version.
+RND="$(curl -s -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d '{"html":"<h1>round one</h1>"}')"
+echo "$RND" | grep -q '"round":1'; scheck $? "b2: owner push advances to round 1 (200)"
+CV1="$(printf '%s' "$RND" | sed -n 's/.*"content_version":"\([0-9a-f]*\)".*/\1/p')"
+
+# The NEW round is served AND still frozen-sandboxed — pushing a round widens nothing.
+HROUND1="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index")"
+echo "$HROUND1" | grep -q "round one"; scheck $? "b2: the new round body is now served"
+HCSP1="$(hdr "$HOST_ORIGIN/p/$HSLUG/_c/index" content-security-policy)"
+echo "$HCSP1" | grep -q "connect-src 'none';"; scheck $? "b2: round 1 STILL keeps connect-src 'none' (no new egress)"
+! echo "$HCSP1" | grep -q "allow-forms"; scheck $? "b2: round 1 sandbox still has NO allow-forms (airlock held)"
+echo "$HCSP1" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "b2: round 1 sandbox tokens unchanged (no new grant)"
+
+# Cross-round binding: a submission answering the STALE round 0 is rejected (409);
+# the CURRENT round 1 is accepted (201).
+hsub() { # content_version -> http_code
+  curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/submit" \
+    -H "Origin: $HOST_ORIGIN" -H 'content-type: application/json' \
+    -d '{"data":{"a":1},"content_version":"'"$1"'"}'
+}
+[ "$(hsub "$CV0")" = "409" ]; scheck $? "b2: a submission for the STALE round is rejected (409)"
+[ "$(hsub "$CV1")" = "201" ]; scheck $? "b2: a submission for the CURRENT round is accepted (201)"
+
+# Owner-scope: a DIFFERENT tenant cannot push a round to acme's page (opaque 404),
+# and the victim's served body is unchanged.
+RB="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" \
+  -H "Authorization: Bearer $KEYB" -H 'content-type: application/json' -d '{"html":"<h1>hijacked</h1>"}')"
+[ "$RB" = "404" ]; scheck $? "b2: a non-owner round push is rejected (404)"
+curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index" | grep -q "round one"; scheck $? "b2: a rejected push left the served body unchanged"
+# An unauthenticated push is rejected (401).
+RN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" \
+  -H 'content-type: application/json' -d '{"html":"<h1>x</h1>"}')"
+[ "$RN" = "401" ]; scheck $? "b2: an unauthenticated round push is rejected (401)"
+
+kill "$HOST_PID" 2>/dev/null || true
+sleep 0.3
+
 # Symlink escape: a space containing a symlinked artifact is a hard scan error —
 # `serve` must refuse to start (non-zero) and name the symlink, so a crafted link
 # can never expose a file outside the space.

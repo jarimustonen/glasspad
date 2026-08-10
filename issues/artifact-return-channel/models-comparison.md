@@ -111,6 +111,17 @@ live-reload SSE is the natural carrier) plus exchange/session state.
 - ➖ Session/exchange state on the server (lifecycle, GC, per-tenant isolation of live sessions).
 - ➖ Reconnect/replay semantics get real (user reloads mid-exchange).
 
+> **Status: B2 SHIPPED (2026-08-10).** Multi-round landed as a clean increment on the B1
+> record, exactly as recommended below. The server→shell content swap **reuses the live-reload
+> SSE carrier** (`ArtifactHost::ReloadEvent` now multiplexes a full `reload` and a keyed
+> `round` event; the shell swaps the framed artifact in place). Hosted exchange state is a
+> durable **live overlay** (`live.html`/`live.json`) over the immutable baseline, advanced by
+> `POST /api/v1/pages/{slug}/rounds` (owner-scoped) / the `glasspad push-round` client; loopback
+> rides the existing file-watch reload. Round binding is the content-version check the record
+> already carried (a stale-round submission → `409`). Each round stays in the frozen
+> null-origin sandbox — proven by new `./test-security.sh` B2 probes. A2 (SSE transport for the
+> *agent's* consumption) remains the sequenced follow-up (`return-channel-sse`).
+
 ### Recommendation (Part B)
 **Build B1 (one-shot) first; design the submission record so B2 is a clean later increment —
 do not preclude it.** Concretely: give every submission a monotonic id and stamp it with the

@@ -164,6 +164,30 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// Re-render an already-published hosted page in response to a submission (B2
+    /// multi-round). POSTs a new body to the page's round endpoint (API-key auth,
+    /// owner-scoped); the server swaps the live page's content in place for every
+    /// connected viewer. Prints `{slug, round, content_version}`. Config mirrors
+    /// `publish` (flag > $GLASSPAD_SERVER/$GLASSPAD_API_KEY > config file).
+    PushRound {
+        /// The page slug to re-render (the `{slug}` in `/p/{slug}/`).
+        slug: String,
+        /// The new round's source file (HTML by default; markdown with --markdown).
+        file: PathBuf,
+        /// Hosted server base URL, e.g. https://pad.example.com.
+        #[arg(long)]
+        server: Option<String>,
+        /// Bearer API key for the owning tenant (required).
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Treat the file as markdown, rendered server-side (optionally --template).
+        #[arg(long)]
+        markdown: bool,
+        /// With --markdown: a built-in template name (prose/dashboard) or a template
+        /// file path with one {{content}} slot.
+        #[arg(long)]
+        template: Option<String>,
+    },
     /// Block on the next user submission an interactive artifact sent back, then
     /// print it (the return channel's agent-facing surface).
     ///
@@ -307,6 +331,14 @@ async fn main() {
             )
             .await
         }
+        Some(Commands::PushRound {
+            slug,
+            file,
+            server,
+            api_key,
+            markdown,
+            template,
+        }) => cli::push_round(slug, file, server, api_key, markdown, template, json).await,
         Some(Commands::AwaitSubmission {
             slug,
             since,

@@ -8,12 +8,20 @@
 //! <root>/pages/<slug>/meta.json       { schema, slug, tenant, title, created_at }
 //! ```
 //!
-//! Pages are **immutable**: a page is written once (to a temp path then atomically
-//! `rename`d in, so a crash never exposes a half-page) and never mutated — there is
-//! no update/overwrite/delete API, and `publish` mints a **fresh random slug** for
-//! every new page, so one tenant can never overwrite another's page. The in-memory
-//! [`Snapshot`] the read handlers serve is the serving source of truth; the on-disk
-//! tree is the persistence + GC source of truth.
+//! The published **baseline** is immutable: `artifact.html` is written once (to a
+//! temp path then atomically `rename`d in, so a crash never exposes a half-page) and
+//! **never rewritten**, and `publish` mints a **fresh random slug** for every new
+//! page, so one tenant can never overwrite another's page. The in-memory [`Snapshot`]
+//! the read handlers serve is the serving source of truth; the on-disk tree is the
+//! persistence + GC source of truth.
+//!
+//! **B2 multi-round live overlay.** A page's *served* body can advance round by round
+//! ([`Store::push_round`], owner-scoped) without touching the immutable baseline: a
+//! re-render is persisted as the `live.html` + `live.json` overlay sidecars and the
+//! served snapshot body is swapped in place. `load_page` serves the overlay when a
+//! valid one is present (else the baseline), so the current round survives restart and
+//! the hourly GC-rescan; page retention GC reaps the whole directory (baseline +
+//! overlay) together, so the live "session" is bounded by the same retention window.
 //!
 //! Retention/GC removes page directories older than the retention window and swaps
 //! a rebuilt snapshot so an expired page is promptly **no longer served**.
@@ -66,6 +74,26 @@ pub struct PageMeta {
 const META_SCHEMA: u32 = 1;
 const ARTIFACT_FILE: &str = "artifact.html";
 const META_FILE: &str = "meta.json";
+
+/// B2 multi-round **live overlay** sidecars (a page's *current round* of content).
+/// The immutable baseline `artifact.html` is **never** rewritten — a multi-round
+/// re-render is stored here instead, so the published record's immutability is
+/// preserved while the *served* body advances round by round. When present + valid,
+/// `live.html` is the served body (else the baseline); `live.json` records the
+/// monotonic round number so the shell's SSE swap carries a `Last-Event-ID` cursor.
+const LIVE_FILE: &str = "live.html";
+const LIVE_META_FILE: &str = "live.json";
+const LIVE_SCHEMA: u32 = 1;
+
+/// On-disk sidecar for a page's live round. `round` is monotonic (starts at 1 on the
+/// first push; the immutable baseline is round 0). Written **after** `live.html` is
+/// durable, so its presence implies a matching live body.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LiveMeta {
+    schema: u32,
+    round: u64,
+    updated_at: DateTime<Utc>,
+}
 
 /// Schema guard for the on-disk idempotency-mapping sidecar.
 const IDEM_SCHEMA: u32 = 1;
@@ -263,11 +291,46 @@ impl Store {
             );
             return Ok(None);
         }
-        let html = read_capped_utf8(&art_path)?;
+        // Serve the live round overlay when a valid one is present (B2 multi-round);
+        // else the immutable baseline. The overlay never widens the boundary — it is
+        // a body swap only; the title stays the baseline's.
+        let baseline = read_capped_utf8(&art_path)?;
+        let html = self.load_live_body(dir).unwrap_or(baseline);
         Ok(Some((
             meta.clone(),
             one_artifact_space(html, meta.title.clone()),
         )))
+    }
+
+    /// The live round body for a page directory, if a valid overlay is present
+    /// (`live.json` parses with the right schema **and** `live.html` reads within the
+    /// per-file cap). Any absence/corruption returns `None` so the caller falls back
+    /// to the immutable baseline — a half-written or hand-tampered overlay can never
+    /// blank a page, only revert it to round 0.
+    fn load_live_body(&self, dir: &Path) -> Option<String> {
+        let lm_bytes = read_capped(&dir.join(LIVE_META_FILE), MAX_META_BYTES).ok()?;
+        if lm_bytes.len() as u64 > MAX_META_BYTES {
+            return None;
+        }
+        let lm: LiveMeta = serde_json::from_slice(&lm_bytes).ok()?;
+        if lm.schema != LIVE_SCHEMA {
+            return None;
+        }
+        read_capped_utf8(&dir.join(LIVE_FILE)).ok()
+    }
+
+    /// The current live round number for a page directory (0 when there is no valid
+    /// overlay — i.e. the immutable baseline is what is served).
+    fn read_live_round(&self, dir: &Path) -> u64 {
+        let bytes = match read_capped(&dir.join(LIVE_META_FILE), MAX_META_BYTES) {
+            Ok(b) if b.len() as u64 <= MAX_META_BYTES => b,
+            _ => return 0,
+        };
+        serde_json::from_slice::<LiveMeta>(&bytes)
+            .ok()
+            .filter(|lm| lm.schema == LIVE_SCHEMA)
+            .map(|lm| lm.round)
+            .unwrap_or(0)
     }
 
     /// Publish one immutable page for `tenant`. Generates a fresh unguessable slug
@@ -352,6 +415,108 @@ impl Store {
             title,
             created: true,
         })
+    }
+
+    /// Push a new **live round** of content for `slug`, advancing the B2 multi-round
+    /// exchange. Owner-scoped: the page's own `meta.json` must record `tenant` as its
+    /// owner, else this is an opaque `NoSuchPage` (a tenant learns nothing about, and
+    /// can never re-render, another tenant's page). The immutable baseline
+    /// `artifact.html` is untouched; the new body is persisted as the `live.html` /
+    /// `live.json` overlay (durable, so it survives restart + hourly GC-rescan), the
+    /// **served snapshot body is swapped in place** (title unchanged), and connected
+    /// shells are pushed a keyed `round` event over the live-reload SSE carrier.
+    /// Returns the new monotonic round number and the body's content-version (the same
+    /// value a submission for this round must echo — [`crate::submissions::content_version`]).
+    pub fn push_round(
+        &self,
+        tenant: &str,
+        slug: &str,
+        html: String,
+    ) -> Result<RoundPushed, RoundError> {
+        // Same critical section as `publish`/`gc`: read snapshot → write disk → swap,
+        // so a round push can't race a publish/GC swap and lose an update.
+        let _guard = self.lock_mutation();
+        let current = self.host.snapshot();
+
+        // The page must be served AND owned by this tenant. Both a missing page and a
+        // page owned by someone else return the same opaque error (no page-existence
+        // oracle across tenants).
+        let sp = match current.space(slug) {
+            Some(sp) if self.page_owned_by(slug, tenant) => sp,
+            _ => return Err(RoundError::NoSuchPage),
+        };
+
+        let dir = self.pages_dir.join(slug);
+        let round = self.read_live_round(&dir).saturating_add(1);
+        let content_version = crate::submissions::content_version(&html);
+
+        // Persist the overlay durably BEFORE swapping the served body, so a crash
+        // mid-push leaves at worst a body with no `live.json` (which `load_live_body`
+        // ignores → the page reverts to the immutable baseline, never blanks).
+        self.write_live(&dir, &html, round)
+            .map_err(RoundError::Io)?;
+
+        // Swap the served snapshot body in place (title stays the baseline's).
+        let title = sp
+            .artifacts
+            .get(SINGLE_SLUG)
+            .map(|a| a.title.clone())
+            .unwrap_or_else(|| slug.to_string());
+        let mut spaces = current.spaces.clone();
+        spaces.insert(slug.to_string(), one_artifact_space(html, title));
+        self.host.swap(Snapshot { spaces });
+
+        // Push the keyed round-swap to any connected shell (reuses the reload SSE).
+        self.host.notify_round(slug, &content_version, round);
+
+        Ok(RoundPushed {
+            round,
+            content_version,
+        })
+    }
+
+    /// Durably materialize the live overlay for a page: write `live.html` (fsync +
+    /// atomic rename), then `live.json` **after** it, so the meta's presence implies a
+    /// matching body. Both land under the (already-durable) page directory, which is
+    /// fsync'd after each rename. `.live.*.tmp` staging siblings are cleaned on error;
+    /// they live under the page dir (not `pages/`), so the top-level GC tmp-reaper
+    /// never touches them, and `load_page` only reads the two exact filenames.
+    fn write_live(&self, dir: &Path, html: &str, round: u64) -> std::io::Result<()> {
+        // Body cap (defense-in-depth; the handler already bounds it to the per-file
+        // cap): never persist an overlay larger than a baseline artifact.
+        if html.len() as u64 > space::MAX_FILE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "live round body exceeds the per-file limit",
+            ));
+        }
+        let staged = (|| -> std::io::Result<()> {
+            // 1. Body first.
+            let body_final = dir.join(LIVE_FILE);
+            let body_tmp = dir.join(".live.html.tmp");
+            write_file_synced(&body_tmp, html.as_bytes())?;
+            std::fs::rename(&body_tmp, &body_final)?;
+            fsync_dir(dir)?;
+            // 2. Meta after the body is durable (presence implies a matching body).
+            let lm = LiveMeta {
+                schema: LIVE_SCHEMA,
+                round,
+                updated_at: Utc::now(),
+            };
+            let json = serde_json::to_vec(&lm)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            let meta_final = dir.join(LIVE_META_FILE);
+            let meta_tmp = dir.join(".live.json.tmp");
+            write_file_synced(&meta_tmp, &json)?;
+            std::fs::rename(&meta_tmp, &meta_final)?;
+            fsync_dir(dir)?;
+            Ok(())
+        })();
+        if staged.is_err() {
+            let _ = std::fs::remove_file(dir.join(".live.html.tmp"));
+            let _ = std::fs::remove_file(dir.join(".live.json.tmp"));
+        }
+        staged
     }
 
     /// Resolve an idempotency key to an already-published page for `tenant`, or
@@ -734,6 +899,34 @@ fn read_capped_utf8(path: &Path) -> std::io::Result<String> {
     }
     String::from_utf8(bytes)
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "artifact is not UTF-8"))
+}
+
+/// Outcome of a successful [`Store::push_round`].
+#[derive(Debug)]
+pub struct RoundPushed {
+    /// The new monotonic round number (baseline is round 0; first push is round 1).
+    pub round: u64,
+    /// The content-version of the new round's body — the value a submission for this
+    /// round must echo (cross-round binding).
+    pub content_version: String,
+}
+
+/// Failures the round-push handler maps to HTTP status.
+#[derive(Debug)]
+pub enum RoundError {
+    /// The page does not exist, or is not owned by the requesting tenant (opaque —
+    /// no cross-tenant existence oracle). Maps to `404`.
+    NoSuchPage,
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for RoundError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RoundError::NoSuchPage => write!(f, "no such page for this tenant"),
+            RoundError::Io(e) => write!(f, "storage error: {e}"),
+        }
+    }
 }
 
 /// Publish failures the ingest handler maps to HTTP status.
@@ -1181,6 +1374,146 @@ mod tests {
         assert_ne!(
             r2.slug, victim.slug,
             "forged mapping must not leak B's page"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- B2 multi-round live overlay ---------------------------------------
+
+    #[test]
+    fn push_round_advances_served_body_and_round_without_touching_baseline() {
+        let root = tmp_root("round");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>round zero</h1>".into(), None, None)
+            .unwrap();
+        let baseline_path = root.join("pages").join(&p.slug).join("artifact.html");
+        let baseline_before = std::fs::read_to_string(&baseline_path).unwrap();
+
+        // First push → round 1, served body swapped, new content-version.
+        let r1 = store
+            .push_round("acme", &p.slug, "<h1>round one</h1>".into())
+            .unwrap();
+        assert_eq!(r1.round, 1);
+        assert_eq!(
+            r1.content_version,
+            crate::submissions::content_version("<h1>round one</h1>")
+        );
+        assert_eq!(
+            store.page_body(&p.slug).as_deref(),
+            Some("<h1>round one</h1>")
+        );
+
+        // Second push → monotonic round 2.
+        let r2 = store
+            .push_round("acme", &p.slug, "<h1>round two</h1>".into())
+            .unwrap();
+        assert_eq!(r2.round, 2);
+        assert_eq!(
+            store.page_body(&p.slug).as_deref(),
+            Some("<h1>round two</h1>")
+        );
+
+        // The immutable baseline artifact.html was NEVER rewritten.
+        assert_eq!(
+            std::fs::read_to_string(&baseline_path).unwrap(),
+            baseline_before,
+            "push_round must not rewrite the immutable baseline"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn live_round_survives_reopen_and_gc_rescan() {
+        // The overlay is durable: after reopening the store the served body is still
+        // the latest round (not the baseline), and the round counter continues
+        // monotonically — reconnect/replay resumes at the current round.
+        let root = tmp_root("round-durable");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>base</h1>".into(), None, None)
+            .unwrap();
+        store
+            .push_round("acme", &p.slug, "<h1>live</h1>".into())
+            .unwrap();
+        drop(store);
+
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_body(&p.slug).as_deref(),
+            Some("<h1>live</h1>"),
+            "reopened store must serve the live round, not the baseline"
+        );
+        // Next push is round 2 (counter recovered from the durable overlay).
+        let r = store2
+            .push_round("acme", &p.slug, "<h1>next</h1>".into())
+            .unwrap();
+        assert_eq!(r.round, 2);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn push_round_is_owner_scoped() {
+        // Another tenant cannot re-render a page it does not own — opaque 404-shaped
+        // error, and the victim's served body is unchanged.
+        let root = tmp_root("round-owner");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let victim = store
+            .publish("globex", "<h1>owned by globex</h1>".into(), None, None)
+            .unwrap();
+        let err = store
+            .push_round("acme", &victim.slug, "<h1>hijacked</h1>".into())
+            .unwrap_err();
+        assert!(matches!(err, RoundError::NoSuchPage));
+        assert_eq!(
+            store.page_body(&victim.slug).as_deref(),
+            Some("<h1>owned by globex</h1>"),
+            "a non-owner push must not change the served body"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn push_round_to_unknown_page_is_no_such_page() {
+        let root = tmp_root("round-404");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let err = store
+            .push_round("acme", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "<h1>x</h1>".into())
+            .unwrap_err();
+        assert!(matches!(err, RoundError::NoSuchPage));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn corrupt_live_overlay_falls_back_to_baseline() {
+        // A hand-tampered `live.json` (bad schema) must not blank or break the page —
+        // it reverts to the immutable baseline.
+        let root = tmp_root("round-corrupt");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>baseline</h1>".into(), None, None)
+            .unwrap();
+        store
+            .push_round("acme", &p.slug, "<h1>live</h1>".into())
+            .unwrap();
+        // Corrupt the overlay meta on disk, then reopen.
+        std::fs::write(
+            root.join("pages").join(&p.slug).join("live.json"),
+            b"not json",
+        )
+        .unwrap();
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_body(&p.slug).as_deref(),
+            Some("<h1>baseline</h1>"),
+            "a corrupt overlay must revert to the baseline, never blank the page"
         );
         std::fs::remove_dir_all(&root).ok();
     }

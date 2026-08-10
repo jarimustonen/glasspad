@@ -26,6 +26,7 @@
 
 pub mod auth;
 pub mod ingest;
+pub mod rounds;
 pub mod slug;
 pub mod store;
 pub mod submit;
@@ -163,6 +164,9 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
         .merge(artifact_host::gp_router(host))
         .layer(middleware::from_fn(add_noindex));
 
+    // B2 multi-round: the owner re-renders a live page (API-key auth, owner-scoped).
+    let rounds = rounds::router(state.clone(), keys.clone());
+
     // Return-channel routes: a public shell-callable submit + API-key-scoped reads.
     let submissions = submit::router(state, keys);
 
@@ -170,6 +174,7 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
         .route("/healthz", get(healthz))
         .merge(ingest)
         .merge(read)
+        .merge(rounds)
         .merge(submissions)
         .layer(middleware::from_fn_with_state(expected, public_host_guard))
 }
@@ -1113,6 +1118,175 @@ mod tests {
                 "aaaaaaaaaaaaaaaaaaaaaaaaaa",
                 Some("https://pad.example.com"),
                 serde_json::json!({ "data": {} }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- B2 multi-round (round push) ----------------------------------------
+
+    fn round_req(slug: &str, bearer: Option<&str>, body: serde_json::Value) -> Request<Body> {
+        let mut b = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/v1/pages/{slug}/rounds"))
+            .header("host", TEST_HOST)
+            .header("content-type", "application/json");
+        if let Some(t) = bearer {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(body.to_string())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn round_push_swaps_served_body_under_frozen_csp_and_binds_new_round() {
+        let root = tmp_root("round-serve");
+        let (app, _, _) = app_with(&root);
+        let slug = publish_slug(&app, serde_json::json!({ "html": "<h1>round zero</h1>" })).await;
+
+        // Round 0 content-version, for the stale-round check later.
+        let v0 = crate::submissions::content_version("<h1>round zero</h1>");
+
+        // Owner pushes round 1.
+        let r = send(
+            &app,
+            round_req(
+                &slug,
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>round one</h1>" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let j = body_json(r).await;
+        assert_eq!(j["round"].as_u64().unwrap(), 1);
+        let v1 = j["content_version"].as_str().unwrap().to_string();
+        assert_eq!(
+            v1,
+            crate::submissions::content_version("<h1>round one</h1>")
+        );
+        assert_ne!(v0, v1);
+
+        // The content route now serves the new round — STILL under the frozen sandbox
+        // CSP (pushing a round widens nothing).
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        let csp = r
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+        assert!(csp.contains("connect-src 'none'"), "egress open: {csp}");
+        assert!(
+            !csp.contains("allow-forms"),
+            "airlock: allow-forms crept in: {csp}"
+        );
+        let html = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(html.contains("round one"), "new round body not served");
+
+        // A submission answering the STALE round (v0) is rejected 409; the CURRENT
+        // round (v1) is accepted — cross-round binding across a live re-render.
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": {}, "content_version": v0 }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CONFLICT);
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": {}, "content_version": v1 }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn round_push_is_owner_scoped_and_authenticated() {
+        let root = tmp_root("round-auth");
+        let key2 = "fedcba9876543210fedcba9876543210";
+        let host = Arc::new(ArtifactHost::new_public(
+            "https://pad.example.com".into(),
+            MOUNT.to_string(),
+        ));
+        let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
+        let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}\nglobex:{key2}")).unwrap());
+        let state = HostedState {
+            store: store.clone(),
+            submissions,
+            public_origin: "https://pad.example.com".into(),
+            mount: MOUNT.to_string(),
+        };
+        let app = build_router(state, host, keys);
+
+        let slug = publish_slug(
+            &app,
+            serde_json::json!({ "html": "<h1>acme owns this</h1>" }),
+        )
+        .await;
+
+        // No bearer → 401.
+        let r = send(
+            &app,
+            round_req(&slug, None, serde_json::json!({ "html": "<h1>x</h1>" })),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+
+        // A DIFFERENT tenant (globex) cannot re-render acme's page → opaque 404.
+        let r = send(
+            &app,
+            round_req(
+                &slug,
+                Some(key2),
+                serde_json::json!({ "html": "<h1>hijack</h1>" }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+
+        // The victim's served body is unchanged.
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        let html = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(
+            html.contains("acme owns this"),
+            "non-owner push mutated the page"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn round_push_to_unknown_page_is_404() {
+        let root = tmp_root("round-unknown");
+        let (app, _, _) = app_with(&root);
+        let r = send(
+            &app,
+            round_req(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some(KEY),
+                serde_json::json!({ "html": "<h1>x</h1>" }),
             ),
         )
         .await;

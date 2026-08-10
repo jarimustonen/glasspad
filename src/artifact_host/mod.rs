@@ -64,6 +64,34 @@ pub enum OriginPolicy {
     Public { origin: String },
 }
 
+/// A server→shell push carried on the one live-reload SSE stream (`/_gp/reload`).
+/// The shell's single `EventSource` multiplexes two signals so B2 multi-round does
+/// **not** invent a new push channel (design.md / models-comparison.md §B2):
+///
+/// * [`ReloadEvent::Reload`] — a **full shell reload** (the loopback dev file-watch:
+///   nav, titles, or the artifact set may all have changed). The shell responds with
+///   `location.reload()`, exactly as it did before B2.
+/// * [`ReloadEvent::Round`] — one artifact advanced to a **new content round** (the
+///   B2 push): the shell swaps *that* space's framed artifact **in place** (a fresh
+///   content-route fetch under the identical frozen CSP), keeping the live page — no
+///   full reload. Keyed by `space` so a round pushed to one hosted page never
+///   reloads another page's shell (per-page isolation of the live push).
+///
+/// The event carries **no URL** — only a `space` label the shell matches against its
+/// own constant and a `content_version`/`round` echo — so a round push can at most
+/// make a shell re-fetch its *own* current content route; it can never redirect it.
+#[derive(Clone, Debug)]
+pub enum ReloadEvent {
+    /// Reload the whole shell (dev file-watch: nav/title/artifact-set may differ).
+    Reload,
+    /// Swap `space`'s framed artifact in place — it advanced to a new round.
+    Round {
+        space: String,
+        content_version: String,
+        round: u64,
+    },
+}
+
 /// Shared state for the artifact host: the origin policy (which origin the CSP
 /// names + the shell's URL mount, see [`OriginPolicy`]), the live **snapshot**
 /// (immutable, swapped atomically so a half-written file is never served), and a
@@ -74,7 +102,7 @@ pub struct ArtifactHost {
     /// `/_gp/*`). Empty for loopback, `/p` for the hosted mount.
     mount: String,
     snapshot: RwLock<Arc<Snapshot>>,
-    reload_tx: broadcast::Sender<()>,
+    reload_tx: broadcast::Sender<ReloadEvent>,
     /// The return-channel submission store, for the loopback run mode. `None` when
     /// no return channel is wired (fixture-only test hosts, or a store that failed
     /// to open). The hosted run mode carries its own store on `HostedState` instead.
@@ -165,13 +193,28 @@ impl ArtifactHost {
     }
 
     /// Subscribe to reload notifications (one receiver per open SSE connection).
-    pub fn subscribe(&self) -> broadcast::Receiver<()> {
+    pub fn subscribe(&self) -> broadcast::Receiver<ReloadEvent> {
         self.reload_tx.subscribe()
     }
 
-    /// Fire a reload to every connected SSE client (called after an atomic swap).
+    /// Fire a **full shell reload** to every connected SSE client (called after an
+    /// atomic snapshot swap by the loopback file-watch — nav/titles may have changed).
     pub fn notify_reload(&self) {
-        let _ = self.reload_tx.send(());
+        let _ = self.reload_tx.send(ReloadEvent::Reload);
+    }
+
+    /// Push a **round swap** for `space` to connected shells (B2 multi-round): the
+    /// artifact advanced to `round` with the given `content_version`. Reuses the
+    /// live-reload SSE carrier; the shell swaps that space's framed artifact in place
+    /// (a fresh content-route fetch under the frozen CSP) rather than reloading. A
+    /// send error just means no shell is connected — the new round is already the
+    /// served body, so a later shell load / reconnect resumes at it.
+    pub fn notify_round(&self, space: &str, content_version: &str, round: u64) {
+        let _ = self.reload_tx.send(ReloadEvent::Round {
+            space: space.to_string(),
+            content_version: content_version.to_string(),
+            round,
+        });
     }
 }
 
@@ -490,9 +533,32 @@ async fn reload_stream(
     State(host): State<Arc<ArtifactHost>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = host.subscribe();
-    // A lag error still means "something changed" — surface it as a reload.
-    let stream = BroadcastStream::new(rx)
-        .map(|_| Ok::<Event, Infallible>(Event::default().event("reload").data("1")));
+    let stream = BroadcastStream::new(rx).map(|item| {
+        let event = match item {
+            // A B2 round push: name the event `round`, stamp the round number as the
+            // SSE `id` (so a reconnecting shell's `Last-Event-ID` reflects the last
+            // round seen), and carry the keyed `{space, contentVersion}` as data. The
+            // shell matches `space` against its own constant and swaps in place. A
+            // serialization failure (never, for two strings + an int) degrades to a
+            // full reload rather than dropping the signal.
+            Ok(ReloadEvent::Round {
+                space,
+                content_version,
+                round,
+            }) => Event::default()
+                .event("round")
+                .id(round.to_string())
+                .json_data(serde_json::json!({
+                    "space": space,
+                    "contentVersion": content_version,
+                }))
+                .unwrap_or_else(|_| Event::default().event("reload").data("1")),
+            // A full reload, or a lag error (a burst overran the channel — "something
+            // changed"): a full shell reload is the safe superset.
+            _ => Event::default().event("reload").data("1"),
+        };
+        Ok::<Event, Infallible>(event)
+    });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
@@ -1013,5 +1079,30 @@ mod tests {
         let resp = get("/_gp/reload").await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(header(&resp, "content-type").contains("text/event-stream"));
+    }
+
+    #[test]
+    fn notify_round_and_reload_carry_distinct_keyed_events() {
+        // B2: the one reload carrier multiplexes a full-reload signal and a keyed
+        // round-swap signal. A subscriber sees `Reload` for the dev file-watch and
+        // `Round{space, content_version, round}` for a multi-round push — the round
+        // event is space-keyed so a shell can ignore rounds for other pages.
+        let host = empty_host();
+        let mut rx = host.subscribe();
+        host.notify_reload();
+        assert!(matches!(rx.try_recv(), Ok(ReloadEvent::Reload)));
+        host.notify_round("myspace", "deadbeefdeadbeef", 3);
+        match rx.try_recv() {
+            Ok(ReloadEvent::Round {
+                space,
+                content_version,
+                round,
+            }) => {
+                assert_eq!(space, "myspace");
+                assert_eq!(content_version, "deadbeefdeadbeef");
+                assert_eq!(round, 3);
+            }
+            other => panic!("expected a keyed Round event, got {other:?}"),
+        }
     }
 }

@@ -184,8 +184,24 @@ pub async fn publish(
 /// html/markdown" and the input size caps. For markdown, renders through the shared
 /// template path and bounds the generated body to the per-artifact cap.
 fn resolve_body(req: &PublishRequest) -> Result<String, (&'static str, String)> {
-    let has_html = req.html.as_ref().is_some_and(|h| !h.trim().is_empty());
-    let has_md = req.markdown.as_ref().is_some_and(|m| !m.trim().is_empty());
+    build_artifact_body(
+        req.html.as_deref(),
+        req.markdown.as_deref(),
+        req.template.as_deref(),
+    )
+}
+
+/// Build an artifact body from the same `{html | markdown (+ template)}` inputs the
+/// ingest surface accepts, enforcing "exactly one of html/markdown" and the size
+/// caps. Shared by `publish` (a new page) and the B2 round-push (a re-render of an
+/// existing page) so both go through one validated seam.
+pub(crate) fn build_artifact_body(
+    html: Option<&str>,
+    markdown: Option<&str>,
+    template: Option<&str>,
+) -> Result<String, (&'static str, String)> {
+    let has_html = html.is_some_and(|h| !h.trim().is_empty());
+    let has_md = markdown.is_some_and(|m| !m.trim().is_empty());
 
     match (has_html, has_md) {
         (true, true) => Err((
@@ -198,7 +214,7 @@ fn resolve_body(req: &PublishRequest) -> Result<String, (&'static str, String)> 
                 .to_string(),
         )),
         (true, false) => {
-            let html = req.html.clone().unwrap();
+            let html = html.unwrap().to_string();
             if html.len() as u64 > space::MAX_FILE_BYTES {
                 return Err((
                     "html_too_large",
@@ -212,7 +228,7 @@ fn resolve_body(req: &PublishRequest) -> Result<String, (&'static str, String)> 
             Ok(html)
         }
         (false, true) => {
-            let md = req.markdown.clone().unwrap();
+            let md = markdown.unwrap().to_string();
             if md.len() as u64 > space::MAX_FILE_BYTES {
                 return Err((
                     "markdown_too_large",
@@ -223,7 +239,7 @@ fn resolve_body(req: &PublishRequest) -> Result<String, (&'static str, String)> 
                     ),
                 ));
             }
-            let template = resolve_template(req.template.as_deref())?;
+            let template = resolve_template(template)?;
             let body = render::render_to_body(&md, &template)
                 .map_err(|e| ("invalid_template", e.to_string()))?;
             enforce_body_cap(body).map_err(|m| ("rendered_output_too_large", m))

@@ -281,6 +281,26 @@ pub fn render(
   try {{
     var es = new EventSource("/_gp/reload");
     es.addEventListener("reload", function () {{ location.reload(); }});
+    // B2 multi-round: the SAME EventSource also carries a keyed `round` event when
+    // the agent re-renders this page's artifact. Rather than a full reload, swap the
+    // framed artifact IN PLACE — a fresh content-route fetch under the identical
+    // frozen CSP (the server re-applies it), keeping the shell, this EventSource,
+    // the theme, and the nav alive: a conversational UI in one live page.
+    es.addEventListener("round", function (event) {{
+      var d;
+      try {{ d = JSON.parse(event.data); }} catch (e) {{ return; }}
+      // Per-page isolation: only react to a round for OUR OWN space. The event
+      // carries no URL — we only ever re-fetch our own current content route, so a
+      // hostile/misdirected payload can at most reload our own artifact, never
+      // redirect us elsewhere. `frame-src 'self'` still contains whatever is framed.
+      if (!d || typeof d !== "object" || d.space !== SPACE) return;
+      // Re-fetch the CURRENT slug's content (theme inlined so the swap is FOUC-free),
+      // with the round number as a cache-buster (the content route ignores it) so an
+      // identical-URL reassignment still forces a fresh fetch of the new round body.
+      var q = themeQuery();
+      var bust = "gp_r=" + encodeURIComponent(String(d.round != null ? d.round : Date.now()));
+      frame.src = MOUNT + "/" + SPACE + "/_c/" + current + (q ? q + "&" : "?") + bust;
+    }});
   }} catch (e) {{ /* SSE unsupported — live reload simply inactive */ }}
 
   var stats = {{ accepted: 0, rejectedSource: 0, rejectedSize: 0, rejectedRate: 0, rejectedSchema: 0, submitAccepted: 0, submitFailed: 0 }};
@@ -642,6 +662,26 @@ mod tests {
         let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
         assert!(html.contains("MAX_SUBMIT_BYTES"));
         assert!(html.contains(r#"k !== "type" && k !== "data" && k !== "contentVersion""#));
+    }
+
+    #[test]
+    fn shell_round_event_swaps_current_artifact_in_place_scoped_to_space() {
+        // B2: the reload EventSource also handles a keyed `round` event, swapping the
+        // framed artifact in place (a content-route re-fetch) rather than a full
+        // reload — and only for the shell's OWN space (per-page isolation). The event
+        // carries no URL, so the swap targets our own `current` slug's content route.
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        assert!(html.contains(r#"es.addEventListener("round""#));
+        // Per-page isolation: react only to a round for our own SPACE.
+        assert!(html.contains("d.space !== SPACE"));
+        // The swap re-fetches OUR current slug's content route (no URL from the event).
+        assert!(html.contains(r#"MOUNT + "/" + SPACE + "/_c/" + current"#));
+        // A round cache-buster forces a fresh fetch even on an identical URL.
+        assert!(html.contains("gp_r="));
+        // The full-reload path is unchanged (dev file-watch still location.reload()s).
+        assert!(
+            html.contains(r#"es.addEventListener("reload", function () { location.reload(); })"#)
+        );
     }
 
     #[test]

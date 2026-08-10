@@ -156,7 +156,24 @@ glasspad await-submission <slug> --server https://pad.example.com --json
   `--timeout <secs>` bounds the hold (1–300, default 30).
 
 The typical loop: `publish`/`serve` an interactive page → `await-submission`
-backgrounded → act on the returned `data` → (optionally) publish the next step.
+backgrounded → act on the returned `data` → (optionally) re-render the next step.
+
+**Multi-round (re-render in place).** After a submission you can update the *same
+live page* and the user's open view swaps to the new content — a conversational UI
+in one page, no new URL:
+
+- **Loopback** (`serve`/`create`): just rewrite the served file. The browser
+  reloads to the new round automatically; the next submission binds to it.
+- **Hosted**: `glasspad push-round <slug> <file>` (same `--server`/API key as
+  `publish`; add `--markdown [--template …]` for markdown). Only the page's owning
+  tenant may push. It prints `{round, content_version}`; every connected viewer's
+  page swaps to the new round in place.
+
+Each round stays inside the frozen null-origin sandbox (no network, no `allow-forms`),
+and a submission that answers a **stale** round is rejected (HTTP 409
+`content_version_mismatch`) — so a late click on an old round can't be mistaken for
+an answer to the current one. Pattern: `await-submission` → act → `push-round` (or
+rewrite the file) → `await-submission` again.
 
 ## Rules enforced on load (informative errors, no silent fixups)
 

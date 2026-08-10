@@ -132,6 +132,23 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   size + rate capped; hosted reads are API-key + per-tenant scoped. See
   `issues/artifact-return-channel/`. The store + long-poll are in `src/submissions.rs`;
   handlers in `hosted/submit.rs` (hosted) and `server.rs` (loopback).
+- **Multi-round (B2) reuses the reload SSE carrier — no new push channel.** After a
+  submission the agent re-renders the *same live page* and the connected shell swaps
+  the framed artifact **in place**. The shell's one `EventSource("/_gp/reload")` now
+  multiplexes two signals ([`ArtifactHost::ReloadEvent`]): a full-shell `reload` (the
+  loopback dev file-watch, unchanged) and a keyed `round` event (space + new
+  content-version + monotonic round id) that swaps the current artifact in place — a
+  fresh content-route fetch under the **identical frozen CSP** (each round stays
+  null-origin, `connect-src 'none'`, no `allow-forms`; pushing a round widens
+  nothing). The event carries **no URL** and is filtered to the shell's own `space`,
+  so a round for one hosted page never reloads another (per-page isolation). Loopback
+  multi-round = rewrite the served file (the watcher fires the full reload). Hosted =
+  `POST /api/v1/pages/{slug}/rounds` (`hosted::rounds`, API-key + owner-scoped): the
+  re-render is a durable **live overlay** (`live.html`/`live.json`) over the immutable
+  baseline `artifact.html`, the served snapshot body is swapped, and `notify_round`
+  pushes the SSE swap. Cross-round binding is the existing content-version check — a
+  submission answering a stale round is rejected `409`. Client surface: `glasspad
+  push-round`.
 
 ## Testing
 
