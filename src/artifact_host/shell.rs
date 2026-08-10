@@ -333,7 +333,8 @@ pub fn render(
       body = JSON.stringify(envelope);
     }} catch (e) {{ stats.rejectedSchema++; return; }}
     if (typeof body !== "string" || body.length > MAX_SUBMIT_BYTES) {{ stats.rejectedSize++; return; }}
-    stats.accepted++;
+    // NB: `accepted` counts NAVIGATE messages only; a submit is tracked by
+    // submitAccepted/submitFailed below, so an observer of `accepted` is unaffected.
     try {{
       fetch(SUBMIT_PATH, {{
         method: "POST",

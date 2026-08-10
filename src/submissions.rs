@@ -188,8 +188,9 @@ pub struct SubmissionStore {
     /// between allocation and write is harmless (ids need be unique + monotonic,
     /// not gapless).
     next_id: AtomicU64,
-    /// Fired after each durable submit so held [`wait`] calls re-check promptly.
-    tx: broadcast::Sender<()>,
+    /// Fired after each durable submit, carrying the submission's `key` so a held
+    /// [`wait`] wakes only for its own key (no store-wide thundering herd).
+    tx: broadcast::Sender<Arc<str>>,
     /// Count of currently-held long-poll waiters (bounded by [`MAX_WAITERS`]).
     waiters: AtomicUsize,
     /// Per-key sliding-window submit timestamps for the rate limiter.
@@ -198,15 +199,22 @@ pub struct SubmissionStore {
 
 impl SubmissionStore {
     /// Open (creating if needed) the store rooted at `root`, recovering the id
-    /// counter from the highest id already on disk.
+    /// counter as the **max of** the highest id on disk and a persisted high-water
+    /// mark. The high-water file is what keeps ids monotonic even after GC deletes
+    /// every record (which would leave `scan_max_id` at 0): without it, `next_id`
+    /// would reset to 1 and a long-lived cursor (`since=N`) would silently skip every
+    /// new submission. The persisted value can only ever raise the counter, never
+    /// lower it, so a lost/corrupt high-water file falls back safely to the on-disk
+    /// scan.
     pub fn open(root: &Path) -> std::io::Result<Arc<Self>> {
         std::fs::create_dir_all(root)?;
         fsync_dir(root)?;
-        let max_id = scan_max_id(root);
+        let next_from_disk = scan_max_id(root) + 1;
+        let next_from_seq = read_seq(root);
         let (tx, _) = broadcast::channel(64);
         Ok(Arc::new(SubmissionStore {
             root: root.to_path_buf(),
-            next_id: AtomicU64::new(max_id + 1),
+            next_id: AtomicU64::new(next_from_disk.max(next_from_seq)),
             tx,
             waiters: AtomicUsize::new(0),
             rate: Mutex::new(HashMap::new()),
@@ -214,7 +222,7 @@ impl SubmissionStore {
     }
 
     /// Subscribe to submit notifications (one receiver per held long-poll).
-    fn subscribe(&self) -> broadcast::Receiver<()> {
+    fn subscribe(&self) -> broadcast::Receiver<Arc<str>> {
         self.tx.subscribe()
     }
 
@@ -225,7 +233,18 @@ impl SubmissionStore {
     fn rate_check(&self, key: &str) -> bool {
         let now = Instant::now();
         let mut map = self.rate.lock().unwrap_or_else(|p| p.into_inner());
-        // Prune this key's expired hits first.
+        // Bound the map BEFORE inserting a brand-new key: once it is at the cap, drop
+        // keys whose window has fully expired (cheap amortized GC), and if that still
+        // does not free a slot, fail closed. This must run before the `entry(...)`
+        // below — otherwise the current key would already be present and the cap
+        // could never admit the sweep (the bug this replaces).
+        if !map.contains_key(key) && map.len() >= RATE_MAX_KEYS {
+            map.retain(|_, hits| hits.iter().any(|t| now.duration_since(*t) < RATE_WINDOW));
+            if map.len() >= RATE_MAX_KEYS {
+                return false;
+            }
+        }
+        // Prune this key's expired hits, then admit iff under the per-key budget.
         let entry = map.entry(key.to_string()).or_default();
         while entry
             .front()
@@ -236,15 +255,7 @@ impl SubmissionStore {
         if entry.len() >= RATE_MAX {
             return false;
         }
-        // Bound the map: if it has grown large, drop keys that have fully expired
-        // (cheap amortized GC) before admitting a brand-new key.
-        if map.len() > RATE_MAX_KEYS && !map.contains_key(key) {
-            map.retain(|_, hits| hits.iter().any(|t| now.duration_since(*t) < RATE_WINDOW));
-            if map.len() > RATE_MAX_KEYS {
-                return false;
-            }
-        }
-        map.entry(key.to_string()).or_default().push_back(now);
+        entry.push_back(now);
         true
     }
 
@@ -292,9 +303,10 @@ impl SubmissionStore {
         };
         self.write_record(&key_dir, id, &record)
             .map_err(SubmitError::Io)?;
-        // Notify held waiters only after the record is durable. A send error just
-        // means no one is waiting — the submission is on disk for the next poll.
-        let _ = self.tx.send(());
+        // Notify held waiters only after the record is durable, carrying the key so a
+        // waiter for a different key can ignore this wake. A send error just means no
+        // one is waiting — the submission is on disk for the next poll.
+        let _ = self.tx.send(Arc::from(key));
         Ok(record)
     }
 
@@ -326,6 +338,12 @@ impl SubmissionStore {
     /// Every submission for `key` with `id > since`, ordered by id, at most `max`.
     /// Returns the list and the new cursor (the last returned id, else `since`).
     /// Corrupt/oversize records are skipped with a log line, never fatal.
+    ///
+    /// Only the cheap `<id>.json` **filenames** are scanned + sorted first; then the
+    /// at-most-`max` selected files are opened and parsed. A page with thousands of
+    /// stored submissions therefore reads `max` files per poll, not the whole
+    /// directory — the difference between an O(max) and an O(N) poll (and the `wait`
+    /// long-poll re-runs this on every wake).
     pub fn list_since(&self, key: &str, since: u64, max: usize) -> std::io::Result<ListPage> {
         let key_dir = self.root.join(key);
         let rd = match std::fs::read_dir(&key_dir) {
@@ -338,7 +356,8 @@ impl SubmissionStore {
             }
             Err(e) => return Err(e),
         };
-        let mut out: Vec<Submission> = Vec::new();
+        // Phase 1 — filenames only: collect the ids after the cursor (no file reads).
+        let mut ids: Vec<u64> = Vec::new();
         for entry in rd.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
@@ -349,20 +368,25 @@ impl SubmissionStore {
             let Ok(id) = stem.parse::<u64>() else {
                 continue;
             };
-            if id <= since {
-                continue;
+            if id > since {
+                ids.push(id);
             }
-            match read_record(&entry.path()) {
+        }
+        // Phase 2 — sort ids, take the page, then read+parse only those files.
+        ids.sort_unstable();
+        ids.truncate(max);
+        let mut out: Vec<Submission> = Vec::with_capacity(ids.len());
+        for id in ids {
+            let path = key_dir.join(format!("{id}.json"));
+            match read_record(&path) {
                 Ok(Some(rec)) if rec.id == id && rec.key == key => out.push(rec),
                 Ok(_) => {}
                 Err(e) => eprintln!(
                     "glasspad: skipping unreadable submission {}: {e}",
-                    entry.path().display()
+                    path.display()
                 ),
             }
         }
-        out.sort_by_key(|s| s.id);
-        out.truncate(max);
         let cursor = out.last().map(|s| s.id).unwrap_or(since);
         Ok(ListPage {
             submissions: out,
@@ -438,6 +462,10 @@ impl SubmissionStore {
                 let _ = std::fs::remove_dir(&key_dir);
             }
         }
+        // Persist the id high-water mark so a store whose records were all reaped
+        // still recovers a monotonic counter on the next open — otherwise `next_id`
+        // would reset to 1 and a long-lived cursor would skip every new submission.
+        let _ = write_seq(&self.root, self.next_id.load(Ordering::SeqCst));
         Ok(removed)
     }
 }
@@ -461,12 +489,13 @@ pub enum WaitOutcome {
 }
 
 /// Server-side long-poll: hold until a submission for `key` after `since` lands or
-/// `timeout` elapses, whichever first. Bounded by [`MAX_WAITERS`] concurrent
-/// holders and by `timeout` (already clamped by the caller). The subscribe-before-
-/// check ordering guarantees no lost wakeup: a submit that notifies after we
-/// subscribe is received; one that landed before is seen by the initial
-/// `list_since`. `Lagged` (missed notifications under load) just triggers a
-/// re-check, never a miss.
+/// `timeout` elapses, whichever first. Bounded by [`MAX_WAITERS`] concurrent holders
+/// and by `timeout` (already clamped by the caller). The subscribe-before-check
+/// ordering guarantees no lost wakeup: a submit that notifies after we subscribe is
+/// received; one that landed before is seen by the initial `list_since`. Each notify
+/// carries its `key`, so a wake for a *different* key is ignored WITHOUT re-running
+/// `list_since` (no store-wide thundering herd); `Lagged` (a burst overran the
+/// channel — we may have missed our own key) conservatively triggers a re-check.
 pub async fn wait(
     store: Arc<SubmissionStore>,
     key: String,
@@ -479,7 +508,12 @@ pub async fn wait(
     };
     // Subscribe BEFORE the first check so no notification is lost in the gap.
     let mut rx = store.subscribe();
-    let deadline = Instant::now() + timeout;
+    // One absolute deadline for the whole hold, pinned so re-entering the inner
+    // select on an unrelated wake does NOT reset the timer (a fresh `sleep(remaining)`
+    // each iteration would let unrelated traffic extend the hold indefinitely).
+    let sleep = tokio::time::sleep(timeout);
+    tokio::pin!(sleep);
+    let want: Arc<str> = Arc::from(key.as_str());
     loop {
         let page = {
             let store = store.clone();
@@ -491,23 +525,24 @@ pub async fn wait(
         if !page.submissions.is_empty() {
             return Ok(WaitOutcome::Ready(page));
         }
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(WaitOutcome::TimedOut { cursor: since });
-        }
-        let remaining = deadline - now;
-        tokio::select! {
-            r = rx.recv() => {
-                match r {
-                    // A submit fired, or we lagged behind — either way re-check.
-                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+        // Wait for a notification for OUR key (or the deadline). Unrelated-key wakes
+        // loop here cheaply without touching the filesystem.
+        loop {
+            tokio::select! {
+                _ = &mut sleep => return Ok(WaitOutcome::TimedOut { cursor: since }),
+                r = rx.recv() => match r {
+                    // Our key changed — break out to re-check via list_since.
+                    Ok(k) if k == want => break,
+                    // A different key — keep waiting, no re-check.
+                    Ok(_) => continue,
+                    // We may have missed our own key under a burst — re-check.
+                    Err(broadcast::error::RecvError::Lagged(_)) => break,
                     // The sender was dropped (store gone): stop holding.
                     Err(broadcast::error::RecvError::Closed) => {
                         return Ok(WaitOutcome::TimedOut { cursor: since });
                     }
-                }
+                },
             }
-            _ = tokio::time::sleep(remaining) => {}
         }
     }
 }
@@ -537,6 +572,31 @@ fn count_records(key_dir: &Path) -> usize {
             .count(),
         Err(_) => 0,
     }
+}
+
+/// The persisted "next id" high-water mark file (in the store root).
+const SEQ_FILE: &str = ".seq";
+
+/// Read the persisted "next id" high-water mark (0 if absent/unreadable). The caller
+/// takes the max with the on-disk scan, so a missing/corrupt file can only lose the
+/// GC-survives-empty guarantee — it can never cause id **reuse** (which would need a
+/// value *below* an existing on-disk id, and the max() defends that).
+fn read_seq(root: &Path) -> u64 {
+    std::fs::read_to_string(root.join(SEQ_FILE))
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// Persist the "next id" high-water mark durably (atomic rename + fsync). It lives in
+/// the store root as a `.`-prefixed file, so `scan_max_id`/`gc` (which only descend
+/// into key directories) never mistake it for a record.
+fn write_seq(root: &Path, next_id: u64) -> std::io::Result<()> {
+    let final_path = root.join(SEQ_FILE);
+    let tmp_path = root.join(".seq.tmp");
+    write_file_synced(&tmp_path, next_id.to_string().as_bytes())?;
+    std::fs::rename(&tmp_path, &final_path)?;
+    fsync_dir(root)
 }
 
 /// Recover the highest submission id present anywhere under `root` (0 if none), so
@@ -734,6 +794,70 @@ mod tests {
         let removed = store.gc(ChronoDuration::days(7)).unwrap();
         assert_eq!(removed, 1);
         assert!(!root.join("abc").exists(), "emptied key dir is reaped");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn id_counter_survives_a_fully_gc_emptied_store() {
+        // Regression: after GC reaps every record, a reopened store must NOT reset its
+        // id to 1 — otherwise an agent polling with an old cursor (since=N) would
+        // silently skip every new submission. The persisted high-water mark keeps ids
+        // monotonic across a full reap.
+        let root = tmp_root("idseq");
+        let store = SubmissionStore::open(&root).unwrap();
+        // Advance the counter with a few submissions.
+        let mut last = 0;
+        for _ in 0..5 {
+            last = store
+                .submit("abc", "index", "acme", "v1", serde_json::json!({}))
+                .unwrap()
+                .id;
+        }
+        // Backdate + GC them all so the store is emptied of records.
+        for f in std::fs::read_dir(root.join("abc")).unwrap().flatten() {
+            let p = f.path();
+            let mut rec: Submission = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+            rec.created_at = Utc::now() - ChronoDuration::days(30);
+            std::fs::write(&p, serde_json::to_vec(&rec).unwrap()).unwrap();
+        }
+        assert_eq!(store.gc(ChronoDuration::days(7)).unwrap(), 5);
+        assert!(!root.join("abc").exists(), "records fully reaped");
+        drop(store);
+
+        // Reopen: the next id must still be ABOVE every previously-allocated id.
+        let store2 = SubmissionStore::open(&root).unwrap();
+        let next = store2
+            .submit("abc", "index", "acme", "v1", serde_json::json!({}))
+            .unwrap();
+        assert!(
+            next.id > last,
+            "id reset after full GC: {} !> {last}",
+            next.id
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn wait_ignores_submissions_for_other_keys() {
+        // Keyed broadcast: a submit to a DIFFERENT key must not satisfy a waiter — it
+        // holds until its own key lands or the timeout fires.
+        let root = tmp_root("waitkey");
+        let store = SubmissionStore::open(&root).unwrap();
+        let s = store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            // Noise on an unrelated key…
+            s.submit("other", "index", "acme", "v1", serde_json::json!({}))
+                .unwrap();
+        });
+        // Waiting on "abc" with only an "other" submit → times out (not satisfied).
+        let outcome = wait(store, "abc".into(), 0, Duration::from_millis(150), MAX_LIST)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, WaitOutcome::TimedOut { .. }),
+            "an unrelated-key submit must not satisfy a wait"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -115,7 +115,7 @@ async fn loopback_submit(
         );
     }
     if !valid_space(&space) {
-        return not_found();
+        return sub_err(StatusCode::NOT_FOUND, "not_found", "no such space");
     }
     let Json(req) = match body {
         Ok(b) => b,
@@ -201,7 +201,7 @@ async fn loopback_list(
         );
     };
     if !valid_space(&space) {
-        return not_found();
+        return sub_err(StatusCode::NOT_FOUND, "not_found", "no such space");
     }
     let since = q.since.unwrap_or(0);
     match tokio::task::spawn_blocking(move || store.list_since(&space, since, MAX_LIST)).await {
@@ -235,7 +235,7 @@ async fn loopback_wait(
         );
     };
     if !valid_space(&space) {
-        return not_found();
+        return sub_err(StatusCode::NOT_FOUND, "not_found", "no such space");
     }
     let since = q.since.unwrap_or(0);
     let secs = q
@@ -316,10 +316,6 @@ fn sub_err(status: StatusCode, code: &str, message: &str) -> Response {
         })),
     )
         .into_response()
-}
-
-fn not_found() -> Response {
-    (StatusCode::NOT_FOUND, "not found").into_response()
 }
 
 /// Convenience for tests that don't serve a live directory (fixtures only).
@@ -811,6 +807,27 @@ mod tests {
                 Method::POST,
                 "/myspace/_gp/submit",
                 Some("http://evil.example"),
+                Some(r#"{"data":{}}"#),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(j["error"]["code"], "bad_origin");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn loopback_submit_rejects_missing_origin() {
+        // Fail-closed CSRF: the trusted shell's fetch always sends Origin, so a
+        // request with NO Origin is rejected rather than assumed same-origin.
+        let root = tmp_root("noorigin");
+        let app = app_with_channel(&root);
+        let (status, j) = resp_json(
+            &app,
+            lb_req(
+                Method::POST,
+                "/myspace/_gp/submit",
+                None,
                 Some(r#"{"data":{}}"#),
             ),
         )

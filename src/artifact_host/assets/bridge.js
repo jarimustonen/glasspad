@@ -154,25 +154,31 @@
     return false;
   };
 
+  // Add a name/value pair, collapsing repeats into an array (checkbox groups /
+  // multi-selects / multiple same-named submit buttons round-trip).
+  function addField(data, name, value) {
+    if (Object.prototype.hasOwnProperty.call(data, name)) {
+      if (!Array.isArray(data[name])) data[name] = [data[name]];
+      data[name].push(value);
+    } else {
+      data[name] = value;
+    }
+  }
+
   // Serialize a <form>'s fields into a plain object. Only string values (a File
-  // input has no real data in the null-origin sandbox and would not serialize);
-  // repeated names collapse into an array so checkbox groups / multi-selects
-  // round-trip.
-  function serializeForm(form) {
+  // input has no real data in the null-origin sandbox and would not serialize). The
+  // triggering submit control (`submitter`) is included when it has a name — FormData
+  // omits it, but `<button name=action value=save>` is a common pattern.
+  function serializeForm(form, submitter) {
     var data = {};
     try {
       new FormData(form).forEach(function (value, name) {
-        if (typeof value !== "string") return;
-        if (Object.prototype.hasOwnProperty.call(data, name)) {
-          if (!Array.isArray(data[name])) data[name] = [data[name]];
-          data[name].push(value);
-        } else {
-          data[name] = value;
-        }
+        if (typeof value === "string") addField(data, name, value);
       });
     } catch (e) {
       /* FormData unavailable — submit whatever was collected (possibly empty) */
     }
+    if (submitter && submitter.name) addField(data, submitter.name, submitter.value || "");
     return data;
   }
 
@@ -200,7 +206,7 @@
       var form = t.form || (t.closest ? t.closest("form") : null);
       if (!form) return;
       event.preventDefault();
-      window.gp.submit(serializeForm(form));
+      window.gp.submit(serializeForm(form, t));
     },
     false
   );
@@ -215,7 +221,7 @@
       var form = event.target;
       if (!form || form.tagName !== "FORM") return;
       event.preventDefault();
-      window.gp.submit(serializeForm(form));
+      window.gp.submit(serializeForm(form, event.submitter));
     },
     false
   );

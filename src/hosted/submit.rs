@@ -271,16 +271,16 @@ fn clamp_timeout(secs: Option<u64>) -> std::time::Duration {
     std::time::Duration::from_secs(s)
 }
 
-/// True when the request either carries no `Origin` (not a cross-site browser POST)
-/// or carries one that exactly matches an allowed origin. A present-but-foreign
-/// `Origin` is rejected — the CSRF boundary.
+/// True only when the request carries an `Origin` that exactly matches an allowed
+/// origin. **Fail-closed**: the legitimate caller is always the trusted shell, whose
+/// `fetch` POST always sets `Origin` to the served origin, so a **missing** `Origin`
+/// (or a foreign one) is rejected — the CSRF boundary. (`allowed` is the server's own
+/// canonical origin, so a browser's default-port form like `https://host` matches the
+/// canonicalized `https://host` without a port; see `validate_public_origin`.)
 pub fn origin_ok(headers: &HeaderMap, allowed: &[String]) -> bool {
-    match headers.get(header::ORIGIN) {
-        None => true,
-        Some(v) => match v.to_str() {
-            Ok(o) => allowed.iter().any(|a| a == o),
-            Err(_) => false,
-        },
+    match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        Some(o) => allowed.iter().any(|a| a == o),
+        None => false,
     }
 }
 
