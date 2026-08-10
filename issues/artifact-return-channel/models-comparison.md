@@ -40,15 +40,23 @@ for live-reload, so the server-side primitive exists.)
   anyway, so it carries A1's cursor complexity *plus* connection management).
 - ➖ Idle agents holding sockets is the opposite of the batch/disconnected use case.
 
-### A3 — Blocking CLI · `glasspad await-submission <slug> --timeout <d>`
-Not a distinct transport — a client-side convenience that wraps A1 (or A2) into one blocking
-call returning the next submission as `--json`.
+### A3 — Backgrounded blocking CLI · `glasspad await-submission <slug> --since <cur> --timeout <d>`
+**The primary agent-facing model (refined 2026-08-10).** The command blocks on a **server-side
+long-poll** (`GET …/submissions/wait?since=<cursor>&timeout=<d>` — the server holds the
+connection until a submission lands or the timeout fires) and prints the submission as
+`--json` on stdout. The **agent runs it backgrounded**, so it does *not* block: the agent
+harness re-invokes the agent with the command's output when the human submits — the answer
+arrives as the command's **return value**. (Exactly how this session ran `run wait` /
+`gh run watch` in the background.)
 
-- ➕ Best agent ergonomics: one call, AI-first (`--json`, no prompt), maps to "show a form,
-  wait for the answer".
-- ➕ Hides cursor/dedup/reconnect inside the CLI.
-- ➖ Ties the agent up for one submission (fine for a single approval, wrong for a stream).
-- ➖ Still needs A1/A2 underneath — it's sugar, not a transport.
+- ➕ Best agent ergonomics: fire in the background, get the answer as the command result — no
+  polling loop, no cursor bookkeeping, no blocking. AI-first (`--json`, no prompt).
+- ➕ No busy-polling (server long-poll) **and** no held agent (backgrounded) — best of A1+A2.
+- ➕ Hides cursor/reconnect inside the CLI.
+- ➖ Needs `--timeout` (a backgrounded wait that never returns would dangle) → a distinct
+  "timed-out, no submission" result so the agent can re-arm or give up.
+- ➖ Still rides on the persisted-cursor substrate (below): a submit that lands *between*
+  arm calls must be returned on the next `--since`, never missed.
 
 ### A4 — Webhook · agent registers a callback URL, server POSTs to it
 - ➕ True push, no agent-held connection.
@@ -58,18 +66,22 @@ call returning the next submission as `--json`.
 - ➖ New outbound-from-server surface to secure.
 
 ### Recommendation (Part A)
-**Ship A1 (polling) as the transport of record, expose A3 (`await-submission`) as the default
-agent ergonomic over it.** A1 is the cheapest to build, scales, is durable, and reuses the
-ingest auth/scoping verbatim; A3 gives agents the one-call "wait for the answer" surface
-without the server paying for held connections. Add **A2 (SSE) later** only if a latency-
-sensitive use case appears — the shell's SSE code is a head start when it does. Skip **A4**
-unless a genuinely server-reachable agent shows up.
+**A3 (backgrounded `await-submission` over a server-side long-poll) is the primary agent
+surface; A1's persisted-cursor store is its durable substrate.** The agent fires
+`await-submission` in the background and gets the answer as the command result — no blocking,
+no polling loop. The server long-poll (a held `GET …/wait` with a timeout) gives low latency
+without busy-polling; the persisted `key→submission` store + monotonic cursor (the A1
+mechanism) guarantees a submit that lands between arm calls is delivered on the next
+`--since`, not lost. Plain **A1 polling** stays exposed as the disconnected/batch fallback
+(same endpoint, no hold). Add **A2 (SSE)** only when one agent must watch *many* pages at once
+or wants sub-second streaming — the shell's SSE code is the head start. Skip **A4** unless a
+genuinely server-reachable agent shows up.
 
-| | Server cost | Latency | Agent ergonomics | Reuses existing | Verdict |
+| | Server cost | Latency | Agent blocking | Reuses existing | Verdict |
 |---|---|---|---|---|---|
-| A1 poll | low | interval | good (via A3) | ingest auth/scope | **build first** |
-| A2 SSE | med (held conns) | low | medium | shell SSE | later, if needed |
-| A3 await | — (wraps A1) | interval | **best** | — | **default surface** |
+| A3 await (bg + long-poll) | low (held, bounded) | low | **none (backgrounded)** | ingest auth/scope | **primary surface** |
+| A1 poll | low | interval | none | ingest auth/scope | **durable substrate + fallback** |
+| A2 SSE | med (held conns) | low | none | shell SSE | later: many-pages / sub-second |
 | A4 webhook | high | low | n/a (unreachable) | nothing | skip |
 
 ---
@@ -111,10 +123,13 @@ longer matches — cross-round spoof protection).
 
 ## Net recommendation
 
-Hosted, **A1 polling + A3 `await-submission`**, **B1 one-shot** — with a versioned submission
-record (monotonic id + answered-content-version) so **A2 (SSE)** and **B2 (multi-round)** are
-additive later increments rather than rewrites. Smallest first cut that delivers the hosted
-human-in-the-loop round-trip and keeps the airlock/frozen-sandbox invariant intact.
+Hosted, **A3 backgrounded `await-submission` over a server-side long-poll** (primary surface)
+backed by **A1's persisted-cursor store** (durable substrate + plain-poll fallback), **B1
+one-shot** — with a versioned submission record (monotonic id + answered-content-version) so
+**A2 (SSE)** and **B2 (multi-round)** are additive later increments rather than rewrites.
+Smallest first cut that delivers the hosted human-in-the-loop round-trip: the agent fires one
+backgrounded command and the human's answer comes back as its return value, while the
+airlock/frozen-sandbox invariant stays intact.
 
 Open for Jari: agree with the A1+A3 / B1 first cut (and the versioned-record forward-compat),
 or weight toward earlier B2 / A2 if a concrete latency- or dialogue-heavy use case is already
