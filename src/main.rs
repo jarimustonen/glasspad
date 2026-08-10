@@ -10,6 +10,7 @@ mod cli;
 mod hosted;
 mod pidfile;
 mod server;
+mod submissions;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
