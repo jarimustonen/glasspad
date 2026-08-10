@@ -85,6 +85,17 @@ async fn push_round(
         }
     };
 
+    // Validate the slug grammar at the HTTP boundary before it reaches any filesystem
+    // join (defense-in-depth; the store also gates on the validated snapshot). An
+    // ill-formed slug is an opaque 404, exactly like an unknown page.
+    if !crate::artifact_host::valid_space(&slug) {
+        return err(
+            StatusCode::NOT_FOUND,
+            "no_such_page",
+            "no such page for this tenant",
+        );
+    }
+
     // Owner-scope early (before building the body) so a non-owner learns nothing and
     // does no render work: a missing page and a page owned by another tenant both 404.
     match state.store.page_tenant(&slug) {

@@ -261,6 +261,25 @@ RN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/pages/
   -H 'content-type: application/json' -d '{"html":"<h1>x</h1>"}')"
 [ "$RN" = "401" ]; scheck $? "b2: an unauthenticated round push is rejected (401)"
 
+# SSE isolation (the round push reuses the reload carrier): round events are scoped
+# SERVER-SIDE by `?space=`. A client that does NOT name this page's slug must NEVER
+# receive its round event — otherwise any connected viewer could harvest other
+# tenants' capability slugs from the global stream. Prove both directions.
+# (a) No filter → the slug must NOT appear in the stream even as a round is pushed.
+( curl -s --max-time 2 "$HOST_ORIGIN/_gp/reload" > "$WORK/sse_nofilter.txt" 2>/dev/null & )
+sleep 0.4
+curl -s -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d '{"html":"<h1>leak probe</h1>"}' >/dev/null
+sleep 2
+! grep -q "$HSLUG" "$WORK/sse_nofilter.txt"; scheck $? "b2/SSE: an unscoped reload stream never leaks another page's slug"
+# (b) Correct scope → the round event IS delivered to a client that named the slug.
+( curl -s --max-time 2 "$HOST_ORIGIN/_gp/reload?space=$HSLUG" > "$WORK/sse_scoped.txt" 2>/dev/null & )
+sleep 0.4
+curl -s -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d '{"html":"<h1>scoped delivery</h1>"}' >/dev/null
+sleep 2
+grep -q "event: *round" "$WORK/sse_scoped.txt"; scheck $? "b2/SSE: a slug-scoped stream DOES receive its own round event"
+
 kill "$HOST_PID" 2>/dev/null || true
 sleep 0.3
 

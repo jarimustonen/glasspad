@@ -140,8 +140,11 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   content-version + monotonic round id) that swaps the current artifact in place — a
   fresh content-route fetch under the **identical frozen CSP** (each round stays
   null-origin, `connect-src 'none'`, no `allow-forms`; pushing a round widens
-  nothing). The event carries **no URL** and is filtered to the shell's own `space`,
-  so a round for one hosted page never reloads another (per-page isolation). Loopback
+  nothing). The event carries **no URL**, and round delivery is **scoped server-side**
+  by `?space=<slug>` on the reload stream — a connection receives a `round` event only
+  for the exact page slug it named, so the global broadcast can't fan one tenant's
+  capability slug out to another's shell (client-side `space === SPACE` is
+  defense-in-depth on top). Loopback
   multi-round = rewrite the served file (the watcher fires the full reload). Hosted =
   `POST /api/v1/pages/{slug}/rounds` (`hosted::rounds`, API-key + owner-scoped): the
   re-render is a durable **live overlay** (`live.html`/`live.json`) over the immutable

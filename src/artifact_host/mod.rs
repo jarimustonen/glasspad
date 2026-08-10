@@ -74,12 +74,14 @@ pub enum OriginPolicy {
 /// * [`ReloadEvent::Round`] — one artifact advanced to a **new content round** (the
 ///   B2 push): the shell swaps *that* space's framed artifact **in place** (a fresh
 ///   content-route fetch under the identical frozen CSP), keeping the live page — no
-///   full reload. Keyed by `space` so a round pushed to one hosted page never
-///   reloads another page's shell (per-page isolation of the live push).
+///   full reload. Delivery is **scoped server-side** to the `space` the connection
+///   named (`/_gp/reload?space=<slug>`), so a round pushed to one hosted page is never
+///   delivered to another page's shell — the global broadcast can't leak one tenant's
+///   capability slug to another's connection.
 ///
-/// The event carries **no URL** — only a `space` label the shell matches against its
-/// own constant and a `content_version`/`round` echo — so a round push can at most
-/// make a shell re-fetch its *own* current content route; it can never redirect it.
+/// The event carries **no URL** — only a `space`/`content_version`/`round` echo — so
+/// a round push can at most make a shell re-fetch its *own* current content route; it
+/// can never redirect it.
 #[derive(Clone, Debug)]
 pub enum ReloadEvent {
     /// Reload the whole shell (dev file-watch: nav/title/artifact-set may differ).
@@ -524,40 +526,69 @@ async fn space_asset(
     (hmap, asset.bytes.clone()).into_response()
 }
 
+/// Query for [`reload_stream`]: the shell names the **space** whose round pushes it
+/// wants (`/_gp/reload?space=<slug>`). This is the **server-side isolation boundary**
+/// for B2 round events: a `round` event is delivered **only** to a connection that
+/// presented the exact matching space, so a client can observe round activity solely
+/// for a page whose (capability) slug it already holds. Absent → the connection
+/// receives full `reload` events only (the loopback dev file-watch), never any
+/// `round` event — so a raw `GET /_gp/reload` cannot harvest other pages' slugs.
+#[derive(Deserialize, Default)]
+struct ReloadQuery {
+    space: Option<String>,
+}
+
 /// SSE reload stream. The trusted shell opens an `EventSource` to this path
 /// (its `connect-src 'self'` permits it) and reloads when the filesystem watcher
 /// fires after an atomic snapshot swap. The **artifact** CSP is widened to name
 /// exactly this loopback path (see `headers::artifact_csp_from_origins`) so a future in-frame
 /// reload client can use it too — never to a foreign host, never a broad origin.
+///
+/// **Round events are space-scoped server-side** (`?space=<slug>`): a B2 `round`
+/// event carries a page's capability slug, so it is emitted only on a connection
+/// that already named that exact slug. Without this, the single global broadcast
+/// would fan every page's round event (slug + content-version) out to every
+/// connected shell — a cross-tenant capability/activity leak. Full `reload` events
+/// carry no secret and are always emitted.
 async fn reload_stream(
     State(host): State<Arc<ArtifactHost>>,
+    Query(q): Query<ReloadQuery>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = host.subscribe();
-    let stream = BroadcastStream::new(rx).map(|item| {
+    // The one space this connection is authorized to observe round events for.
+    let want: Option<Arc<str>> = q.space.as_deref().map(Arc::from);
+    let stream = BroadcastStream::new(rx).filter_map(move |item| {
         let event = match item {
-            // A B2 round push: name the event `round`, stamp the round number as the
-            // SSE `id` (so a reconnecting shell's `Last-Event-ID` reflects the last
-            // round seen), and carry the keyed `{space, contentVersion}` as data. The
-            // shell matches `space` against its own constant and swaps in place. A
-            // serialization failure (never, for two strings + an int) degrades to a
-            // full reload rather than dropping the signal.
+            // A B2 round push: deliver ONLY when this connection named the event's
+            // own space — otherwise DROP it (no cross-page delivery). Name the event
+            // `round`, stamp the round number as the SSE `id` (a valid per-space
+            // cursor now the stream is scoped), and carry `{space, contentVersion,
+            // round}` as data. A serialization failure (never, for two strings + an
+            // int) degrades to a full reload rather than dropping the signal.
             Ok(ReloadEvent::Round {
                 space,
                 content_version,
                 round,
-            }) => Event::default()
-                .event("round")
-                .id(round.to_string())
-                .json_data(serde_json::json!({
-                    "space": space,
-                    "contentVersion": content_version,
-                }))
-                .unwrap_or_else(|_| Event::default().event("reload").data("1")),
+            }) => {
+                if want.as_deref() != Some(space.as_str()) {
+                    return None;
+                }
+                Event::default()
+                    .event("round")
+                    .id(round.to_string())
+                    .json_data(serde_json::json!({
+                        "space": space,
+                        "contentVersion": content_version,
+                        "round": round,
+                    }))
+                    .unwrap_or_else(|_| Event::default().event("reload").data("1"))
+            }
             // A full reload, or a lag error (a burst overran the channel — "something
-            // changed"): a full shell reload is the safe superset.
+            // changed"): a full shell reload is the safe superset, and carries no
+            // page secret, so it is delivered to every connection.
             _ => Event::default().event("reload").data("1"),
         };
-        Ok::<Event, Infallible>(event)
+        Some(Ok::<Event, Infallible>(event))
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }

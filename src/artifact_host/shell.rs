@@ -275,11 +275,22 @@ pub fn render(
     }});
   }}
 
+  // Re-fetch the CURRENT slug's content in place (theme inlined so the swap is
+  // FOUC-free), appending a cache-buster (the content route ignores the extra query
+  // param) so an otherwise-identical URL reassignment still forces a fresh fetch of
+  // the new round body. Used by the B2 round swap and the stale-submit recovery.
+  function swapCurrentArtifact(bust) {{
+    var q = themeQuery();
+    frame.src = MOUNT + "/" + SPACE + "/_c/" + current + (q ? q + "&" : "?") + bust;
+  }}
+
   // Live-reload: the trusted shell holds the EventSource (its connect-src 'self'
   // permits it) and reloads the whole shell on a filesystem change, so new/renamed
-  // artifacts and titles are picked up, not just the current artifact's body.
+  // artifacts and titles are picked up, not just the current artifact's body. Round
+  // events are SERVER-SIDE scoped to this space (`?space=`), so this connection only
+  // ever receives round events for its own page — never another page's slug.
   try {{
-    var es = new EventSource("/_gp/reload");
+    var es = new EventSource("/_gp/reload?space=" + encodeURIComponent(SPACE));
     es.addEventListener("reload", function () {{ location.reload(); }});
     // B2 multi-round: the SAME EventSource also carries a keyed `round` event when
     // the agent re-renders this page's artifact. Rather than a full reload, swap the
@@ -289,17 +300,23 @@ pub fn render(
     es.addEventListener("round", function (event) {{
       var d;
       try {{ d = JSON.parse(event.data); }} catch (e) {{ return; }}
-      // Per-page isolation: only react to a round for OUR OWN space. The event
-      // carries no URL — we only ever re-fetch our own current content route, so a
-      // hostile/misdirected payload can at most reload our own artifact, never
-      // redirect us elsewhere. `frame-src 'self'` still contains whatever is framed.
+      // Per-page isolation (defense-in-depth on top of the server-side `?space=`
+      // scope): only react to a round for OUR OWN space. The event carries no URL —
+      // we only ever re-fetch our own current content route, so a hostile/misdirected
+      // payload can at most reload our own artifact, never redirect us elsewhere.
       if (!d || typeof d !== "object" || d.space !== SPACE) return;
-      // Re-fetch the CURRENT slug's content (theme inlined so the swap is FOUC-free),
-      // with the round number as a cache-buster (the content route ignores it) so an
-      // identical-URL reassignment still forces a fresh fetch of the new round body.
-      var q = themeQuery();
-      var bust = "gp_r=" + encodeURIComponent(String(d.round != null ? d.round : Date.now()));
-      frame.src = MOUNT + "/" + SPACE + "/_c/" + current + (q ? q + "&" : "?") + bust;
+      // Cache-buster: prefer the content-version (the immutable body identity), fall
+      // back to the round number, then wall-clock — each validated so a hostile SSE
+      // payload can only ever land as a bounded query value the content route ignores.
+      var bust;
+      if (typeof d.contentVersion === "string" && /^[0-9a-f]{{1,64}}$/.test(d.contentVersion)) {{
+        bust = "gp_cv=" + d.contentVersion;
+      }} else if (typeof d.round === "number" && d.round >= 0 && d.round < 1e15) {{
+        bust = "gp_r=" + String(d.round);
+      }} else {{
+        bust = "gp_r=" + Date.now();
+      }}
+      swapCurrentArtifact(bust);
     }});
   }} catch (e) {{ /* SSE unsupported — live reload simply inactive */ }}
 
@@ -363,7 +380,13 @@ pub fn render(
         credentials: "omit",
         cache: "no-store"
       }}).then(function (r) {{
-        if (r && r.ok) stats.submitAccepted++; else stats.submitFailed++;
+        if (r && r.ok) {{ stats.submitAccepted++; return; }}
+        stats.submitFailed++;
+        // 409 = the agent advanced the round after this view rendered (a missed
+        // round swap): the submission answered a now-stale round and was rejected.
+        // Re-fetch the CURRENT round in place so the user sees the latest and can
+        // re-answer — a single re-fetch (the swap posts nothing, so no retry loop).
+        if (r && r.status === 409) swapCurrentArtifact("gp_r=" + Date.now());
       }}).catch(function () {{ stats.submitFailed++; }});
     }} catch (e) {{ stats.submitFailed++; }}
   }}
@@ -474,7 +497,11 @@ mod tests {
     #[test]
     fn shell_opens_reload_event_source() {
         let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
-        assert!(html.contains(r#"new EventSource("/_gp/reload")"#));
+        // The reload stream is opened space-scoped (`?space=`) so B2 round events are
+        // delivered server-side only to this page's own shell (no cross-page slug leak).
+        assert!(
+            html.contains(r#"new EventSource("/_gp/reload?space=" + encodeURIComponent(SPACE))"#)
+        );
     }
 
     #[test]
@@ -672,16 +699,24 @@ mod tests {
         // carries no URL, so the swap targets our own `current` slug's content route.
         let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
         assert!(html.contains(r#"es.addEventListener("round""#));
-        // Per-page isolation: react only to a round for our own SPACE.
+        // Round events are SERVER-SIDE scoped to this space (`?space=`) — the shell
+        // never receives another page's round event (with its slug) to leak.
+        assert!(
+            html.contains(r#"new EventSource("/_gp/reload?space=" + encodeURIComponent(SPACE))"#)
+        );
+        // Per-page isolation (client-side defense-in-depth): react only to our SPACE.
         assert!(html.contains("d.space !== SPACE"));
         // The swap re-fetches OUR current slug's content route (no URL from the event).
         assert!(html.contains(r#"MOUNT + "/" + SPACE + "/_c/" + current"#));
-        // A round cache-buster forces a fresh fetch even on an identical URL.
+        // The cache-buster prefers the validated content-version, else the round.
+        assert!(html.contains("gp_cv="));
         assert!(html.contains("gp_r="));
         // The full-reload path is unchanged (dev file-watch still location.reload()s).
         assert!(
             html.contains(r#"es.addEventListener("reload", function () { location.reload(); })"#)
         );
+        // A stale-submit 409 re-fetches the current round (conversational recovery).
+        assert!(html.contains("if (r && r.status === 409) swapCurrentArtifact"));
     }
 
     #[test]

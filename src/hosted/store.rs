@@ -87,11 +87,16 @@ const LIVE_SCHEMA: u32 = 1;
 
 /// On-disk sidecar for a page's live round. `round` is monotonic (starts at 1 on the
 /// first push; the immutable baseline is round 0). Written **after** `live.html` is
-/// durable, so its presence implies a matching live body.
+/// durable; `content_version` records the digest of the body it was written for, so a
+/// crash-torn pair (a new `live.html` with a stale `live.json`, or vice versa) is
+/// **detected on load** — the body's recomputed digest won't match — and the overlay
+/// is ignored (the page reverts to the immutable baseline) rather than serving a body
+/// under the wrong round label.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LiveMeta {
     schema: u32,
     round: u64,
+    content_version: String,
     updated_at: DateTime<Utc>,
 }
 
@@ -302,12 +307,14 @@ impl Store {
         )))
     }
 
-    /// The live round body for a page directory, if a valid overlay is present
-    /// (`live.json` parses with the right schema **and** `live.html` reads within the
-    /// per-file cap). Any absence/corruption returns `None` so the caller falls back
-    /// to the immutable baseline — a half-written or hand-tampered overlay can never
-    /// blank a page, only revert it to round 0.
-    fn load_live_body(&self, dir: &Path) -> Option<String> {
+    /// Read a page directory's live overlay, if a **consistent** one is present:
+    /// `live.json` parses with the right schema, `live.html` reads within the per-file
+    /// cap, **and** the body's recomputed content-version matches the meta's — so a
+    /// crash-torn pair (body and meta from different rounds) is rejected. Any
+    /// absence/corruption/mismatch returns `None`, so the caller reverts to the
+    /// immutable baseline; a half-written or hand-tampered overlay can never blank a
+    /// page or serve a body under the wrong round label.
+    fn read_live_overlay(&self, dir: &Path) -> Option<(LiveMeta, String)> {
         let lm_bytes = read_capped(&dir.join(LIVE_META_FILE), MAX_META_BYTES).ok()?;
         if lm_bytes.len() as u64 > MAX_META_BYTES {
             return None;
@@ -316,20 +323,28 @@ impl Store {
         if lm.schema != LIVE_SCHEMA {
             return None;
         }
-        read_capped_utf8(&dir.join(LIVE_FILE)).ok()
+        let body = read_capped_utf8(&dir.join(LIVE_FILE)).ok()?;
+        // Consistency gate: the meta must describe THIS body (else a crash between the
+        // two renames left a mismatched pair — ignore it, revert to baseline).
+        if crate::submissions::content_version(&body) != lm.content_version {
+            return None;
+        }
+        Some((lm, body))
     }
 
-    /// The current live round number for a page directory (0 when there is no valid
-    /// overlay — i.e. the immutable baseline is what is served).
+    /// The live round body for a page directory, if a valid, self-consistent overlay
+    /// is present; else `None` (the immutable baseline is served).
+    fn load_live_body(&self, dir: &Path) -> Option<String> {
+        self.read_live_overlay(dir).map(|(_, body)| body)
+    }
+
+    /// The current live round number for a page directory (0 when there is no valid,
+    /// self-consistent overlay — i.e. the immutable baseline is what is served). A
+    /// torn/corrupt overlay reads as 0 so the next push re-derives round 1 over the
+    /// baseline it also reverts to — round and served body stay consistent.
     fn read_live_round(&self, dir: &Path) -> u64 {
-        let bytes = match read_capped(&dir.join(LIVE_META_FILE), MAX_META_BYTES) {
-            Ok(b) if b.len() as u64 <= MAX_META_BYTES => b,
-            _ => return 0,
-        };
-        serde_json::from_slice::<LiveMeta>(&bytes)
-            .ok()
-            .filter(|lm| lm.schema == LIVE_SCHEMA)
-            .map(|lm| lm.round)
+        self.read_live_overlay(dir)
+            .map(|(lm, _)| lm.round)
             .unwrap_or(0)
     }
 
@@ -497,10 +512,14 @@ impl Store {
             write_file_synced(&body_tmp, html.as_bytes())?;
             std::fs::rename(&body_tmp, &body_final)?;
             fsync_dir(dir)?;
-            // 2. Meta after the body is durable (presence implies a matching body).
+            // 2. Meta after the body is durable, stamped with the body's digest so a
+            //    crash between the two renames yields a mismatched pair that load
+            //    detects and rejects (reverting to baseline) instead of serving a body
+            //    under the wrong round label.
             let lm = LiveMeta {
                 schema: LIVE_SCHEMA,
                 round,
+                content_version: crate::submissions::content_version(html),
                 updated_at: Utc::now(),
             };
             let json = serde_json::to_vec(&lm)
@@ -1514,6 +1533,47 @@ mod tests {
             store2.page_body(&p.slug).as_deref(),
             Some("<h1>baseline</h1>"),
             "a corrupt overlay must revert to the baseline, never blank the page"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn crash_torn_overlay_is_rejected_not_served_under_wrong_round() {
+        // Simulate a crash between the live.html and live.json renames: live.html holds
+        // a NEW body but live.json still describes the OLD round/content-version. The
+        // digest cross-check must reject the mismatched pair and revert to baseline —
+        // never serve the new body under the stale round label.
+        let root = tmp_root("round-torn");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>baseline</h1>".into(), None, None)
+            .unwrap();
+        store
+            .push_round("acme", &p.slug, "<h1>committed round</h1>".into())
+            .unwrap();
+        // Overwrite ONLY live.html with a different body (live.json still points at the
+        // committed round's digest) — the torn state a crash-after-body-rename leaves.
+        std::fs::write(
+            root.join("pages").join(&p.slug).join("live.html"),
+            b"<h1>uncommitted body</h1>",
+        )
+        .unwrap();
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_body(&p.slug).as_deref(),
+            Some("<h1>baseline</h1>"),
+            "a torn overlay (body≠meta digest) must revert to baseline"
+        );
+        // A subsequent push recovers cleanly (round re-derived over the baseline).
+        let r = store2
+            .push_round("acme", &p.slug, "<h1>recovered</h1>".into())
+            .unwrap();
+        assert_eq!(r.round, 1);
+        assert_eq!(
+            store2.page_body(&p.slug).as_deref(),
+            Some("<h1>recovered</h1>")
         );
         std::fs::remove_dir_all(&root).ok();
     }

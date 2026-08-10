@@ -4,6 +4,9 @@ updated: 2026-08-10
 type: feature
 status: in-progress
 priority: normal
+commits:
+- hash: 93340b4
+  summary: 'feat(return-channel): B2 multi-round — agent re-renders in place'
 ---
 
 # Return channel B2 — multi-round (agent re-renders in response)
