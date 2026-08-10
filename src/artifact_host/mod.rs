@@ -75,6 +75,10 @@ pub struct ArtifactHost {
     mount: String,
     snapshot: RwLock<Arc<Snapshot>>,
     reload_tx: broadcast::Sender<()>,
+    /// The return-channel submission store, for the loopback run mode. `None` when
+    /// no return channel is wired (fixture-only test hosts, or a store that failed
+    /// to open). The hosted run mode carries its own store on `HostedState` instead.
+    submissions: Option<Arc<crate::submissions::SubmissionStore>>,
 }
 
 impl ArtifactHost {
@@ -97,6 +101,32 @@ impl ArtifactHost {
             mount,
             snapshot: RwLock::new(Arc::new(Snapshot::empty())),
             reload_tx,
+            submissions: None,
+        }
+    }
+
+    /// Attach a return-channel submission store (builder; loopback run mode).
+    pub fn with_submissions(mut self, subs: Arc<crate::submissions::SubmissionStore>) -> Self {
+        self.submissions = Some(subs);
+        self
+    }
+
+    /// The attached submission store, if a return channel is wired.
+    pub fn submissions(&self) -> Option<&Arc<crate::submissions::SubmissionStore>> {
+        self.submissions.as_ref()
+    }
+
+    /// The concrete origins this host answers under, for the submit CSRF check.
+    /// Loopback names both loopback spellings; the hosted mode names its single
+    /// public origin (the hosted submit handler uses `public_origin` directly, so
+    /// this is exercised on the loopback path).
+    pub fn origin_list(&self) -> Vec<String> {
+        match &self.origins {
+            OriginPolicy::Loopback { port } => vec![
+                format!("http://127.0.0.1:{port}"),
+                format!("http://localhost:{port}"),
+            ],
+            OriginPolicy::Public { origin } => vec![origin.clone()],
         }
     }
 

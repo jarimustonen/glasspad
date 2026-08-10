@@ -4,11 +4,27 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Router, middleware};
+use axum::extract::rejection::JsonRejection;
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, Path as AxumPath, Query, State},
+    http::{HeaderMap, StatusCode},
+    middleware,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use serde::Deserialize;
+use serde_json::json;
 use tokio::net::TcpListener;
 
 use crate::artifact_host::space::{self, Artifact, ScanError, Snapshot, Space};
-use crate::artifact_host::{self, ArtifactHost, guards, render};
+use crate::artifact_host::{self, ArtifactHost, guards, render, valid_space};
+use crate::cli::SCHEMA_VERSION;
+use crate::hosted::submit::origin_ok;
+use crate::submissions::{
+    self, DEFAULT_WAIT_SECS, MAX_LIST, MAX_SUBMISSION_BYTES, MAX_WAIT_SECS, SubmitError,
+    WaitOutcome,
+};
 
 /// How often the (dependency-free) filesystem watcher polls the served directory
 /// for changes. 500 ms is imperceptible for a local edit-reload loop and avoids
@@ -26,9 +42,286 @@ const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 /// closed.
 pub fn build_app_with_host(port: u16, host: Arc<ArtifactHost>) -> Router {
     // --- v0.2 HTML-artifact host (Wave 1 security gate + Wave 2a space model) ---
-    artifact_host::router(host)
+    artifact_host::router(host.clone())
+        // The loopback return channel (POST submit + poll/wait), under the same
+        // `_gp`/space topology and behind the same Host guard below.
+        .merge(loopback_submissions_router(host))
         // Global DNS-rebinding defense: validate the Host header on every route.
         .layer(middleware::from_fn_with_state(port, guards::host_guard))
+}
+
+// --- loopback return channel ----------------------------------------------
+//
+// The loopback analogue of `hosted::submit`. The trusted shell POSTs an artifact's
+// submission here; the agent that ran `glasspad serve` reads it back (directly or
+// via `glasspad await-submission`). No API key — the server is loopback-only (the
+// Host guard already refuses any non-loopback Host) — but the same anti-spoof + CSRF
+// + flood defenses as the hosted path apply: the **space** is bound from the URL
+// path, the **artifact slug** from the shell's trusted `slug` field (the artifact
+// payload never sets either), the `Origin` must be a loopback origin, and the
+// payload is size + rate capped. The stamped tenant is the loopback sentinel.
+
+/// The loopback sentinel owner for a submission (there are no tenants on loopback).
+const LOOPBACK_TENANT: &str = "local";
+
+/// Build the loopback submit + poll/wait routes over the shared `ArtifactHost`
+/// (which carries the optional submission store).
+fn loopback_submissions_router(host: Arc<ArtifactHost>) -> Router {
+    let submit_body_limit = MAX_SUBMISSION_BYTES + 16 * 1024;
+    Router::new()
+        .route(
+            "/{space}/_gp/submit",
+            post(loopback_submit).layer(DefaultBodyLimit::max(submit_body_limit)),
+        )
+        .route("/{space}/_gp/submissions", get(loopback_list))
+        .route("/{space}/_gp/submissions/wait", get(loopback_wait))
+        .with_state(host)
+}
+
+/// Loopback submit body from the trusted shell. `data` is the untrusted payload;
+/// `slug` is the artifact within the space the shell currently frames (its trusted
+/// `current`, never the artifact's own claim); `content_version` is the artifact's
+/// version echo, checked against the server's authoritative value.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoopbackSubmit {
+    data: serde_json::Value,
+    #[serde(default)]
+    content_version: Option<String>,
+    #[serde(default)]
+    slug: Option<String>,
+}
+
+/// `POST /{space}/_gp/submit`.
+async fn loopback_submit(
+    State(host): State<Arc<ArtifactHost>>,
+    AxumPath(space): AxumPath<String>,
+    headers: HeaderMap,
+    body: Result<Json<LoopbackSubmit>, JsonRejection>,
+) -> Response {
+    let Some(store) = host.submissions().cloned() else {
+        return sub_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "return_channel_unavailable",
+            "the return channel is not available on this server",
+        );
+    };
+    // CSRF: a cross-site browser fetch carries its own Origin; require a loopback one.
+    if !origin_ok(&headers, &host.origin_list()) {
+        return sub_err(
+            StatusCode::FORBIDDEN,
+            "bad_origin",
+            "cross-origin submit rejected",
+        );
+    }
+    if !valid_space(&space) {
+        return not_found();
+    }
+    let Json(req) = match body {
+        Ok(b) => b,
+        Err(rej) => {
+            return sub_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_json",
+                &format!("request body is not valid JSON: {rej}"),
+            );
+        }
+    };
+
+    // Resolve the artifact (the shell's current slug, else the space home) and its
+    // authoritative content-version from the served snapshot — never the payload.
+    let snap = host.snapshot();
+    let Some(sp) = snap.space(&space) else {
+        return sub_err(StatusCode::NOT_FOUND, "no_such_space", "no such space");
+    };
+    let slug = req
+        .slug
+        .clone()
+        .or_else(|| sp.home.clone())
+        .unwrap_or_else(|| SINGLE_SLUG.to_string());
+    let Some(artifact) = sp.artifact(&slug) else {
+        return sub_err(
+            StatusCode::BAD_REQUEST,
+            "no_such_artifact",
+            "no such artifact in this space",
+        );
+    };
+    let version = submissions::content_version(&artifact.html);
+    if let Some(echo) = req.content_version.as_deref()
+        && echo != version
+    {
+        return sub_err(
+            StatusCode::CONFLICT,
+            "content_version_mismatch",
+            "the submission answers a stale version of this artifact",
+        );
+    }
+
+    let data = req.data;
+    let result = tokio::task::spawn_blocking(move || {
+        store.submit(&space, &slug, LOOPBACK_TENANT, &version, data)
+    })
+    .await;
+    match result {
+        Ok(Ok(sub)) => (
+            StatusCode::CREATED,
+            Json(json!({
+                "schema_version": SCHEMA_VERSION,
+                "id": sub.id,
+                "content_version": sub.content_version,
+            })),
+        )
+            .into_response(),
+        Ok(Err(e)) => loopback_submit_error(e),
+        Err(join) => {
+            eprintln!("glasspad: loopback submit task panicked: {join}");
+            sub_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the submission",
+            )
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct LoopbackListQuery {
+    since: Option<u64>,
+}
+
+/// `GET /{space}/_gp/submissions?since=<cursor>` — plain poll (loopback).
+async fn loopback_list(
+    State(host): State<Arc<ArtifactHost>>,
+    AxumPath(space): AxumPath<String>,
+    Query(q): Query<LoopbackListQuery>,
+) -> Response {
+    let Some(store) = host.submissions().cloned() else {
+        return sub_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "return_channel_unavailable",
+            "the return channel is not available on this server",
+        );
+    };
+    if !valid_space(&space) {
+        return not_found();
+    }
+    let since = q.since.unwrap_or(0);
+    match tokio::task::spawn_blocking(move || store.list_since(&space, since, MAX_LIST)).await {
+        Ok(Ok(page)) => sub_list_response(&page, false),
+        _ => sub_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            "could not read submissions",
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+struct LoopbackWaitQuery {
+    since: Option<u64>,
+    timeout: Option<u64>,
+}
+
+/// `GET /{space}/_gp/submissions/wait?since=<cursor>&timeout=<secs>` — server-side
+/// long-poll (loopback).
+async fn loopback_wait(
+    State(host): State<Arc<ArtifactHost>>,
+    AxumPath(space): AxumPath<String>,
+    Query(q): Query<LoopbackWaitQuery>,
+) -> Response {
+    let Some(store) = host.submissions().cloned() else {
+        return sub_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "return_channel_unavailable",
+            "the return channel is not available on this server",
+        );
+    };
+    if !valid_space(&space) {
+        return not_found();
+    }
+    let since = q.since.unwrap_or(0);
+    let secs = q
+        .timeout
+        .unwrap_or(DEFAULT_WAIT_SECS)
+        .clamp(1, MAX_WAIT_SECS);
+    match submissions::wait(store, space, since, Duration::from_secs(secs), MAX_LIST).await {
+        Ok(WaitOutcome::Ready(page)) => sub_list_response(&page, false),
+        Ok(WaitOutcome::TimedOut { cursor }) => sub_list_response(
+            &submissions::ListPage {
+                submissions: Vec::new(),
+                cursor,
+            },
+            true,
+        ),
+        Ok(WaitOutcome::TooBusy) => sub_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too_many_waiters",
+            "too many long-polls are held; retry with the plain poll",
+        ),
+        Err(_) => sub_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            "could not read submissions",
+        ),
+    }
+}
+
+fn sub_list_response(page: &submissions::ListPage, timed_out: bool) -> Response {
+    let items: Vec<serde_json::Value> = page
+        .submissions
+        .iter()
+        .map(|s| s.to_public_json())
+        .collect();
+    Json(json!({
+        "schema_version": SCHEMA_VERSION,
+        "submissions": items,
+        "cursor": page.cursor,
+        "timed_out": timed_out,
+    }))
+    .into_response()
+}
+
+fn loopback_submit_error(e: SubmitError) -> Response {
+    match e {
+        SubmitError::TooLarge => sub_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "submission_too_large",
+            &e.to_string(),
+        ),
+        SubmitError::Full => sub_err(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "submissions_full",
+            &e.to_string(),
+        ),
+        SubmitError::RateLimited => sub_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            &e.to_string(),
+        ),
+        SubmitError::Io(io) => {
+            eprintln!("glasspad: loopback submit storage error: {io}");
+            sub_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the submission",
+            )
+        }
+    }
+}
+
+fn sub_err(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        Json(json!({
+            "schema_version": SCHEMA_VERSION,
+            "error": { "code": code, "message": message },
+        })),
+    )
+        .into_response()
+}
+
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "not found").into_response()
 }
 
 /// Convenience for tests that don't serve a live directory (fixtures only).
@@ -422,6 +715,148 @@ mod tests {
 
     fn app() -> Router {
         build_app(3000)
+    }
+
+    // --- loopback return channel -------------------------------------------
+
+    fn tmp_root(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "gp-lb-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A loopback app whose `myspace` holds one artifact and whose host carries a
+    /// fresh submission store rooted at `root`.
+    fn app_with_channel(root: &Path) -> Router {
+        let store = crate::submissions::SubmissionStore::open(root).unwrap();
+        let host = Arc::new(ArtifactHost::new(3000).with_submissions(store));
+        host.swap(one_artifact_snapshot("myspace", "<h1>form</h1>".into()));
+        build_app_with_host(3000, host)
+    }
+
+    fn lb_req(
+        method: Method,
+        uri: &str,
+        origin: Option<&str>,
+        body: Option<&str>,
+    ) -> Request<Body> {
+        let mut b = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "127.0.0.1:3000");
+        if let Some(o) = origin {
+            b = b.header("origin", o);
+        }
+        if body.is_some() {
+            b = b.header("content-type", "application/json");
+        }
+        b.body(
+            body.map(|s| Body::from(s.to_string()))
+                .unwrap_or_else(Body::empty),
+        )
+        .unwrap()
+    }
+
+    async fn resp_json(app: &Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
+        let r = app.clone().oneshot(req).await.unwrap();
+        let status = r.status();
+        let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let j = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, j)
+    }
+
+    #[tokio::test]
+    async fn loopback_submit_then_poll_round_trips() {
+        let root = tmp_root("roundtrip");
+        let app = app_with_channel(&root);
+        // Same-origin submit → 201.
+        let (status, _) = resp_json(
+            &app,
+            lb_req(
+                Method::POST,
+                "/myspace/_gp/submit",
+                Some("http://127.0.0.1:3000"),
+                Some(r#"{"data":{"choice":"b"}}"#),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        // Poll it back.
+        let (status, j) = resp_json(
+            &app,
+            lb_req(Method::GET, "/myspace/_gp/submissions", None, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(j["submissions"].as_array().unwrap().len(), 1);
+        assert_eq!(j["submissions"][0]["data"]["choice"], "b");
+        assert_eq!(j["submissions"][0]["artifact"], "index");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn loopback_submit_rejects_foreign_origin() {
+        let root = tmp_root("csrf");
+        let app = app_with_channel(&root);
+        let (status, j) = resp_json(
+            &app,
+            lb_req(
+                Method::POST,
+                "/myspace/_gp/submit",
+                Some("http://evil.example"),
+                Some(r#"{"data":{}}"#),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(j["error"]["code"], "bad_origin");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn loopback_submit_rejects_stale_version() {
+        let root = tmp_root("ver");
+        let app = app_with_channel(&root);
+        let (status, j) = resp_json(
+            &app,
+            lb_req(
+                Method::POST,
+                "/myspace/_gp/submit",
+                Some("http://localhost:3000"),
+                Some(r#"{"data":{},"content_version":"00000000deadbeef"}"#),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(j["error"]["code"], "content_version_mismatch");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn loopback_submit_disabled_without_store_is_503() {
+        // The default test app has NO submission store; submit answers 503, never a
+        // panic or a silent accept.
+        let (status, j) = resp_json(
+            &app(),
+            lb_req(
+                Method::POST,
+                "/demo/_gp/submit",
+                Some("http://127.0.0.1:3000"),
+                Some(r#"{"data":{}}"#),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(j["error"]["code"], "return_channel_unavailable");
     }
 
     #[test]

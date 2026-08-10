@@ -37,6 +37,7 @@ use crate::hosted::auth::{KeyFileError, KeyTable};
 use crate::hosted::{self, HostedConfig};
 use crate::pidfile::{self, PidError};
 use crate::server::{self, RenderTemplate};
+use crate::submissions::SubmissionStore;
 
 /// The `--json` schema version (AI-first §10). Bump on any breaking change to an
 /// envelope: removed/renamed field, changed type/nullability, or changed meaning.
@@ -464,10 +465,45 @@ pub fn version(json: bool) {
 
 // --- serve ----------------------------------------------------------------
 
+/// Build the loopback [`ArtifactHost`], attaching the return-channel submission
+/// store when it can be opened. A store that fails to open (permissions, disk) is
+/// a **warning**, not fatal: serving pages must not depend on the return channel,
+/// so the host comes up with no submission store (submit endpoints then answer
+/// `503 return_channel_unavailable`).
+fn loopback_host(port: u16) -> Arc<ArtifactHost> {
+    let mut host = ArtifactHost::new(port);
+    if let Some(store) = loopback_submissions(port) {
+        host = host.with_submissions(store);
+    }
+    Arc::new(host)
+}
+
+/// Open the per-port loopback submission store under the state dir
+/// (`$GLASSPAD_STATE_DIR`, else `~/.glasspad`) `submissions/<port>/`. Per-port so
+/// concurrent `serve`s on different ports never share a channel; the matching
+/// `await-submission` reaches it over loopback HTTP, so it needs no path itself.
+fn loopback_submissions(port: u16) -> Option<Arc<SubmissionStore>> {
+    let base = std::env::var_os("GLASSPAD_STATE_DIR")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".glasspad")))?;
+    let dir = base.join("submissions").join(port.to_string());
+    match SubmissionStore::open(&dir) {
+        Ok(store) => Some(store),
+        Err(e) => {
+            eprintln!(
+                "warning: return channel disabled — cannot open {}: {e}",
+                dir.display()
+            );
+            None
+        }
+    }
+}
+
 /// `glasspad serve [dir]` — serve a live directory as a space, or (with no dir)
 /// the built-in fixtures. Binds loopback, then blocks serving until killed.
 pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
-    let host = Arc::new(ArtifactHost::new(port));
+    let host = loopback_host(port);
 
     // (name, nav slugs, home) when a live directory is served; None = fixtures.
     let live: Option<(String, Vec<String>, Option<String>)> = match &dir {
@@ -609,7 +645,7 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) 
         "full-document"
     };
 
-    let host = Arc::new(ArtifactHost::new(port));
+    let host = loopback_host(port);
     host.swap(server::one_artifact_snapshot(&space_name, html));
 
     let listener = match server::bind_loopback(port).await {
@@ -915,7 +951,7 @@ pub async fn render(
         );
     }
 
-    let host = Arc::new(ArtifactHost::new(port));
+    let host = loopback_host(port);
     host.swap(server::one_artifact_snapshot(&space_name, body));
 
     let listener = match server::bind_loopback(port).await {
