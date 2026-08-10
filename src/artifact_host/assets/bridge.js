@@ -18,6 +18,14 @@
  *      `data-theme` on <html> re-themes base.css and re-renders tracked charts
  *      (charts.js observes the attribute).
  *
+ *   3. The RETURN CHANNEL: `gp.submit(data)` sends user input BACK to the agent
+ *      that authored the artifact. It only `postMessage`s the parent a
+ *      `{type:"submit", data, contentVersion}` message — the trusted shell
+ *      validates it, binds it to this shell's own space/slug, and POSTs it (the
+ *      artifact itself stays under `connect-src 'none'`, no egress). A native
+ *      `<form>` submit (blocked by the sandbox anyway — no `allow-forms`) is
+ *      intercepted and routed through the same one audited helper.
+ *
  * This script grants the artifact NO new reach: it can already run inline JS and
  * `postMessage` the parent under Wave 1's CSP. The bridge only standardizes the
  * one message shape the parent accepts and the one the parent may send back.
@@ -116,6 +124,64 @@
       if (!d || typeof d !== "object" || d.type !== "theme") return;
       if (typeof d.theme !== "string" || THEMES[d.theme] !== true) return;
       document.documentElement.setAttribute("data-theme", d.theme);
+    },
+    false
+  );
+
+  // --- 3. return channel: gp.submit + native <form> interception ---------------
+  // The content-version this artifact was wrapped as (inlined by wrap.rs). Echoed
+  // to the shell so the server can reject a submission for a stale round; absent
+  // (a full-document artifact never gets this meta) means "no echo" and the server
+  // stamps its own authoritative version.
+  var CONTENT_VERSION = (function () {
+    var m = document.querySelector('meta[name="gp-content-version"]');
+    return m ? m.getAttribute("content") : null;
+  })();
+
+  window.gp = window.gp || {};
+  // Send `data` (any JSON-serializable value) back to the authoring agent. Returns
+  // false so it is convenient as an inline handler (`onclick="return gp.submit(…)"`).
+  // It only messages the parent; the parent is the airlock that actually POSTs.
+  window.gp.submit = function (data) {
+    if (!FRAMED) return false; // direct-open: no parent shell to receive it
+    try {
+      var msg = { type: "submit", data: data };
+      if (CONTENT_VERSION) msg.contentVersion = CONTENT_VERSION;
+      parent.postMessage(msg, "*");
+    } catch (e) {
+      /* parent gone / postMessage unavailable — no-op */
+    }
+    return false;
+  };
+
+  // A native form submit is blocked by the sandbox (no `allow-forms`), but the
+  // `submit` event still fires — intercept it and route the fields through the one
+  // audited helper, so an author can write an ordinary <form> and it "just works".
+  document.addEventListener(
+    "submit",
+    function (event) {
+      if (!FRAMED) return;
+      var form = event.target;
+      if (!form || form.tagName !== "FORM") return;
+      event.preventDefault();
+      var data = {};
+      try {
+        new FormData(form).forEach(function (value, name) {
+          // Only string fields (skip File inputs — the null-origin sandbox has no
+          // real file access, and a File would not serialize). Repeated names
+          // collapse into an array so multi-selects/checkbox groups round-trip.
+          if (typeof value !== "string") return;
+          if (Object.prototype.hasOwnProperty.call(data, name)) {
+            if (!Array.isArray(data[name])) data[name] = [data[name]];
+            data[name].push(value);
+          } else {
+            data[name] = value;
+          }
+        });
+      } catch (e) {
+        /* FormData unavailable — submit an empty object rather than throwing */
+      }
+      window.gp.submit(data);
     },
     false
   );

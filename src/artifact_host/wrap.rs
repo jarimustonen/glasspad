@@ -160,6 +160,11 @@ fn skip_prelude(html: &str) -> &str {
 /// own `target` *attribute* (which `<base>` never sets) and `preventDefault`s
 /// before any navigation, so those links still swap in place.
 pub fn wrap_fragment(fragment: &str, theme: Theme) -> String {
+    // The content-version of the (raw, pre-wrap) fragment body — the same value the
+    // submit handler recomputes from the stored body — inlined so `bridge.js` can
+    // echo it in a submission (cross-round binding). It is a hex digest of the
+    // body: header-safe, no escaping needed, and it can carry no markup.
+    let version = crate::submissions::content_version(fragment);
     format!(
         r#"<!doctype html>
 <html lang="en" data-theme="{theme}">
@@ -167,6 +172,7 @@ pub fn wrap_fragment(fragment: &str, theme: Theme) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="gp-content-version" content="{version}">
 <base target="_top">
 <link rel="stylesheet" href="/_gp/v1/base.css">
 <script src="/_gp/v1/bridge.js" defer></script>
@@ -177,6 +183,7 @@ pub fn wrap_fragment(fragment: &str, theme: Theme) -> String {
 </html>
 "#,
         theme = theme.as_attr(),
+        version = version,
         fragment = fragment
     )
 }
@@ -279,6 +286,22 @@ mod tests {
         );
         assert!(out.contains("<h1>hi</h1>"));
         assert!(out.starts_with("<!doctype html>"));
+    }
+
+    #[test]
+    fn wrap_injects_content_version_meta_matching_the_body() {
+        // The wrapped fragment carries the server-computed content-version of the
+        // RAW body, so bridge.js can echo it and the submit handler (which recomputes
+        // the same value from the stored body) can bind/reject rounds consistently.
+        let frag = "<form><input name=q></form>";
+        let out = wrap_fragment(frag, Theme::Auto);
+        let expected = crate::submissions::content_version(frag);
+        assert!(out.contains(&format!(
+            r#"<meta name="gp-content-version" content="{expected}">"#
+        )));
+        // A hex digest — no markup can ride in it.
+        assert_eq!(expected.len(), 16);
+        assert!(expected.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

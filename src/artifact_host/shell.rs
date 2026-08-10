@@ -79,6 +79,18 @@ pub fn render(
     // input; emitted as a JSON string literal so it lands as data in the script.
     let mount_json = json_for_script(&json!(mount));
 
+    // The return-channel submit endpoint the shell POSTs a submission to. It differs
+    // structurally by run mode, discriminated by the (server-constant) mount: the
+    // loopback path is space-scoped under `_gp`; the hosted path is the root
+    // `/api/v1/pages/<slug>/submit` (the shell's `connect-src 'self'` permits the
+    // same-origin POST in both). `space` is path-validated upstream.
+    let submit_path = if mount.is_empty() {
+        format!("/{space}/_gp/submit")
+    } else {
+        format!("/api/v1/pages/{space}/submit")
+    };
+    let submit_json = json_for_script(&json!(submit_path));
+
     // Content path for the iframe src. space/slug are path-validated upstream;
     // `mount` is a trusted server constant.
     let content_src = format!("{mount}/{space}/_c/{slug}");
@@ -127,7 +139,9 @@ pub fn render(
   var KNOWN = {slugs_json};
   var TITLE = {title_json};
   var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
+  var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
   var MAX_SLUG = 64;       // matches the server-side slug grammar
+  var MAX_SUBMIT_BYTES = 80 * 1024;  // reject an oversize submission before POSTing
   var RATE_MAX = 20;       // messages...
   var RATE_WINDOW = 1000;  // ...per this many ms
 
@@ -269,7 +283,7 @@ pub fn render(
     es.addEventListener("reload", function () {{ location.reload(); }});
   }} catch (e) {{ /* SSE unsupported — live reload simply inactive */ }}
 
-  var stats = {{ accepted: 0, rejectedSource: 0, rejectedSize: 0, rejectedRate: 0, rejectedSchema: 0 }};
+  var stats = {{ accepted: 0, rejectedSource: 0, rejectedSize: 0, rejectedRate: 0, rejectedSchema: 0, submitAccepted: 0, submitFailed: 0 }};
   window.__bridgeStats = stats;
 
   var recent = [];
@@ -281,44 +295,83 @@ pub fn render(
     return true;
   }}
 
+  // A validated NAVIGATE: exactly {{type, slug}}, slug in the artifact table.
+  function handleNavigate(data) {{
+    var keys = Object.keys(data);
+    if (keys.length !== 2
+        || !Object.prototype.hasOwnProperty.call(data, "type")
+        || !Object.prototype.hasOwnProperty.call(data, "slug")
+        || typeof data.slug !== "string") {{
+      stats.rejectedSchema++;
+      return;
+    }}
+    if (data.slug.length > MAX_SLUG) {{ stats.rejectedSize++; return; }}
+    if (!navigateTo(data.slug)) {{ stats.rejectedSchema++; return; }}
+    stats.accepted++;
+  }}
+
+  // A SUBMIT: {{type, data, contentVersion?}}. The `data` is the untrusted user
+  // payload — the shell NEVER `eval`s or `innerHTML`s it, only forwards it as an
+  // opaque JSON body to the same-origin submit endpoint. The submission is bound
+  // server-side to THIS shell's own SPACE (the URL it POSTs to) and its own
+  // `current` slug — an artifact-supplied space/slug in the payload is ignored, so
+  // a hostile frame cannot direct a submission at another space/page.
+  function handleSubmit(data) {{
+    var keys = Object.keys(data);
+    for (var i = 0; i < keys.length; i++) {{
+      var k = keys[i];
+      if (k !== "type" && k !== "data" && k !== "contentVersion") {{ stats.rejectedSchema++; return; }}
+    }}
+    if (!Object.prototype.hasOwnProperty.call(data, "data")) {{ stats.rejectedSchema++; return; }}
+    // Serialize the trusted-context envelope: the payload plus THIS shell's own
+    // current slug + the artifact's version echo (a string only). Size-cap before
+    // any network call so a hostile huge payload is dropped here, not sent.
+    var body;
+    try {{
+      var envelope = {{ data: data.data, slug: current }};
+      if (typeof data.contentVersion === "string") envelope.content_version = data.contentVersion;
+      body = JSON.stringify(envelope);
+    }} catch (e) {{ stats.rejectedSchema++; return; }}
+    if (typeof body !== "string" || body.length > MAX_SUBMIT_BYTES) {{ stats.rejectedSize++; return; }}
+    stats.accepted++;
+    try {{
+      fetch(SUBMIT_PATH, {{
+        method: "POST",
+        headers: {{ "content-type": "application/json" }},
+        body: body,
+        credentials: "omit",
+        cache: "no-store"
+      }}).then(function (r) {{
+        if (r && r.ok) stats.submitAccepted++; else stats.submitFailed++;
+      }}).catch(function () {{ stats.submitFailed++; }});
+    }} catch (e) {{ stats.submitFailed++; }}
+  }}
+
   window.addEventListener("message", function (event) {{
     // 1. Source check — the ONLY trustworthy identity for a sandboxed frame
     //    (event.origin is the string "null" for every sandboxed frame).
     if (event.source !== frame.contentWindow) {{ stats.rejectedSource++; return; }}
 
     // 2. Rate cap FIRST — before any per-message work, so a flood cannot make us
-    //    do unbounded parsing/serialization on the shell's main thread.
+    //    do unbounded parsing/serialization/POSTs on the shell's main thread.
     if (!rateOk()) {{ stats.rejectedRate++; return; }}
 
     // 3. Reject transferred ports outright — the bridge is one-way, port
     //    transfer would open a covert channel.
     if (event.ports && event.ports.length) {{ stats.rejectedSchema++; return; }}
 
-    // 4. Fixed low-authority schema: exactly {{type:"navigate", slug:<known>}}.
-    //    No JSON.stringify (a hostile frame could send a huge structured-clone
-    //    graph); we only ever read two small, typed fields.
+    // 4. Fixed low-authority schema, dispatched by `type`. We only ever read small
+    //    typed fields (no JSON.stringify of the whole clone graph until a submit's
+    //    bounded envelope is built).
     var data = event.data;
     if (data === null || typeof data !== "object" || Array.isArray(data)
-        || data.type !== "navigate" || typeof data.slug !== "string") {{
+        || typeof data.type !== "string") {{
       stats.rejectedSchema++;
       return;
     }}
-    // EXACT schema — exactly the two own keys {{type, slug}}. Reject any extra
-    // property so the accepted message is precisely the documented low-authority
-    // shape (a hostile frame cannot smuggle a large/extra field past the schema).
-    var keys = Object.keys(data);
-    if (keys.length !== 2
-        || !Object.prototype.hasOwnProperty.call(data, "type")
-        || !Object.prototype.hasOwnProperty.call(data, "slug")) {{
-      stats.rejectedSchema++;
-      return;
-    }}
-    if (data.slug.length > MAX_SLUG) {{ stats.rejectedSize++; return; }}
-    // Route through the same validated navigation path as the nav chrome. It
-    // re-checks grammar + the KNOWN_SET allowlist, so a slug not in the artifact
-    // table is rejected here too.
-    if (!navigateTo(data.slug)) {{ stats.rejectedSchema++; return; }}
-    stats.accepted++;
+    if (data.type === "navigate") {{ handleNavigate(data); return; }}
+    if (data.type === "submit") {{ handleSubmit(data); return; }}
+    stats.rejectedSchema++;
   }}, false);
 }})();
 </script>
@@ -554,6 +607,40 @@ mod tests {
                 || html.contains("var NAV = [ ]")
                 || html.contains("var NAV = []")
         );
+    }
+
+    // --- return channel: submit branch --------------------------------------
+
+    #[test]
+    fn shell_loopback_submit_endpoint_and_handler() {
+        // Loopback (empty mount): the submit target is the space-scoped `_gp` path,
+        // the handler dispatches the `submit` type, and it POSTs to that path.
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        assert!(html.contains(r#"var SUBMIT_PATH = "/demo/_gp/submit""#));
+        assert!(html.contains(r#"if (data.type === "submit")"#));
+        assert!(html.contains("function handleSubmit(data)"));
+        assert!(html.contains("fetch(SUBMIT_PATH"));
+        // The submission is bound to THIS shell's own current slug (anti-spoof) —
+        // an artifact-supplied slug in the payload is never used for addressing.
+        assert!(html.contains("slug: current"));
+    }
+
+    #[test]
+    fn shell_hosted_submit_endpoint_is_api_route() {
+        // Hosted (mount `/p`): the submit target is the root `/api/v1/pages/<slug>`
+        // route (the page's space name IS its capability slug), not a `_gp` path.
+        let html = render("/p", "abcslug", "index", "", &nav_of(&["index"]), "n");
+        assert!(html.contains(r#"var SUBMIT_PATH = "/api/v1/pages/abcslug/submit""#));
+        assert!(!html.contains("/_gp/submit"));
+    }
+
+    #[test]
+    fn shell_submit_handler_bounds_size_and_rejects_extra_keys() {
+        // The submit envelope is size-capped before any POST, and only the
+        // {type,data,contentVersion} keys are accepted (extra keys rejected).
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        assert!(html.contains("MAX_SUBMIT_BYTES"));
+        assert!(html.contains(r#"k !== "type" && k !== "data" && k !== "contentVersion""#));
     }
 
     #[test]
