@@ -14,8 +14,8 @@ The GitHub-Release completion (blocked since 2026-08-06 by hauis's mac job faili
 was finished 2026-08-09 by rerunning the failed job on hauis after a **durable
 runner-gitconfig fix** — see below.
 
-**Round 2026-08-09/10 (this session) — 4 units landed on main, full green gate
-(fmt/clippy/test + `./test-security.sh` 41 + Wave 2a), issue tracker now empty:**
+**Round 2026-08-09/10 (this session) — 5 units landed on main, full green gate
+(fmt/clippy/test + `./test-security.sh`, now 48 checks + Wave 2a), issue tracker now empty:**
 - ✅ `hosted-config-path-macos` — `publish` honors `$XDG_CONFIG_HOME`/`~/.config` on all
   platforms (matches `--help`); old `dirs::config_dir()` path still read as fallback.
 - ✅ `hosted-noindex-missing` — `X-Robots-Tag: noindex, nofollow` on hosted read routes
@@ -24,6 +24,11 @@ runner-gitconfig fix** — see below.
   (per-tenant scoped, fsync + atomic mapping; no key → today's behaviour byte-for-byte).
 - ✅ `mac-release-self-hosted` — **reverted** the mac release build `macos-14` →
   self-hosted `hauis`, now that hauis is durably fixed and is the intended mac machine.
+- ✅ `artifact-return-channel` — interactive artifacts return user input to the creating
+  agent via `gp.submit()` → trusted-shell airlock → server → `glasspad await-submission`
+  (backgrounded server-side long-poll). Hosted + loopback; artifact sandbox stayed frozen
+  (regression-asserted); `/llm-review` + 7 new security-Wave cases. **Design + decision
+  docs:** `issues/artifact-return-channel/{design,models-comparison}.md`.
 
 **0.3.0 features landed this session (all green: fmt/clippy/test + `./test-security.sh`
 41 + Wave 2a; each had a multi-model `/llm-review`):**
@@ -151,14 +156,24 @@ Bump the version in `Cargo.toml`, add a `CHANGELOG.md` entry, commit, then tag+p
   local rebuilds when only the build-script SHA changes — a stale/`null` local stamp
   until a clean rebuild. Clean CI/release builds are always correct, so this is a
   dev-ergonomics nit, not a shipped defect. File only if it annoys in practice.
+- **`artifact-return-channel` shipped to main 2026-08-10, NOT yet released** (crates/
+  maalla.dev still run 0.3.1 without it). Natural next action: **cut a release** (a minor,
+  e.g. 0.4.0 — new public API surface: `gp.submit`, submit/poll/wait endpoints,
+  `glasspad await-submission`). Bump `Cargo.toml` + `CHANGELOG.md`, tag+push (mac builds on
+  hauis now). Agent has standing release autonomy. Until then the feature can't be demoed on
+  the deployed maalla.dev.
+- **Later increment for the return channel:** A2 (SSE transport) / B2 (multi-round) — the
+  versioned submission record already leaves room; see `models-comparison.md`.
 - Downstream homebase + tilictl consolidation is the next forward work, gated on 0.3.0
   (tracked in those repos).
 
 ## Verify / deploy (localhost)
 
 Per `CLAUDE.md`: after editing host code or a base lib, `cargo build`, restart
-`glasspad serve`, reload the space. `./test-security.sh` (41 browser checks +
+`glasspad serve`, reload the space. `./test-security.sh` (48 browser checks +
 Wave 2a probes) is the regression gate after any host/header/CSP/bridge change.
+Note: the `version --json` commit-stamp test can false-fail on an incremental local
+build — `rm -rf target/debug/build/glasspad-*` then re-run (see root `AGENTS.md`).
 Use `./test-browser.sh` (check `./test-browser.sh errors` first) for ad-hoc
 browser automation.
 
