@@ -1,6 +1,6 @@
 [package]
 name = "glasspad"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "AI-friendly, loopback-only HTML-artifact host: serves agent-authored HTML in null-origin sandboxed iframes for dashboards, charts, and interactive UIs."
 license = "MIT"

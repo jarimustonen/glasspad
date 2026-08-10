@@ -13,6 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.4.0] - 2026-08-10
+
+Interactive artifacts can now **return user input to the agent that created
+them** — closing the loop from a hosted or loopback page back to the calling
+agent. The artifact sandbox itself is unchanged: the round-trip runs entirely
+through the trusted shell + server, never by loosening the artifact's frozen
+null-origin CSP.
+
+### Added
+
+- **`gp.submit()` return channel.** An artifact calls `gp.submit(data)` (or
+  submits a native `<form>`, which the bridge intercepts) to hand a payload to
+  the trusted shell, which relays it through the server to the creating agent —
+  the artifact's own sandbox never gains network or form capability. Works in
+  both hosted (`/p/` pages, API-key + per-tenant scoped) and loopback
+  (`serve`, Origin-gated) modes.
+- **Submit / poll / long-poll endpoints** under `_gp` (hosted and loopback),
+  backed by a durable per-key submission store with a server-side long-poll
+  primitive.
+- **`glasspad await-submission`** — a backgrounded long-poll CLI command the
+  creating agent uses to read the returned input.
+
+### Changed
+
+- The security regression suite grew to **48 browser checks** (+7 covering the
+  return channel) plus the Wave 2a space-model probes. The artifact sandbox
+  stays frozen — `connect-src 'none'`, no `allow-forms` — and that freeze is now
+  regression-asserted.
+
 ## [0.3.1] - 2026-08-10
 
 ### Fixed
