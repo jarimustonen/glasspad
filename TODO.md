@@ -64,15 +64,20 @@ of the runner-gitconfig setup, NOT a one-off:
 
 ## ▶ Start here (on return)
 
-**Scheduled: `artifact-return-channel` (Lane E, head-of-line).** 0.3.0 fully released; the
-2026-08-09/10 round's four units all landed and are green; `main == origin`, clean. The next
-build is the return-channel feature — **direction decided (hosted target, loopback rides
-along)**, but two sub-choices are settled at/before build from
-`issues/artifact-return-channel/models-comparison.md` (consumption transport; one-shot vs
-multi-round). Read `design.md` + `models-comparison.md` first; it's a big multi-file unit that
-touches the frozen security boundary, so it needs new Wave security cases and review
-(`/worktree-code` or a design-first spinoff with `/llm-review`). *Optional polish* below is
-lower priority.
+**No pending code work.** 0.3.0 fully released; the 2026-08-09/10 round's four units + the
+`artifact-return-channel` feature all landed and are green; issue tracker + DAG empty.
+`main == origin`, clean. Next round: file new work, then re-populate lanes — or pick from
+*Optional polish* below.
+
+_Shipped 2026-08-10:_ `artifact-return-channel` — interactive artifacts can now return
+user input to the creating agent via `gp.submit()` → trusted-shell airlock → server →
+`glasspad await-submission` (backgrounded server-side long-poll). Hosted (API-key,
+per-tenant) + loopback (Origin-gated). **Artifact sandbox stayed frozen** (`connect-src
+'none'` + no `allow-forms`, regression-asserted); `test-security.sh` now 48 checks (+7
+return-channel) + Wave 2a. NOT yet released — lands in the next version bump. A later
+increment could add A2 (SSE) / B2 (multi-round); the versioned submission record already
+leaves room. Recommended next follow-up: document the round-trip in the agent-facing skill
+guidance if not already covered, and consider a patch/minor release to ship it.
 
 _Resolved this round:_ the macOS→`macos-14` routing question — **reverted to self-hosted
 `hauis`** (`mac-release-self-hosted`, done). Mac release builds run on hauis again; the
@@ -97,29 +102,15 @@ second lane's hot file (spawn-time exclusion).
 
 Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A);
 `src/cli.rs` + `src/server.rs` + render modules (Lane B). `src/skill.md` is docs-only.
-Lane E (artifact return channel) spans `bridge.js` + `src/artifact_host/{headers,mod}.rs`
-+ `src/server.rs` + `src/hosted/` ingest + `src/cli.rs` — so it **collides with Lanes A/B**;
-do not run it in parallel with work on those files.
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: artifact-return-channel
+GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
 
-LANE E — artifact return channel
-  ▶ artifact-return-channel   collision: bridge.js/headers.rs/mod.rs/server.rs/hosted/cli.rs
+artifact-return-channel shipped + green 2026-08-10 and dropped. No active non-epic issues.
+Next code round: file new work, then re-populate lanes.
 ```
 <!-- execution-dag:end -->
-
-**Lane E — `artifact-return-channel` (head-of-line, scheduled 2026-08-10).** Hosted
-form/input back to the creating agent via the trusted shell as an airlock; the artifact
-sandbox stays frozen (`connect-src 'none'`). Direction DECIDED — hosted target, loopback
-rides along. Two sub-choices settled at/before build (pro/cons + recommendation in
-`issues/artifact-return-channel/models-comparison.md`): consumption transport (rec: A1 poll
-+ A3 `await-submission`) and one-shot vs multi-round (rec: B1 one-shot + versioned submission
-record). Design: `issues/artifact-return-channel/design.md`. Big multi-file unit spanning
-`bridge.js`, `src/artifact_host/{headers,mod}.rs`, `src/server.rs`, `src/hosted/`, `src/cli.rs`
-— collides with Lanes A/B, don't parallelise. NEW Wave security cases mandatory; use
-`/worktree-code` (reviewed) or a design-first spinoff with `/llm-review`.
 
 ## How to cut a release (the recipe, now automated)
 
