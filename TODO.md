@@ -100,10 +100,19 @@ GLOBAL HEAD-OF-LINE: (none — no active code work; backlog empty)
 0.3.0 fully released; all four 2026-08-09 issues landed on main and dropped:
 hosted-config-path-macos (fixed), hosted-noindex-missing (fixed),
 particularly-offbeat-dust (done), mac-release-self-hosted (done). Green gate green
-(fmt/clippy/test + test-security.sh 41 + Wave 2a). No active non-epic issues.
-Next code round: file new work, then re-populate lanes.
+(fmt/clippy/test + test-security.sh 41 + Wave 2a). No SCHEDULED code work.
+One open design-sketch awaiting a go/no-go (not in a lane) — see Adjacent backlog.
+Next code round: decide the sketch or file new work, then re-populate lanes.
 ```
 <!-- execution-dag:end -->
+
+### Adjacent backlog (not scheduled — awaiting a decision, not in a lane)
+
+- `artifact-return-channel` (feature, open) — **design sketch only, awaiting go/no-go.**
+  How an interactive artifact could return form/input to the creating agent via the trusted
+  shell as an airlock (artifact sandbox stays frozen). Full design in
+  `issues/artifact-return-channel/design.md`. Do NOT spawn a build until Jari answers the
+  "Open questions" (loopback vs hosted; agent consumption model; go/no-go).
 
 ## How to cut a release (the recipe, now automated)
 
