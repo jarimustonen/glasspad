@@ -1926,7 +1926,8 @@ pub async fn publish(
 /// relative links working across pages. The directory is scanned locally with the
 /// exact same `space::scan_dir` `serve`/`build` use (slug grammar, reserved names,
 /// symlink / traversal rejection, size caps, MIME, `glasspad.yaml` nav/title/template,
-/// and server-side markdown rendering for `.md` pages), then sent as one bundle to
+/// and local markdown rendering for `.md` pages — the hosted server receives the
+/// already-rendered HTML, not the markdown), then sent as one bundle to
 /// `POST /api/v1/spaces`. A `--space-key` makes the publish update the space
 /// **in place** at the same slug on re-publish. Config precedence mirrors `publish`.
 pub async fn publish_space(
@@ -1981,8 +1982,8 @@ pub async fn publish_space(
             1,
             "empty_space",
             &format!(
-                "{} has no pages to publish (a space is a directory of .html files and/or .md \
-                 files rendered server-side)",
+                "{} has no pages to publish (a space is a directory of .html files served \
+                 verbatim and/or .md files rendered into pages)",
                 dir.display()
             ),
             None,

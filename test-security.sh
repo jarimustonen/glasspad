@@ -463,8 +463,10 @@ MB="http://127.0.0.1:$SPACE_PORT"
 MDBODY="$(curl -s "$MB/mdspace/_c/index")"
 echo "$MDBODY" | grep -q '<article class="gp-prose">'; scheck $? "md: the page rendered through the prose template"
 echo "$MDBODY" | grep -q '<h1>Home</h1>'; scheck $? "md: markdown was rendered to HTML server-side"
-# Cross-page nav: the relative markdown link survives so same-space nav resolves.
+# Cross-page nav: the relative markdown link survives so same-space nav resolves,
+# and the target md page it points at actually serves (functional, not just textual).
 echo "$MDBODY" | grep -q 'href="./guide"'; scheck $? "md: a relative cross-page link is preserved for same-space nav"
+[ "$(code "$MB/mdspace/_c/guide")" = "200" ]; scheck $? "md: the linked sibling md page resolves (200)"
 # The trusted shell lists the sibling md pages as nav entries.
 curl -s "$MB/mdspace/index" | grep -q '"slug":"guide"'; scheck $? "md: the nav chrome lists sibling md pages"
 
@@ -472,12 +474,18 @@ curl -s "$MB/mdspace/index" | grep -q '"slug":"guide"'; scheck $? "md: the nav c
 MDCSP="$(hdr "$MB/mdspace/_c/index" content-security-policy)"
 echo "$MDCSP" | grep -q "connect-src 'none';"; scheck $? "md: page keeps connect-src 'none' (egress closed)"
 ! echo "$MDCSP" | grep -q "allow-forms"; scheck $? "md: page sandbox has NO allow-forms (airlock held)"
+! echo "$MDCSP" | grep -q "allow-same-origin"; scheck $? "md: page sandbox does NOT grant allow-same-origin (null origin held)"
 echo "$MDCSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "md: page sandbox tokens unchanged (no new grant)"
 
-# HOSTILE markdown page: the embedded <script>/<meta> cannot widen the response CSP.
+# HOSTILE markdown page: the raw <script>/<meta> reach the served body (passthrough is
+# intentional — the boundary is the sandbox/CSP, not sanitization) but cannot widen the
+# response CSP. Prove BOTH: the hostile bytes are in the body AND the header is frozen.
+EVILMDBODY="$(curl -s "$MB/mdspace/_c/evil")"
+echo "$EVILMDBODY" | grep -q 'evil.example'; scheck $? "md: hostile raw HTML reaches the sandboxed artifact body (full scan→wrap→serve path)"
 EVILMDCSP="$(hdr "$MB/mdspace/_c/evil" content-security-policy)"
 echo "$EVILMDCSP" | grep -q "connect-src 'none';"; scheck $? "md: a hostile markdown page still keeps connect-src 'none'"
 ! echo "$EVILMDCSP" | grep -q "default-src \*"; scheck $? "md: a hostile markdown <meta> cannot widen the response CSP"
+! echo "$EVILMDCSP" | grep -q "allow-same-origin"; scheck $? "md: a hostile markdown page sandbox does NOT grant allow-same-origin"
 echo "$EVILMDCSP" | grep -q "sandbox allow-scripts"; scheck $? "md: a hostile markdown page stays sandboxed (server CSP authoritative)"
 
 kill "$MD_PID" 2>/dev/null || true

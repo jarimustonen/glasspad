@@ -5,6 +5,9 @@ type: feature
 status: in-progress
 priority: normal
 blocked_by: ['@multipage-hosted-space']
+commits:
+- hash: c721430
+  summary: render a dir of .md as a space (scan_dir renders md via template; +security probes)
 ---
 
 # Markdown-native spaces (serve/build/space-publish render a dir of .md)

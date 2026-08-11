@@ -570,33 +570,52 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
         // Non-.html/.md, non-manifest top-level files are ignored (assets live in assets/).
     }
 
+    // Resolve + validate the template selection **unconditionally** — a mistyped
+    // `template:` in `glasspad.yaml` is a config error that must fail fast, not lie
+    // dormant until the first `.md` page is added to an otherwise `.html`-only space.
+    let template = resolve_space_template(template_ref.as_deref())?;
+
     // --- render buffered markdown pages through the resolved template -------
     // The template is a built-in fragment (`prose` default, or `dashboard`), so the
     // rendered body flows through the SAME serve path as an `.html` artifact: the
     // content route sets the frozen CSP/sandbox headers on the response, and
     // `wrap::render_artifact` wraps the fragment (base.css + bridge.js). A template
     // governs only the body — it can never widen the boundary or reach the shell.
-    if !pending_md.is_empty() {
-        let template = resolve_space_template(template_ref.as_deref())?;
-        for (stem, md, path) in pending_md {
-            // Collision against an `.html` artifact of the same stem, or another `.md`
-            // page — never silently resolved (mirrors the `.html`/`.htm` collision).
-            if space.artifacts.contains_key(&stem) {
-                return Err(ScanError::DuplicateSlug(stem, path));
-            }
-            let body = render::render_to_body(&md, template)
-                .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
-            let len = body.len() as u64;
-            if len > MAX_FILE_BYTES {
-                return Err(ScanError::RenderTooLarge(path, len));
-            }
-            let title = resolve_title(&body).unwrap_or_else(|| stem.clone());
-            space.artifacts.insert(stem, Artifact { html: body, title });
+    for (stem, md, path) in pending_md {
+        // Collision against an `.html` artifact of the same stem, or another `.md`
+        // page — never silently resolved (mirrors the `.html`/`.htm` collision).
+        if space.artifacts.contains_key(&stem) {
+            return Err(ScanError::DuplicateSlug(stem, path));
         }
+        let body = render::render_to_body(&md, template)
+            .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
+        let len = body.len() as u64;
+        if len > MAX_FILE_BYTES {
+            return Err(ScanError::RenderTooLarge(path, len));
+        }
+        // Re-account the per-space byte budget on the RENDERED body, not the source:
+        // `read_file_capped` charged the `.md` source bytes, but the immutable `Space`
+        // retains and serves the (potentially amplified) rendered HTML. Swap
+        // source→rendered in `total` and re-check the aggregate cap **inside** the loop
+        // so an over-budget space aborts before rendering the rest into memory.
+        total = total.saturating_sub(md.len() as u64).saturating_add(len);
+        if total > MAX_SPACE_BYTES {
+            return Err(ScanError::SpaceTooLarge(total));
+        }
+        let title = resolve_title(&body).unwrap_or_else(|| stem.clone());
+        space.artifacts.insert(stem, Artifact { html: body, title });
     }
 
     if total > MAX_SPACE_BYTES {
         return Err(ScanError::SpaceTooLarge(total));
+    }
+    // Authoritative entry-count cap on the FINAL snapshot: the per-entry checks during
+    // the scan run against partially-populated maps (assets are scanned before buffered
+    // `.md` pages are inserted), so a directory could otherwise overshoot by the md
+    // count. This final check makes `MAX_ENTRIES` hold regardless of scan order.
+    let entries = space.artifacts.len() + space.assets.len();
+    if entries > MAX_ENTRIES {
+        return Err(ScanError::TooManyEntries(entries));
     }
 
     finalize(&mut space);
@@ -835,11 +854,15 @@ fn html_stem(name: &str) -> Option<&str> {
 /// markdown-native-space counterpart of [`html_stem`]. The match is
 /// case-insensitive on the extension (`README.MD` is markdown too); the stem itself
 /// is returned unchanged and validated against the slug grammar by the caller.
+/// Called for every top-level entry, so it is allocation-free: it compares the
+/// suffix **bytes** with `eq_ignore_ascii_case` (no `to_ascii_lowercase` allocation)
+/// — byte comparison also sidesteps any char-boundary panic on a non-ASCII name.
 fn md_stem(name: &str) -> Option<&str> {
-    let lower = name.to_ascii_lowercase();
+    let bytes = name.as_bytes();
     for ext in [".md", ".markdown"] {
-        if lower.ends_with(ext) {
-            return Some(&name[..name.len() - ext.len()]);
+        let e = ext.as_bytes();
+        if bytes.len() >= e.len() && bytes[bytes.len() - e.len()..].eq_ignore_ascii_case(e) {
+            return Some(&name[..name.len() - e.len()]);
         }
     }
     None
@@ -1823,6 +1846,71 @@ mod fs_tests {
         // sandbox, and `connect-src 'none'` (set on the response) blocks the fetch.
         assert!(body.contains("evil.example"));
         assert!(body.contains(r#"<article class="gp-prose">"#));
+    }
+
+    #[test]
+    fn markdown_under_assets_stays_an_asset_not_a_page() {
+        // Only TOP-LEVEL `.md` files are pages; a `.md` inside `assets/` is a static
+        // asset served verbatim (never rendered, never a route of its own).
+        let d = TempDir::new();
+        d.write("index.md", b"# Home\n");
+        d.write("assets/notes.md", b"# not a page\n");
+        let space = scan_dir(d.path()).unwrap();
+        assert!(space.artifact("notes").is_none());
+        assert!(space.asset("assets/notes.md").is_some());
+        assert_eq!(space.artifacts.len(), 1); // just `index`
+    }
+
+    #[test]
+    fn empty_markdown_is_a_valid_page_titled_by_stem() {
+        // An empty (or whitespace-only) `.md` still renders to the non-empty template
+        // wrapper and is a valid artifact; with no heading, the title falls back to
+        // the slug. It must not error or panic.
+        let d = TempDir::new();
+        d.write("index.md", b"");
+        d.write("blank.md", b"   \n\n");
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.artifacts.len(), 2);
+        assert!(space.artifact("index").unwrap().html.contains("gp-prose"));
+        assert_eq!(space.artifact("index").unwrap().title, "index");
+        assert_eq!(space.artifact("blank").unwrap().title, "blank");
+    }
+
+    #[test]
+    fn html_page_is_served_verbatim_never_rendered_as_markdown() {
+        // Regression: a `.html` page in a mixed space is byte-for-byte verbatim — it is
+        // NOT run through the markdown/template render path (no prose wrapper injected).
+        let d = TempDir::new();
+        d.write("page.html", b"# Not A Heading\n<b>raw</b>");
+        d.write("other.md", b"# Rendered\n");
+        let space = scan_dir(d.path()).unwrap();
+        let html = &space.artifact("page").unwrap().html;
+        assert_eq!(html, "# Not A Heading\n<b>raw</b>");
+        assert!(!html.contains("gp-prose"));
+        assert!(!html.contains("<h1>")); // the `#` is literal, not a rendered heading
+    }
+
+    #[test]
+    fn uppercase_md_stem_is_rejected_like_any_invalid_slug() {
+        // Behavior lock: the slug is the filename stem *literally* (same as the `.html`
+        // path), so `README.md` — stem `README`, uppercase — is a `BadSlug` hard error,
+        // NOT silently lowercased. A served page must have a valid-slug filename.
+        let d = TempDir::new();
+        d.write("README.md", b"# Readme\n");
+        assert!(matches!(scan_dir(d.path()), Err(ScanError::BadSlug(_, _))));
+    }
+
+    #[test]
+    fn unknown_template_fails_fast_even_in_an_html_only_space() {
+        // A mistyped `template:` is a config error surfaced immediately, even when the
+        // space currently has no `.md` page that would use it (fail-fast config).
+        let d = TempDir::new();
+        d.write("index.html", b"<h1>hi</h1>");
+        d.write("glasspad.yaml", b"template: nonsuch\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::UnknownTemplate(_))
+        ));
     }
 
     #[test]

@@ -170,9 +170,9 @@ enum Commands {
     ///
     /// The directory is scanned locally with the same rules as `serve`/`build`
     /// (slug grammar, reserved names, symlink/traversal rejection, size caps, MIME,
-    /// glasspad.yaml nav/title/template); `.md` pages are rendered server-side, then the
-    /// resulting pages are sent as one bundle. Config precedence mirrors `publish`. The
-    /// API key is never printed.
+    /// glasspad.yaml nav/title/template); `.md` pages are rendered locally, then the
+    /// resulting pages are sent as one bundle (the hosted server receives HTML, not
+    /// markdown). Config precedence mirrors `publish`. The API key is never printed.
     PublishSpace {
         /// The directory to publish (a space of .html and/or .md pages).
         dir: PathBuf,
