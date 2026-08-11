@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.6.0] - 2026-08-11
+
+Turns glasspad into a **multi-page hosted docsite** tool: publish a whole directory
+of linked artifacts as one hosted space with working in-space nav + relative links,
+and hand it **markdown** directly instead of pre-rendered HTML. The artifact sandbox is
+unchanged — every page, including one rendered from markdown, stays a null-origin
+sandboxed iframe with `connect-src 'none'`.
+
+### Added
+
+- **Multi-page hosted publish (space ingest).** `glasspad publish-space <dir>`
+  ingests a directory of linked `.html` artifacts into one hosted namespace
+  (`/{space}/…`) on a `host-serve` instance, with the in-space bridge nav and
+  cross-page relative links resolving across pages — the local `serve` experience on
+  the hosted server. A stable space slug makes re-publish update in place (idempotent);
+  cross-space/cross-tenant access is refused with an opaque `404`.
+- **Markdown-native spaces.** `serve` / `build` / `publish-space` now treat a
+  directory of `.md` as a space — each `.md` is rendered through the template seam into
+  an artifact (slug = filename stem) with nav + relative links working, so a producer
+  can hand glasspad the markdown directory directly. Existing `.html`-only spaces render
+  identically (additive); markdown that embeds hostile HTML cannot escape the sandbox
+  (covered by new security probes).
+
 ## [0.5.0] - 2026-08-11
 
 Completes the artifact **return channel** with its two planned later increments —
