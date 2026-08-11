@@ -15,7 +15,7 @@ dashboards, charts, interactive UIs — to the user in their browser.
 Glasspad is an **HTML-artifact host**. The agent authors plain HTML; glasspad
 serves it live and safely:
 
-1. Point glasspad at a file or directory of HTML artifacts (`glasspad serve ./dir`)
+1. Point glasspad at a file or directory of HTML (or markdown) artifacts (`glasspad serve ./dir`)
 2. Get back a loopback URL
 3. The user opens the URL; every artifact is sandboxed in a null-origin iframe
 
@@ -47,14 +47,29 @@ cargo install glasspad
 ## Usage
 
 ```bash
-glasspad serve ./myspace       # serve a directory of artifacts live
+glasspad serve ./myspace       # serve a directory of .html and/or .md artifacts live
 glasspad create ./report.html  # one-artifact space from a single file
+glasspad render ./doc.md        # render one markdown file through a template and serve it
 glasspad build ./myspace ./out # statically render a space to HTML files (no server)
 glasspad open myspace          # open it in the browser
 glasspad publish ./report.html # publish one page to a hosted share server → /p/<slug>
 glasspad publish-space ./docs  # publish a whole multi-page space → /p/<slug>/… (nav + relative links intact)
 glasspad data ./old.csv        # parse a legacy CSV/JSON/mbox file to JSON rows
 ```
+
+### Markdown-native spaces
+
+A space can be a directory of **`.md`/`.markdown`** files just as well as `.html`:
+`serve`, `build`, and `publish-space` render each markdown file server-side through a
+built-in fragment template into a page (slug = filename stem), so a producer can hand
+glasspad the markdown directly instead of pre-rendered HTML. `.md` and `.html` pages
+coexist in one space — each file becomes a page keyed by its stem; a `.md` and `.html`
+that share a stem is a hard collision (rename one). Pick the reading theme per-space in
+`glasspad.yaml` with `template: prose` (the default) or `template: dashboard`; a fully
+custom template is authored via the single-file `glasspad render <file.md> --template
+<path>` path, or by pre-rendering to `.html`. Rendered markdown becomes an artifact in
+the **same** null-origin frozen sandbox as any other page — hostile HTML/script embedded
+in the markdown cannot escape it or open an exfil channel (`connect-src 'none'` holds).
 
 ### Installing the companion skill
 

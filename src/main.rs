@@ -47,7 +47,8 @@ enum Commands {
     /// Serve a directory live as a space (scan + watch + SSE). With no directory,
     /// serves the built-in fixtures. Runs until killed.
     Serve {
-        /// Directory to serve as a space. Omit to serve only the built-in fixtures.
+        /// Directory to serve as a space (`.html` served verbatim; `.md`/`.markdown`
+        /// rendered server-side). Omit to serve only the built-in fixtures.
         dir: Option<PathBuf>,
         /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
         /// $GLASSPAD_PORT > the built-in default (3000).
@@ -164,15 +165,16 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
-    /// Publish a whole SPACE (a directory of linked .html artifacts) into one hosted
-    /// namespace /p/{slug}/… with in-space nav + relative links working across pages.
+    /// Publish a whole SPACE (a directory of linked .html and/or .md artifacts) into
+    /// one hosted namespace /p/{slug}/… with in-space nav + relative links across pages.
     ///
     /// The directory is scanned locally with the same rules as `serve`/`build`
     /// (slug grammar, reserved names, symlink/traversal rejection, size caps, MIME,
-    /// glasspad.yaml nav/title) and sent as one bundle. Config precedence mirrors
-    /// `publish`. The API key is never printed.
+    /// glasspad.yaml nav/title/template); `.md` pages are rendered server-side, then the
+    /// resulting pages are sent as one bundle. Config precedence mirrors `publish`. The
+    /// API key is never printed.
     PublishSpace {
-        /// The directory to publish (a space of .html artifacts).
+        /// The directory to publish (a space of .html and/or .md pages).
         dir: PathBuf,
         /// Hosted server base URL, e.g. https://pad.example.com.
         #[arg(long)]

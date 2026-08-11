@@ -93,6 +93,19 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   file is never served. `asset_key_for_request` grammar-checks a request sub-path
   into a key that must exact-match the pre-scanned asset map (traversal is
   structurally impossible — you can only fetch a key that already exists).
+  **Markdown-native spaces (Gap 2):** a top-level `.md`/`.markdown` file is a page
+  too — `scan_dir` buffers it, then renders it through a built-in fragment template
+  (`render::render_to_body`; `prose` default or `dashboard`, selected per-space via
+  `glasspad.yaml`'s `template:` key) into an artifact **body** (slug = stem), which
+  then flows through the identical serve path as an `.html` artifact — so the
+  security boundary is unchanged (the template governs only the body; the CSP /
+  sandbox / Trusted-Types headers are set server-side on the `_c` response, and
+  `wrap` injects `base.css` + `bridge.js`). `.md` and `.html` pages coexist; a
+  same-stem `.md`+`.html` (or `.md`+`.markdown`) pair is a `DuplicateSlug` hard
+  error. The rendered body is re-capped at `MAX_FILE_BYTES` (markup can amplify);
+  an unknown `template:` name is a hard error (built-in only — fully custom
+  templates are the single-file `render` seam). All of `serve`/`build`/
+  `publish-space` inherit this for free (they consume the produced `Space`).
 - `mod.rs` — routes (`/{space}/`, `/{space}/{slug}`, `/{space}/_c/{slug}`,
   `/{space}/assets/{*path}`, `/_gp/reload`, `/_gp/v1/*`), slug/space grammar +
   reserved-name rejection, header wiring, the live-snapshot + fixtures resolution,

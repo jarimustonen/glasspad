@@ -18,6 +18,13 @@ stable `--json` envelope, and fails with an informative error (never a prompt).
 - An **artifact** is one HTML view, addressed by a **slug** = its filename stem
   (`sales.html` → slug `sales`). You link between them with ordinary relative
   links (`<a href="./detail">`).
+- A space can hold **`.md`/`.markdown`** files too: `serve`/`build`/`publish-space`
+  render each markdown file server-side through a built-in template into a page
+  (slug = filename stem), so you can hand glasspad the markdown directly instead of
+  pre-rendered HTML. `.md` and `.html` pages coexist; a `.md` and `.html` sharing a
+  stem is a hard collision. Pick the theme per-space in `glasspad.yaml` with
+  `template: prose` (default) or `template: dashboard`; a fully custom template is
+  the single-file `render <file.md> --template <path>` path (or pre-render to HTML).
 - Serving is live: edit a file on disk and the browser reloads. The directory is
   the single source of truth — there is no upload/push step.
 
@@ -32,7 +39,7 @@ leave the machine when the viewer is elsewhere.
 | Show the user on **this machine** while you work | `glasspad serve ./dir` (or `create <file>` for a single file) | Loopback `127.0.0.1`, keeps the DNS-rebinding Host guard, live reload. The private on-your-machine view — "show me while I work." |
 | Same, but the payload is **markdown** and you want a themed page | `glasspad render <file.md> [--template prose\|dashboard\|./tpl.html]` | Server-side md→HTML spliced into the template's `{{content}}` slot; the template governs the body only (sandbox/CSP stay glasspad's). Still loopback + live reload. |
 | Let a **colleague / another machine** open it over the network | `glasspad publish <file>` → hosted share server | API-key ingest; returns a public capability-slug URL (`/p/<slug>`, `noindex` — "hold the link"). `--markdown` renders md server-side; `--title`, `--no-open`; `--idempotency-key <k>` makes a repeat publish return the first page (HTTP 200) instead of a new one — exactly-once for a deterministic caller. Server + key from `--server`/`--api-key`, `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY`, or `~/.config/glasspad/config.yaml`. |
-| Publish a whole **multi-page space** (docsite) over the network | `glasspad publish-space <dir>` → hosted share server | Publishes a directory of linked `.html` artifacts into ONE hosted namespace `/p/<slug>/…` with in-space bridge nav + cross-page relative links (`href="./other"`) resolving across pages — the `serve` experience, hosted. Same auth/config as `publish`. `--space-key <k>` gives the space a **stable slug** so a re-publish **updates it in place** at the same URL (idempotent hosting of a docsite that changes). Scanned locally with the same rules as `serve`/`build` (slug grammar, reserved names, symlink/traversal rejection, size caps, `glasspad.yaml` nav/title). Every page stays a null-origin sandboxed iframe. |
+| Publish a whole **multi-page space** (docsite) over the network | `glasspad publish-space <dir>` → hosted share server | Publishes a directory of linked `.html` (and/or `.md`, rendered server-side) artifacts into ONE hosted namespace `/p/<slug>/…` with in-space bridge nav + cross-page relative links (`href="./other"`) resolving across pages — the `serve` experience, hosted. Same auth/config as `publish`. `--space-key <k>` gives the space a **stable slug** so a re-publish **updates it in place** at the same URL (idempotent hosting of a docsite that changes). Scanned locally with the same rules as `serve`/`build` (slug grammar, reserved names, symlink/traversal rejection, size caps, `glasspad.yaml` nav/title). Every page stays a null-origin sandboxed iframe. |
 | Preview on an **external seat** (not this box) | external seat preview | The external transport path — hands the rendered page to a remote seat you reach over that transport, rather than the local browser or the share server. |
 | **No server at all** — static, self-contained files (offline / docsite) | `glasspad build <space> <out>` | Renders a space to a self-contained static bundle in `<out>`; no bind, no live reload. The "just ship the files" option. |
 
@@ -67,7 +74,7 @@ Base libraries live under `/_gp/v1/*` (e.g. `base.css`, `charts.js` = a thin
 ## Commands
 
 ```bash
-glasspad serve ./myspace          # serve a directory live (the primary loop)
+glasspad serve ./myspace          # serve a directory live (.html and/or .md — the primary loop)
 glasspad create ./report.html     # one-artifact space from a single file
 glasspad render ./notes.md        # render markdown via a template, serve it live
 glasspad build ./myspace ./out    # statically render a space to HTML files (no server)

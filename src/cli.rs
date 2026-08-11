@@ -397,6 +397,9 @@ fn exit_scan_error(e: &ScanError, json: bool) -> ! {
         ScanError::NotUtf8(_) => ("not_utf8", 1),
         ScanError::BadAssetName(_) => ("invalid_asset_name", 1),
         ScanError::Manifest(_, _) => ("invalid_manifest", 1),
+        ScanError::UnknownTemplate(_) => ("unknown_template", 1),
+        ScanError::RenderTooLarge(_, _) => ("render_too_large", 1),
+        ScanError::TemplateRender(_, _) => ("invalid_template", 1),
     };
     exit_error(json, exit, code, &e.to_string(), None, None);
 }
@@ -1919,11 +1922,12 @@ pub async fn publish(
 
 /// `glasspad publish-space <dir> [--server <url>] [--api-key <key>] [--space-key
 /// <key>] [--no-open]` — publish a whole **space** (a directory of linked `.html`
-/// artifacts) into one hosted namespace `/p/<slug>/…` with in-space nav + relative
-/// links working across pages. The directory is scanned locally with the exact same
-/// `space::scan_dir` `serve`/`build` use (slug grammar, reserved names, symlink /
-/// traversal rejection, size caps, MIME, `glasspad.yaml` nav/title), then sent as one
-/// bundle to `POST /api/v1/spaces`. A `--space-key` makes the publish update the space
+/// and/or `.md` pages) into one hosted namespace `/p/<slug>/…` with in-space nav +
+/// relative links working across pages. The directory is scanned locally with the
+/// exact same `space::scan_dir` `serve`/`build` use (slug grammar, reserved names,
+/// symlink / traversal rejection, size caps, MIME, `glasspad.yaml` nav/title/template,
+/// and server-side markdown rendering for `.md` pages), then sent as one bundle to
+/// `POST /api/v1/spaces`. A `--space-key` makes the publish update the space
 /// **in place** at the same slug on re-publish. Config precedence mirrors `publish`.
 pub async fn publish_space(
     dir: PathBuf,
@@ -1977,7 +1981,8 @@ pub async fn publish_space(
             1,
             "empty_space",
             &format!(
-                "{} has no .html artifacts to publish (a space is a directory of .html files)",
+                "{} has no pages to publish (a space is a directory of .html files and/or .md \
+                 files rendered server-side)",
                 dir.display()
             ),
             None,
