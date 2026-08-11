@@ -94,29 +94,38 @@ released** — code is on `main` at 0.4.0; a release would be 0.5.0 (see below).
   hosted publish / space ingest + markdown-native spaces — a tilictl docsite use case).
   Open, unstarted, needs scoping.
 
-## 0.5.0 cut 2026-08-11 (CI in progress) + Gap 1 in flight
+## Two releases cut 2026-08-11 — 0.5.0 then 0.6.0 (both autonomous)
 
-**0.5.0 cut autonomously** (reaffirmed release autonomy — no permission asked): bundles
-the round's three landed, reviewed, green features — B2 multi-round + A2 SSE + pi.dev
-dual-home skill install. Tag `v0.5.0` pushed off `main` (`1763964`); both CI workflows
-triggered (Release/cargo-dist + Publish-to-crates). Full gate was green: fmt + clippy
--D warnings + cargo test (355) + `./test-security.sh` (48 + Wave 2a) + `ossctl audit`
-(gated core complete, 0 gaps) + `cargo publish --dry-run` (packaged + verified 106 files).
-**Verify CI landed all three channels** (crates.io 0.5.0, GitHub Release v0.5.0, Homebrew
-tap) — mac build runs on hauis. `pidev` also shipped in this release.
+Both cut **autonomously** per reaffirmed release autonomy (no permission asked; a green
+gate is the go). Each: fmt + clippy -D warnings + cargo test + `./test-security.sh`
+(48 + Wave 2a) + `ossctl audit` (core complete, 0 gaps) + `cargo publish --dry-run`,
+then tag-push → both CI workflows (Release/cargo-dist + Publish-to-crates), mac on hauis.
 
-**`multipage-hosted-space` Gap 1 is in flight** (spinoff off `main` before the 0.5.0 bump;
-its merge rebases onto 0.5.0 main). When it lands → green-gate → it becomes **0.6.0**.
+- **0.5.0** (`1763964`, tag `v0.5.0`) — return-channel **A2 (SSE)** + **B2 (multi-round)**
+  + **pi.dev dual-home skill install**. Verified live on all three channels (crates.io
+  0.5.0 via sparse index, GitHub Release v0.5.0 12 assets, Homebrew `version "0.5.0"`).
+- **0.6.0** (`aa4005f`, tag `v0.6.0`) — **multi-page hosted docsite**: Gap 1
+  `publish-space` (space ingest → `/{space}/…`, nav + relative links, idempotent slug,
+  cross-tenant 404) + Gap 2 markdown-native spaces (serve/build/publish-space render a
+  dir of `.md`, slug = stem). 389 tests + 143 security PASS. **CI in progress at handoff —
+  verify all three channels landed** (mac build on hauis).
 
 ## ▶ Start here (on return)
 
-1. **Confirm 0.5.0 CI finished green** on all three channels (see above). If the mac
-   build failed on hauis, re-run `gh run rerun <id> --failed` (do NOT re-add
-   `GIT_CONFIG_GLOBAL`); the tag is already published.
-2. **`multipage-hosted-space` (Gap 1)** — verify it landed + green; if so, decide on
-   **0.6.0** (release autonomy: green gate is the go — do not ask).
-3. **`markdown-native-spaces` (Gap 2)** — sequenced after Gap 1 (shares hosted/cli.rs);
-   spawn once Gap 1 is on main.
+**Issue tracker EMPTY; DAG empty; nothing in flight.** `main == origin` (`aa4005f`),
+clean tree, 0.6.0 in `Cargo.toml`.
+1. **Confirm 0.6.0 CI finished green** on all three channels (crates.io / GitHub Release
+   / Homebrew). If the mac build failed on hauis, `gh run rerun <id> --failed` (do NOT
+   re-add `GIT_CONFIG_GLOBAL`); the tag is already published.
+2. **Next work is unfiled** — file new work then re-populate lanes, or pick from the
+   candidates below. The whole tilictl-docsite use case (space ingest + markdown spaces)
+   is now shipped, so **downstream tilictl consolidation** is unblocked (tracked there).
+
+**Candidate next work (no hard gate):**
+- **tilictl docsite migration** — retire tilictl's bespoke HTML generator onto glasspad
+  `publish-space` + markdown spaces (tracked in tilictl).
+- **Return-channel** further increments if a concrete need appears (A2/B2 shipped).
+- **Optional polish** (below): version-commit-stamp provenance, close `release-oss` epic.
 
 **Candidate next work (no hard gate, pick or defer):**
 - **Return-channel A2/B2 increment** — A2 (SSE transport) / B2 (multi-round); the
@@ -158,10 +167,10 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: markdown-native-spaces   ← Gap 2 (.md-dir spaces); Gap 1 landed
+GLOBAL HEAD-OF-LINE: (none — issue tracker empty; backlog empty)
 
-LANE B — src/hosted/* + src/cli.rs + src/main.rs + render (hosted core + CLI dispatch)
-  ▶ markdown-native-spaces   (Gap 2 — serve/build/space-publish render a dir of .md; Gap 1 landed on main)
+0.5.0 + 0.6.0 both released 2026-08-11. No active non-epic issues.
+Next code round: file new work, then re-populate lanes.
 ```
 <!-- execution-dag:end -->
 
