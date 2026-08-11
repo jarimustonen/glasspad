@@ -387,6 +387,21 @@ curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q 'href="./guide"'; scheck $? 
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/guide/_c/index")" = "404" ]; scheck $? "space: a page slug is NOT addressable as a top-level space (no cross-space escape)"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/zzzzzzzzzzzzzzzzzzzzzzzzzz/_c/index")" = "404" ]; scheck $? "space: an unknown space slug is an opaque 404"
 
+# Publish a SECOND, independent space and prove pages do NOT bleed across spaces: a
+# page of space A is a 404 under space B's slug and vice versa (each space resolves
+# artifacts only from its own set — nav/relative links can never reach another space).
+cat > "$WORK/space_two.json" <<JSON
+{ "pages": [ { "slug": "index", "html": "<h1>Two Home</h1>" }, { "slug": "onlyintwo", "html": "<h1>Only In Two</h1>" } ], "nav": ["index","onlyintwo"] }
+JSON
+SPUB_TWO="$(curl -s -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d @"$WORK/space_two.json")"
+SPSLUG_TWO="$(printf '%s' "$SPUB_TWO" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
+[ -n "$SPSLUG_TWO" ] && [ "$SPSLUG_TWO" != "$SPSLUG" ]; scheck $? "space: a second space gets an independent namespace"
+# 'guide' exists only in space one; 'onlyintwo' only in space two. Neither leaks.
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/$SPSLUG_TWO/_c/guide")" = "404" ]; scheck $? "space: a page of space A is NOT served under space B (cross-space artifact isolation)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/$SPSLUG/_c/onlyintwo")" = "404" ]; scheck $? "space: a page of space B is NOT served under space A (cross-space artifact isolation)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/$SPSLUG_TWO/_c/onlyintwo")" = "200" ]; scheck $? "space: space B still serves its OWN page"
+
 # STABLE KEY updates in place (same slug, 200) — a re-publish reflects new content.
 cat > "$WORK/space2.json" <<JSON
 { "pages": [ { "slug": "index", "html": "<title>Home</title><h1>Home v2</h1>" } ], "space_key": "docsite" }

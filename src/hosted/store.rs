@@ -204,6 +204,42 @@ pub struct PublishedSpace {
     pub created: bool,
 }
 
+/// A running budget bounding what [`Store::load_space`] pulls off disk before
+/// [`space::build_space_bundle`] gets a chance to reject an oversize space. Per-file
+/// reads are already capped; this bounds the **aggregate** bytes and **entry count**
+/// across a space's pages + assets so a hand-tampered store cannot OOM the process at
+/// startup / GC-rescan by planting many near-cap files.
+struct LoadBudget {
+    entries: usize,
+    bytes: u64,
+}
+
+impl LoadBudget {
+    fn new() -> Self {
+        LoadBudget {
+            entries: 0,
+            bytes: 0,
+        }
+    }
+
+    /// Count one entry; `false` once past [`space::MAX_ENTRIES`].
+    fn reserve_entry(&mut self) -> bool {
+        self.entries += 1;
+        self.entries <= space::MAX_ENTRIES
+    }
+
+    /// Add `n` bytes; `false` on overflow or once past [`space::MAX_SPACE_BYTES`].
+    fn add_bytes(&mut self, n: u64) -> bool {
+        match self.bytes.checked_add(n) {
+            Some(t) => {
+                self.bytes = t;
+                t <= space::MAX_SPACE_BYTES
+            }
+            None => false,
+        }
+    }
+}
+
 impl Store {
     /// Open (creating if needed) the store rooted at `root`, load every existing
     /// page into the host's initial snapshot, and return the store. A corrupt or
@@ -231,9 +267,54 @@ impl Store {
             host,
             mutation: std::sync::Mutex::new(()),
         };
+        // Recover any space directory left mid-replace by a crash BEFORE scanning, so
+        // an interrupted in-place update never disappears (its only copy may be in a
+        // `.<slug>.old` backup that GC would otherwise reap).
+        if let Err(e) = store.recover_space_staging() {
+            eprintln!("glasspad host: space staging recovery failed: {e}");
+        }
         let snap = store.scan_disk();
         store.host.swap(snap);
         Ok(store)
+    }
+
+    /// Reconcile the `spaces/` tree's crash-staging directories (`materialize_space`'s
+    /// two-phase replace). For a `.<slug>.old` backup: if the live `spaces/<slug>` is
+    /// **missing** (a crash between the two renames left the space only in the backup),
+    /// restore it (`rename(.old → final)`) — never lose the last committed generation;
+    /// otherwise the backup is a completed-replace remnant and is reclaimed. A
+    /// `.<slug>.tmp` is an incomplete stage and is always dropped. Idempotent, so it is
+    /// safe to run at startup and inside GC. Fsyncs `spaces/` when it restored anything.
+    fn recover_space_staging(&self) -> std::io::Result<()> {
+        let rd = match std::fs::read_dir(&self.spaces_dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        let mut restored = false;
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let path = entry.path();
+            if let Some(slug) = name.strip_prefix('.').and_then(|s| s.strip_suffix(".old")) {
+                let final_dir = self.spaces_dir.join(slug);
+                if final_dir.exists() {
+                    // The replace completed; the backup is dead weight.
+                    let _ = std::fs::remove_dir_all(&path);
+                } else {
+                    // The replace was interrupted; the backup IS the live space.
+                    std::fs::rename(&path, &final_dir)?;
+                    restored = true;
+                }
+            } else if name.starts_with('.') {
+                // A `.tmp` stage (or any other dotfile) is an incomplete write remnant.
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+        if restored {
+            fsync_dir(&self.spaces_dir)?;
+        }
+        Ok(())
     }
 
     /// Acquire the mutation lock, recovering the guard if a previous holder panicked
@@ -861,24 +942,32 @@ impl Store {
                 removed += 1;
             }
         }
-        // Same pass over the multi-artifact `spaces/` tree (Gap 1): reap crashed
-        // `.<slug>.tmp` staging + `.<slug>.old` replace-backup dirs, and remove any
-        // space directory positively dated as expired.
+        // Same pass over the multi-artifact `spaces/` tree (Gap 1). First reconcile
+        // crash-staging dirs — a `.<slug>.old` whose live space is missing is RESTORED
+        // (never reaped), so an interrupted in-place update is not lost; other dotdirs
+        // are incomplete-write remnants. Then remove any space positively dated as
+        // expired. Retention for a space is measured from its **last update**
+        // (`updated_at`), so an actively-maintained docsite keeps its lease and an
+        // abandoned one still expires a window after the final publish.
+        if let Err(e) = self.recover_space_staging() {
+            eprintln!("glasspad host: GC space staging recovery failed: {e}");
+        }
         for entry in std::fs::read_dir(&self.spaces_dir)?.flatten() {
             let dir = entry.path();
             let name = entry.file_name();
             if name.to_string_lossy().starts_with('.') {
+                // Recovery above already reconciled these; anything left is reclaimable.
                 let _ = std::fs::remove_dir_all(&dir);
                 continue;
             }
             if !dir.is_dir() {
                 continue;
             }
-            let created = match self.read_space_created_at(&dir) {
+            let last_update = match self.read_space_updated_at(&dir) {
                 Some(t) => t,
                 None => continue,
             };
-            if created < cutoff {
+            if last_update < cutoff {
                 if let Err(e) = std::fs::remove_dir_all(&dir) {
                     eprintln!(
                         "glasspad host: GC failed to remove space {}: {e}",
@@ -1096,6 +1185,18 @@ impl Store {
             }
             match self.load_space(&dir) {
                 Ok(Some((meta, space))) => {
+                    // Defense-in-depth: `fresh_slug` prevents a page/space slug
+                    // collision at mint, but a tampered/corrupt store could still
+                    // present one. Never let a space silently overwrite a page already
+                    // loaded under the same slug — skip + log rather than pick a winner
+                    // (which would type-confuse the page-scoped mutation paths).
+                    if snap.spaces.contains_key(&meta.slug) {
+                        eprintln!(
+                            "glasspad host: space slug {} collides with an already-loaded unit; skipping",
+                            meta.slug
+                        );
+                        continue;
+                    }
                     snap.spaces.insert(meta.slug.clone(), space);
                 }
                 Ok(None) => {}
@@ -1162,12 +1263,15 @@ impl Store {
             return Ok(None);
         }
 
-        // Collect the raw pages + assets off disk (bounded reads; symlinks rejected).
-        let pages = match self.read_space_pages(dir)? {
+        // Collect the raw pages + assets off disk under a shared per-space budget
+        // (bounded reads; symlinks — including the subdir roots — rejected), so a
+        // hand-tampered store can never force an unbounded allocation on startup / GC.
+        let mut budget = LoadBudget::new();
+        let pages = match self.read_space_pages(dir, &mut budget)? {
             Some(p) => p,
             None => return Ok(None),
         };
-        let assets = match self.read_space_assets(dir)? {
+        let assets = match self.read_space_assets(dir, &mut budget)? {
             Some(a) => a,
             None => return Ok(None),
         };
@@ -1186,25 +1290,43 @@ impl Store {
     }
 
     /// Read a space's `artifacts/<page>.html` bodies into [`BundlePage`]s. Returns
-    /// `Ok(None)` if a symlink is encountered (fail-closed: skip the whole space).
-    fn read_space_pages(&self, dir: &Path) -> std::io::Result<Option<Vec<BundlePage>>> {
+    /// `Ok(None)` (skip the whole space, fail-closed) if a symlink is encountered — the
+    /// `artifacts/` root itself OR any entry — or the running budget is exceeded.
+    /// `budget` accumulates the per-space byte total and entry count across pages AND
+    /// assets so a hand-tampered store can never force an unbounded allocation on load.
+    fn read_space_pages(
+        &self,
+        dir: &Path,
+        budget: &mut LoadBudget,
+    ) -> std::io::Result<Option<Vec<BundlePage>>> {
         let art_dir = dir.join(SPACE_ARTIFACTS_DIR);
-        let rd = match std::fs::read_dir(&art_dir) {
-            Ok(rd) => rd,
+        // Reject a symlinked `artifacts/` root before reading (read_dir would follow it
+        // outside the store). Absent → an empty page set (build rejects an empty space).
+        match std::fs::symlink_metadata(&art_dir) {
+            Ok(md) if md.file_type().is_symlink() => {
+                eprintln!(
+                    "glasspad host: space artifacts dir {} is a symlink; skipping space",
+                    art_dir.display()
+                );
+                return Ok(None);
+            }
+            Ok(md) if !md.is_dir() => return Ok(Some(Vec::new())),
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Vec::new())),
             Err(e) => return Err(e),
-        };
+        }
         let mut pages = Vec::new();
-        for entry in rd.flatten() {
+        for entry in std::fs::read_dir(&art_dir)?.flatten() {
             let path = entry.path();
-            if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+            let ft = std::fs::symlink_metadata(&path)?.file_type();
+            if ft.is_symlink() {
                 eprintln!(
                     "glasspad host: space artifact {} is a symlink; skipping space",
                     path.display()
                 );
                 return Ok(None);
             }
-            if !path.is_file() {
+            if !ft.is_file() {
                 continue;
             }
             let name = match path.file_name().and_then(|n| n.to_str()) {
@@ -1215,7 +1337,13 @@ impl Store {
                 Some(s) => s.to_string(),
                 None => continue,
             };
+            if !budget.reserve_entry() {
+                return Ok(None);
+            }
             let html = read_capped_utf8(&path)?;
+            if !budget.add_bytes(html.len() as u64) {
+                return Ok(None);
+            }
             pages.push(BundlePage { slug, html });
         }
         Ok(Some(pages))
@@ -1223,44 +1351,75 @@ impl Store {
 
     /// Read a space's `assets/` subtree into [`BundleAsset`]s keyed by the path
     /// **relative to** `assets/` (no prefix — the shape `build_space_bundle` expects).
-    /// Returns `Ok(None)` on a symlink (fail-closed).
-    fn read_space_assets(&self, dir: &Path) -> std::io::Result<Option<Vec<BundleAsset>>> {
+    /// Returns `Ok(None)` (skip the whole space, fail-closed) on a symlinked `assets/`
+    /// root or entry, a non-`Component::Normal`/non-UTF-8 path component, or a budget
+    /// overrun. `budget` is shared with [`Store::read_space_pages`].
+    fn read_space_assets(
+        &self,
+        dir: &Path,
+        budget: &mut LoadBudget,
+    ) -> std::io::Result<Option<Vec<BundleAsset>>> {
         let assets_root = dir.join(SPACE_ASSETS_SUBDIR);
-        if !assets_root.exists() {
-            return Ok(Some(Vec::new()));
+        // Reject a symlinked `assets/` root before reading (read_dir would follow it).
+        match std::fs::symlink_metadata(&assets_root) {
+            Ok(md) if md.file_type().is_symlink() => {
+                eprintln!(
+                    "glasspad host: space assets dir {} is a symlink; skipping space",
+                    assets_root.display()
+                );
+                return Ok(None);
+            }
+            Ok(md) if !md.is_dir() => return Ok(Some(Vec::new())),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Vec::new())),
+            Err(e) => return Err(e),
         }
         let mut out = Vec::new();
         let mut stack = vec![assets_root.clone()];
         while let Some(cur) = stack.pop() {
             for entry in std::fs::read_dir(&cur)?.flatten() {
                 let path = entry.path();
-                if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                let ft = std::fs::symlink_metadata(&path)?.file_type();
+                if ft.is_symlink() {
                     eprintln!(
                         "glasspad host: space asset {} is a symlink; skipping space",
                         path.display()
                     );
                     return Ok(None);
                 }
-                if path.is_dir() {
+                if ft.is_dir() {
                     stack.push(path);
                     continue;
                 }
-                if !path.is_file() {
+                if !ft.is_file() {
                     continue;
                 }
                 let rel = match path.strip_prefix(&assets_root) {
                     Ok(r) => r,
-                    Err(_) => continue,
+                    Err(_) => return Ok(None),
                 };
-                // Join with '/' — the key grammar `build_space_bundle` enforces.
-                let rel_str = rel
-                    .components()
-                    .filter_map(|c| c.as_os_str().to_str())
-                    .collect::<Vec<_>>()
-                    .join("/");
+                // Only `Normal` path components map to an asset key; anything else
+                // (`.`/`..`/root/prefix) or a non-UTF-8 name fails the whole space
+                // closed (matches the scanner's `rel_key`).
+                let mut segs = Vec::new();
+                for comp in rel.components() {
+                    match comp {
+                        std::path::Component::Normal(os) => match os.to_str() {
+                            Some(s) => segs.push(s.to_string()),
+                            None => return Ok(None),
+                        },
+                        _ => return Ok(None),
+                    }
+                }
+                if !budget.reserve_entry() {
+                    return Ok(None);
+                }
                 let bytes = read_capped(&path, space::MAX_FILE_BYTES)?;
+                if !budget.add_bytes(bytes.len() as u64) {
+                    return Ok(None);
+                }
                 out.push(BundleAsset {
-                    path: rel_str,
+                    path: segs.join("/"),
                     bytes,
                 });
             }
@@ -1400,12 +1559,23 @@ impl Store {
 
     /// The `created_at` recorded in a space directory's `meta.json`, or `None`.
     fn read_space_created_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
+        self.read_space_meta(dir).map(|m| m.created_at)
+    }
+
+    /// The `updated_at` recorded in a space directory's `meta.json`, or `None`. This
+    /// is the retention clock for a space (activity-based lease — a re-publish extends
+    /// it), distinct from the immutable single-page path which expires by `created_at`.
+    fn read_space_updated_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
+        self.read_space_meta(dir).map(|m| m.updated_at)
+    }
+
+    /// Parse a space directory's `meta.json` (bounded read), or `None`.
+    fn read_space_meta(&self, dir: &Path) -> Option<SpaceMeta> {
         let bytes = read_capped(&dir.join(META_FILE), MAX_META_BYTES).ok()?;
         if bytes.len() as u64 > MAX_META_BYTES {
             return None;
         }
-        let meta: SpaceMeta = serde_json::from_slice(&bytes).ok()?;
-        Some(meta.created_at)
+        serde_json::from_slice::<SpaceMeta>(&bytes).ok()
     }
 
     /// Filesystem path of the stable-space-key mapping sidecar for `(tenant, key)`
@@ -2331,11 +2501,13 @@ mod tests {
         let p = store
             .publish_space("acme", sample_space("X"), None)
             .unwrap();
-        // Backdate the space meta.
+        // Backdate the space meta past retention (updated_at is the space retention
+        // clock — a fresh publish sets it to now, so backdate it, not just created_at).
         let meta_path = root.join("spaces").join(&p.slug).join("meta.json");
         let mut meta: SpaceMeta =
             serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
         meta.created_at = Utc::now() - Duration::days(100);
+        meta.updated_at = Utc::now() - Duration::days(100);
         std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
         let removed = store.gc(Duration::days(90)).unwrap();
         assert_eq!(removed, 1);
@@ -2377,6 +2549,69 @@ mod tests {
         // The victim's space is unchanged.
         let sp = h.snapshot().space(&victim.slug).cloned().unwrap();
         assert!(sp.artifact("index").unwrap().html.contains("secret"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn interrupted_replace_is_recovered_from_backup_on_reopen() {
+        // Simulate a crash BETWEEN the two renames of an in-place update: the live
+        // `spaces/<slug>` is gone and the only copy is in `.<slug>.old`. Reopening the
+        // store must RESTORE it (never lose the last committed generation), and GC must
+        // not reap the backup before recovery.
+        let root = tmp_root("space-recover");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish_space("acme", sample_space("committed"), Some("k"))
+            .unwrap();
+        // Move the live dir aside to `.<slug>.old` (the torn mid-replace state).
+        let final_dir = root.join("spaces").join(&p.slug);
+        let backup = root.join("spaces").join(format!(".{}.old", p.slug));
+        std::fs::rename(&final_dir, &backup).unwrap();
+        assert!(!final_dir.exists());
+
+        // Reopen: recovery restores the space from the backup.
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert!(final_dir.exists(), "recovery must restore final from .old");
+        assert!(!backup.exists(), "the backup is consumed by recovery");
+        let sp = h2.snapshot().space(&p.slug).cloned().unwrap();
+        assert!(sp.artifact("index").unwrap().html.contains("committed"));
+        assert_eq!(store2.page_count(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn space_retention_is_measured_from_last_update_not_first_publish() {
+        // An actively re-published space keeps its lease: even though created_at is
+        // old, a recent updated_at means GC keeps it. A stale updated_at expires it.
+        let root = tmp_root("space-retention");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish_space("acme", sample_space("v1"), Some("k"))
+            .unwrap();
+        let meta_path = root.join("spaces").join(&p.slug).join("meta.json");
+        // First published long ago, updated moments ago (an active docsite).
+        let mut meta: SpaceMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta.created_at = Utc::now() - Duration::days(100);
+        meta.updated_at = Utc::now();
+        std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_eq!(
+            store.gc(Duration::days(90)).unwrap(),
+            0,
+            "an actively-updated space must NOT be GC'd on its old created_at"
+        );
+        assert!(h.snapshot().space(&p.slug).is_some());
+
+        // Now make updated_at stale too → it expires.
+        let mut meta: SpaceMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta.updated_at = Utc::now() - Duration::days(100);
+        std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        assert_eq!(store.gc(Duration::days(90)).unwrap(), 1);
+        assert!(h.snapshot().space(&p.slug).is_none());
         std::fs::remove_dir_all(&root).ok();
     }
 }

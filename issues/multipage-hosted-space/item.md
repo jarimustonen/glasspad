@@ -8,6 +8,12 @@ priority: normal
 commits:
 - hash: 05899b6
   summary: design note for Gap 1 space ingest
+- hash: 84de215
+  summary: 'feat(hosted): space ingest core — bundle validator, spaces s'
+- hash: 623544b
+  summary: 'feat(cli): glasspad publish-space — publish a directory of .'
+- hash: bdad225
+  summary: 'test(security)+docs: Gap 1 space-ingest Wave + skill/README/'
 ---
 
 # Multi-page hosted publish (space ingest) + markdown-native spaces

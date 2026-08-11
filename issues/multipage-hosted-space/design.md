@@ -91,11 +91,14 @@ untouched byte-for-byte:
   by slug (a page *is* a single-artifact space in the snapshot today). `scan_disk`
   merges both trees. `fresh_slug` checks the snapshot **and both on-disk trees** so
   a page and a space can never collide on a slug.
-* **GC**: retention GC reaps expired `spaces/<slug>/` directories (by
-  `meta.created_at`) and sweeps dead `space-idem` mappings, on par with `pages/`.
-  Same hourly cadence, same startup sweep, same mutation lock (space publish, page
-  publish, round push, and GC all serialize on the one `Store::mutation` lock, so
-  no read-clone-swap loses another's update).
+* **GC**: retention GC reaps expired `spaces/<slug>/` directories and sweeps dead
+  `space-idem` mappings, on par with `pages/`. Same hourly cadence, same startup
+  sweep, same mutation lock (space publish, page publish, round push, and GC all
+  serialize on the one `Store::mutation` lock, so no read-clone-swap loses another's
+  update). **A space's retention is measured from its `updated_at`** (activity-based
+  lease), *not* `created_at` — a re-publish extends the lease so an actively-maintained
+  docsite never expires, while an abandoned one still expires a retention window after
+  its last publish. (Single-file pages remain immutable and expire by `created_at`.)
 * **Isolation**: `meta.tenant` records the authenticated owner (server-side, never
   from the body). Reads are public-by-capability (unguessable slug); the stable-key
   mapping is per-tenant-directory scoped **and** records + re-checks the owning
@@ -131,8 +134,13 @@ re-renders its own live page in place", generalized to a whole space.
 
 On-disk update is a crash-safe atomic directory swap: stage the new space in
 `.<slug>.tmp/`, fsync, then `rename(final → .<slug>.old)`, `rename(tmp → final)`,
-remove `.old`. A crash mid-swap leaves either the old or new tree intact and a
-reclaimable `.<...>` staging/backup dir that GC reaps.
+remove `.old`. A crash **between the two renames** would leave the space only in
+`.<slug>.old`, so a **recovery pass** (`recover_space_staging`, run in `Store::open`
+*before* the scan and again at the start of GC) restores a `.<slug>.old` to `final`
+whenever `final` is missing — the last committed generation is never lost — and only
+reclaims a `.old` whose `final` already exists (a completed-replace remnant) or a
+`.tmp` (an incomplete stage). This closes the data-loss window an earlier design note
+under-specified.
 
 ## Transport — the space bundle
 
