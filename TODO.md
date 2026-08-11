@@ -145,10 +145,11 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: multipage-hosted-space   ← only active work; not yet scheduled to a round
+GLOBAL HEAD-OF-LINE: pidev-dual-home-skills   ← urgent (high); start here
 
-LANE B — src/hosted/* + src/server.rs + src/cli.rs (hosted core)
-  ▶ multipage-hosted-space   (feature, filed by the A2 worker; not started — needs scoping/decompose)
+LANE B — src/cli.rs + src/main.rs + src/hosted/* (CLI dispatch + hosted core)
+  ▶ pidev-dual-home-skills   (high — glasspad skill install dual-homes into ~/.pi/agent/skills; touches cli.rs/main.rs)
+    multipage-hosted-space   collision: src/cli.rs + src/main.rs (after pidev; needs scoping/decompose)
 ```
 <!-- execution-dag:end -->
 
