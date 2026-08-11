@@ -11,6 +11,17 @@
 //! shell's `/p` URL mount (`ArtifactHost::new_public`). It adds its own **router,
 //! storage, auth, and slug** layers on top (`auth`, `store`, `slug`, `ingest`).
 //!
+//! ## Ingest surfaces
+//! * `POST /api/v1/pages` — one page → one single-artifact space (the original,
+//!   immutable single-file publish; on-disk `pages/<slug>/`).
+//! * `POST /api/v1/spaces` (Gap 1) — a whole **space** (a directory of linked
+//!   `.html` artifacts) → one multi-artifact space under a single capability slug,
+//!   served at `/p/<slug>/…` with the in-space bridge nav + relative links resolving
+//!   across pages (the existing `spaces_router` read seam, unchanged). On-disk
+//!   `spaces/<slug>/`; a stable `space_key` updates the space in place. Both surfaces
+//!   are API-key + per-tenant scoped; the space read path stays a null-origin
+//!   sandboxed iframe per page (no new grant, `connect-src 'none'`).
+//!
 //! ## Host handling (plan §8)
 //! The loopback `host_guard` is a *rebinding* defense for a server a browser might
 //! treat as privileged same-origin; it is **not** carried here (a public server

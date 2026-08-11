@@ -32,12 +32,17 @@ leave the machine when the viewer is elsewhere.
 | Show the user on **this machine** while you work | `glasspad serve ./dir` (or `create <file>` for a single file) | Loopback `127.0.0.1`, keeps the DNS-rebinding Host guard, live reload. The private on-your-machine view — "show me while I work." |
 | Same, but the payload is **markdown** and you want a themed page | `glasspad render <file.md> [--template prose\|dashboard\|./tpl.html]` | Server-side md→HTML spliced into the template's `{{content}}` slot; the template governs the body only (sandbox/CSP stay glasspad's). Still loopback + live reload. |
 | Let a **colleague / another machine** open it over the network | `glasspad publish <file>` → hosted share server | API-key ingest; returns a public capability-slug URL (`/p/<slug>`, `noindex` — "hold the link"). `--markdown` renders md server-side; `--title`, `--no-open`; `--idempotency-key <k>` makes a repeat publish return the first page (HTTP 200) instead of a new one — exactly-once for a deterministic caller. Server + key from `--server`/`--api-key`, `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY`, or `~/.config/glasspad/config.yaml`. |
+| Publish a whole **multi-page space** (docsite) over the network | `glasspad publish-space <dir>` → hosted share server | Publishes a directory of linked `.html` artifacts into ONE hosted namespace `/p/<slug>/…` with in-space bridge nav + cross-page relative links (`href="./other"`) resolving across pages — the `serve` experience, hosted. Same auth/config as `publish`. `--space-key <k>` gives the space a **stable slug** so a re-publish **updates it in place** at the same URL (idempotent hosting of a docsite that changes). Scanned locally with the same rules as `serve`/`build` (slug grammar, reserved names, symlink/traversal rejection, size caps, `glasspad.yaml` nav/title). Every page stays a null-origin sandboxed iframe. |
 | Preview on an **external seat** (not this box) | external seat preview | The external transport path — hands the rendered page to a remote seat you reach over that transport, rather than the local browser or the share server. |
 | **No server at all** — static, self-contained files (offline / docsite) | `glasspad build <space> <out>` | Renders a space to a self-contained static bundle in `<out>`; no bind, no live reload. The "just ship the files" option. |
 
 Operator note: the hosted share server is a separate run mode —
 `glasspad host-serve --bind … --public-host … --api-key-file … --store …` (public
-bind, no loopback guard). Agents `publish` **to** it; they don't run it.
+bind, no loopback guard). Agents `publish` / `publish-space` **to** it; they don't
+run it. Single-page publish is `POST /api/v1/pages`; whole-space publish is
+`POST /api/v1/spaces` (a JSON bundle of pages + base64 assets + nav/title +
+optional `space_key`). Both are API-key + per-tenant scoped; a `space_key` is
+scoped per tenant so a re-publish only ever updates the caller's own space.
 
 ## Authoring: write HTML
 
@@ -67,6 +72,8 @@ glasspad create ./report.html     # one-artifact space from a single file
 glasspad render ./notes.md        # render markdown via a template, serve it live
 glasspad build ./myspace ./out    # statically render a space to HTML files (no server)
 glasspad open myspace             # open http://127.0.0.1:3000/myspace/ in the browser
+glasspad publish ./report.html    # publish one page to a hosted server → /p/<slug>
+glasspad publish-space ./docsite  # publish a whole multi-page space → /p/<slug>/…
 glasspad data ./old.csv           # optional: parse a legacy CSV/JSON/mbox file to JSON rows
 ```
 

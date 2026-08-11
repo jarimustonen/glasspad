@@ -51,6 +51,8 @@ glasspad serve ./myspace       # serve a directory of artifacts live
 glasspad create ./report.html  # one-artifact space from a single file
 glasspad build ./myspace ./out # statically render a space to HTML files (no server)
 glasspad open myspace          # open it in the browser
+glasspad publish ./report.html # publish one page to a hosted share server → /p/<slug>
+glasspad publish-space ./docs  # publish a whole multi-page space → /p/<slug>/… (nav + relative links intact)
 glasspad data ./old.csv        # parse a legacy CSV/JSON/mbox file to JSON rows
 ```
 
