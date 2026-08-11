@@ -74,12 +74,36 @@ of the runner-gitconfig setup, NOT a one-off:
   restarted. **Full write-up committed to `homebase/infra/machines/hauis.md`.** Do NOT
   re-add `GIT_CONFIG_GLOBAL` — that is the thing that breaks mac builds.
 
+## Round 2026-08-11 — return-channel A2 + B2 landed (both green, reviewed)
+
+Two Lane-B units landed on `main` (`b1ef061`, pushed to origin), sequenced because they
+share `src/hosted/*` + `src/cli.rs` + `src/server.rs`. Full round green gate passed:
+`cargo fmt --check` + `clippy -D warnings` + `cargo test` + `./test-security.sh` (Wave 2a
+✅ + new B2 round-push probes + new A2 SSE-streaming probes, all PASS). **Not yet
+released** — code is on `main` at 0.4.0; a release would be 0.5.0 (see below).
+- ✅ `return-channel-multi-round` (B2) — multi-round: after `gp.submit()` the agent
+  re-renders the artifact in place via an owner round-push over the shell's live-reload
+  SSE. New `src/hosted/rounds.rs`; round binding rejects stale-round submits (409);
+  each round stays null-origin `connect-src 'none'` (airlock held, regression-asserted).
+  `/llm-review` + fixes applied. Issue `done`.
+- ✅ `return-channel-sse` (A2) — SSE transport for `await-submission`:
+  `GET /api/v1/pages/<slug>/submissions/stream`, `since=<id>` cursor, per-tenant
+  isolation (cross-tenant → opaque 404), live push during hold; long-poll stays default.
+  Added `reqwest` `stream` feature. `/llm-review` + fixes (correctness + DoS). Issue `done`.
+- 🌱 A2 worker filed a new backlog feature: **`multipage-hosted-space`** (multi-page
+  hosted publish / space ingest + markdown-native spaces — a tilictl docsite use case).
+  Open, unstarted, needs scoping.
+
 ## ▶ Start here (on return)
 
-**No pending code work; nothing in flight.** 0.4.0 fully released and verified on all
-three channels; issue tracker + DAG empty; `main == origin` (b6dad4c), clean tree. The
-return channel is now shippable/demoable on the deployed maalla.dev. Next round: file
-new work, then re-populate lanes — or pick from the candidates below.
+**Nothing in flight.** `main == origin` (`b1ef061`), clean tree, 0.4.0 in `Cargo.toml`.
+The return channel now has both later increments (A2 SSE + B2 multi-round) on `main`,
+green + reviewed, **unreleased**. Two open decisions for the next round:
+1. **Cut 0.5.0?** A2+B2 are a releasable, meaningful feature bump on top of shipped
+   0.4.0. Release autonomy applies (green gate + tag-push→CI recipe). No hard gate —
+   the agent may decide to cut it.
+2. **`multipage-hosted-space`** — the only open issue; needs scoping/decompose before a
+   worktree (Lane B, hosted core). Pick it, or defer.
 
 **Candidate next work (no hard gate, pick or defer):**
 - **Return-channel A2/B2 increment** — A2 (SSE transport) / B2 (multi-round); the
@@ -108,7 +132,7 @@ tag-push→CI recipe was used instead (as for 0.3.0/0.3.1).
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-10)
+## Execution DAG (2026-08-11)
 
 Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
 (never copied here). Merge each round (drop landed, add active, keep existing order).
@@ -121,11 +145,10 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: return-channel-multi-round   ← start here on resume
+GLOBAL HEAD-OF-LINE: multipage-hosted-space   ← only active work; not yet scheduled to a round
 
-LANE B — src/server.rs + src/submissions.rs + src/cli.rs (return-channel core)
-  ▶ return-channel-multi-round
-    return-channel-sse   after return-channel-multi-round (needs B2's session/push plumbing)
+LANE B — src/hosted/* + src/server.rs + src/cli.rs (hosted core)
+  ▶ multipage-hosted-space   (feature, filed by the A2 worker; not started — needs scoping/decompose)
 ```
 <!-- execution-dag:end -->
 
