@@ -3,8 +3,11 @@ created: 2026-08-11
 updated: 2026-08-11
 type: feature
 reporter: jari
-status: open
+status: in-progress
 priority: normal
+commits:
+- hash: 05899b6
+  summary: design note for Gap 1 space ingest
 ---
 
 # Multi-page hosted publish (space ingest) + markdown-native spaces

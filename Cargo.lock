@@ -490,6 +490,7 @@ name = "glasspad"
 version = "0.5.0"
 dependencies = [
  "axum",
+ "base64",
  "chrono",
  "clap",
  "csv",

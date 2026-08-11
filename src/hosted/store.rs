@@ -50,7 +50,9 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::artifact_host::ArtifactHost;
-use crate::artifact_host::space::{self, Artifact, Snapshot, Space};
+use crate::artifact_host::space::{
+    self, Artifact, BundleAsset, BundlePage, Snapshot, Space, build_space_bundle,
+};
 use crate::artifact_host::valid_space;
 use crate::server::SINGLE_SLUG;
 
@@ -74,6 +76,32 @@ pub struct PageMeta {
 const META_SCHEMA: u32 = 1;
 const ARTIFACT_FILE: &str = "artifact.html";
 const META_FILE: &str = "meta.json";
+
+/// On-disk metadata sidecar for one multi-artifact **space** (Gap 1). Records the
+/// authenticated owner + the structural nav/home/title so a reload reconstructs the
+/// same `Space` the producer published. `created_at` fixes the retention window;
+/// `updated_at` advances on each in-place re-publish (it does **not** reset the
+/// retention clock — a live docsite stays reachable for the whole window from first
+/// publish, refreshed in place).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceMeta {
+    pub schema: u32,
+    pub slug: String,
+    pub tenant: String,
+    pub title: Option<String>,
+    pub nav: Vec<String>,
+    pub home: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+const SPACE_META_SCHEMA: u32 = 1;
+/// The subdirectory of a `spaces/<slug>/` dir holding the per-page artifact bodies
+/// (`artifacts/<page>.html`). Kept separate from the page's flat `artifact.html`.
+const SPACE_ARTIFACTS_DIR: &str = "artifacts";
+/// The subdirectory holding a space's static assets, mirroring the scanned asset
+/// keys (`assets/<rel...>`).
+const SPACE_ASSETS_SUBDIR: &str = "assets";
 
 /// B2 multi-round **live overlay** sidecars (a page's *current round* of content).
 /// The immutable baseline `artifact.html` is **never** rewritten — a multi-round
@@ -119,10 +147,18 @@ struct IdemRecord {
 /// [`ArtifactHost`] whose snapshot it keeps in sync on publish + GC.
 pub struct Store {
     pages_dir: PathBuf,
+    /// Root of the multi-artifact **space** tree (`<root>/spaces/<slug>/`), the
+    /// Gap-1 hosted-space storage. Parallel to `pages_dir` so the single-file page
+    /// path is untouched; both feed the one in-memory snapshot.
+    spaces_dir: PathBuf,
     /// Root of the per-tenant idempotency-mapping tree (`<root>/idem/<tenant>/`).
     /// A tenant's mappings live only under its own subdirectory, so a key lookup
     /// is scoped to the authenticated tenant by construction.
     idem_dir: PathBuf,
+    /// Root of the per-tenant **stable space-key** mapping tree
+    /// (`<root>/space-idem/<tenant>/`). A `--space-key` maps to a space slug so a
+    /// re-publish updates that space **in place** (owner-scoped, per-tenant scoped).
+    space_idem_dir: PathBuf,
     host: Arc<ArtifactHost>,
     /// Serializes the read-snapshot → mutate-disk → swap-snapshot critical section
     /// across `publish` and `gc`. Without it, two concurrent publishes (or a
@@ -145,6 +181,29 @@ pub struct Published {
     pub created: bool,
 }
 
+/// One page of a published space, for the ingest `--json` envelope (nav order).
+#[derive(Debug, Clone)]
+pub struct PublishedPage {
+    pub slug: String,
+    pub title: String,
+}
+
+/// Outcome of a successful [`Store::publish_space`].
+#[derive(Debug)]
+pub struct PublishedSpace {
+    /// The space capability slug (`/p/<slug>/`).
+    pub slug: String,
+    /// Resolved space title (from the producer manifest), if any.
+    pub title: Option<String>,
+    /// The home slug (`index` > `home` > first in nav order).
+    pub home: Option<String>,
+    /// Pages in nav order, with resolved titles.
+    pub pages: Vec<PublishedPage>,
+    /// `true` when a fresh slug was minted; `false` when a stable `--space-key`
+    /// updated an existing space in place.
+    pub created: bool,
+}
+
 impl Store {
     /// Open (creating if needed) the store rooted at `root`, load every existing
     /// page into the host's initial snapshot, and return the store. A corrupt or
@@ -154,15 +213,21 @@ impl Store {
     pub fn open(root: &Path, host: Arc<ArtifactHost>) -> std::io::Result<Self> {
         let pages_dir = root.join("pages");
         std::fs::create_dir_all(&pages_dir)?;
+        let spaces_dir = root.join("spaces");
+        std::fs::create_dir_all(&spaces_dir)?;
         let idem_dir = root.join("idem");
         std::fs::create_dir_all(&idem_dir)?;
-        // Persist the `pages`/`idem` directory entries themselves before any write
-        // relies on them being present after a crash (fsync of a child dir does not
-        // persist the child's entry in its parent).
+        let space_idem_dir = root.join("space-idem");
+        std::fs::create_dir_all(&space_idem_dir)?;
+        // Persist the `pages`/`spaces`/`idem`/`space-idem` directory entries
+        // themselves before any write relies on them being present after a crash
+        // (fsync of a child dir does not persist the child's entry in its parent).
         fsync_dir(root)?;
         let store = Store {
             pages_dir,
+            spaces_dir,
             idem_dir,
+            space_idem_dir,
             host,
             mutation: std::sync::Mutex::new(()),
         };
@@ -211,10 +276,20 @@ impl Store {
             .map(|a| a.html.clone())
     }
 
-    /// Scan the whole `pages/` tree into a fresh [`Snapshot`]. Each subdirectory is
-    /// one page; unreadable/corrupt/oversize/invalid pages are skipped + logged.
+    /// Scan the whole store (`pages/` **and** `spaces/`) into a fresh [`Snapshot`].
+    /// Pages and spaces share the one slug keyspace (a page is a single-artifact
+    /// space in the snapshot); a slug can never collide across the two trees because
+    /// [`Store::fresh_slug`] checks both plus the live snapshot at mint time.
     fn scan_disk(&self) -> Snapshot {
         let mut snap = Snapshot::empty();
+        self.scan_pages_into(&mut snap);
+        self.scan_spaces_into(&mut snap);
+        snap
+    }
+
+    /// Scan the `pages/` tree into `snap`. Each subdirectory is one single-artifact
+    /// page; unreadable/corrupt/oversize/invalid pages are skipped + logged.
+    fn scan_pages_into(&self, snap: &mut Snapshot) {
         let rd = match std::fs::read_dir(&self.pages_dir) {
             Ok(rd) => rd,
             Err(e) => {
@@ -222,7 +297,7 @@ impl Store {
                     "glasspad host: cannot read pages dir {}: {e}",
                     self.pages_dir.display()
                 );
-                return snap;
+                return;
             }
         };
         for entry in rd.flatten() {
@@ -241,7 +316,6 @@ impl Store {
                 ),
             }
         }
-        snap
     }
 
     /// Load one page directory into `(meta, space)`. Validates the slug grammar and
@@ -647,7 +721,24 @@ impl Store {
     /// the new directory entry is itself durable (without this, the very first key
     /// for a tenant could vanish on a crash despite `write_idem` returning success).
     fn write_idem(&self, tenant: &str, key: &str, slug: &str) -> std::io::Result<()> {
-        let tenant_dir = self.idem_dir.join(tenant);
+        let base = self.idem_dir.clone();
+        self.write_mapping(&base, tenant, key, slug)
+    }
+
+    /// Durably write a `key → slug` mapping under `base_dir/<tenant>/<hash>.json`
+    /// (fsync + atomic rename). Shared by the single-page idempotency tree
+    /// (`idem/`) and the stable space-key tree (`space-idem/`) so both get the same
+    /// crash-safety (tmp fsync → rename → tenant-dir fsync → base-dir fsync on first
+    /// key for a tenant). The record carries its owning tenant so a misplaced file
+    /// is rejected on read.
+    fn write_mapping(
+        &self,
+        base_dir: &Path,
+        tenant: &str,
+        key: &str,
+        slug: &str,
+    ) -> std::io::Result<()> {
+        let tenant_dir = base_dir.join(tenant);
         let tenant_dir_is_new = !tenant_dir.exists();
         std::fs::create_dir_all(&tenant_dir)?;
         let hash = sha256_hex(key.as_bytes());
@@ -665,7 +756,7 @@ impl Store {
             std::fs::rename(&tmp_path, &final_path)?;
             fsync_dir(&tenant_dir)?;
             if tenant_dir_is_new {
-                fsync_dir(&self.idem_dir)?;
+                fsync_dir(base_dir)?;
             }
             Ok(())
         })();
@@ -680,7 +771,10 @@ impl Store {
     fn fresh_slug(&self, current: &Snapshot) -> Result<String, PublishError> {
         for _ in 0..8 {
             let s = slug::generate();
-            if !current.spaces.contains_key(&s) && !self.pages_dir.join(&s).exists() {
+            if !current.spaces.contains_key(&s)
+                && !self.pages_dir.join(&s).exists()
+                && !self.spaces_dir.join(&s).exists()
+            {
                 return Ok(s);
             }
         }
@@ -767,10 +861,39 @@ impl Store {
                 removed += 1;
             }
         }
+        // Same pass over the multi-artifact `spaces/` tree (Gap 1): reap crashed
+        // `.<slug>.tmp` staging + `.<slug>.old` replace-backup dirs, and remove any
+        // space directory positively dated as expired.
+        for entry in std::fs::read_dir(&self.spaces_dir)?.flatten() {
+            let dir = entry.path();
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                let _ = std::fs::remove_dir_all(&dir);
+                continue;
+            }
+            if !dir.is_dir() {
+                continue;
+            }
+            let created = match self.read_space_created_at(&dir) {
+                Some(t) => t,
+                None => continue,
+            };
+            if created < cutoff {
+                if let Err(e) = std::fs::remove_dir_all(&dir) {
+                    eprintln!(
+                        "glasspad host: GC failed to remove space {}: {e}",
+                        dir.display()
+                    );
+                    continue;
+                }
+                removed += 1;
+            }
+        }
         if removed > 0 {
             // Make the removals durable, then rebuild + swap the served snapshot from
             // what remains on disk.
             fsync_dir(&self.pages_dir)?;
+            fsync_dir(&self.spaces_dir)?;
             let snap = self.scan_disk();
             self.sweep_idem_mappings(&snap);
             self.host.swap(snap);
@@ -789,12 +912,23 @@ impl Store {
     /// create); reclaiming it here bounds the idem tree to live pages + one GC pass.
     /// Best-effort: individual failures are logged, not fatal.
     fn sweep_idem_mappings(&self, live: &Snapshot) {
-        let tenants = match std::fs::read_dir(&self.idem_dir) {
+        let idem = self.idem_dir.clone();
+        self.sweep_mappings(&idem, live);
+        let space_idem = self.space_idem_dir.clone();
+        self.sweep_mappings(&space_idem, live);
+    }
+
+    /// Delete mappings under `base_dir` that no longer point at a served slug, plus
+    /// any leftover `.<hash>.tmp` staging files, across every tenant. Shared by the
+    /// page-idempotency and stable-space-key trees (a mapping is dead once its target
+    /// slug leaves the served snapshot).
+    fn sweep_mappings(&self, base_dir: &Path, live: &Snapshot) {
+        let tenants = match std::fs::read_dir(base_dir) {
             Ok(rd) => rd,
             Err(e) => {
                 eprintln!(
-                    "glasspad host: GC cannot read idem dir {}: {e}",
-                    self.idem_dir.display()
+                    "glasspad host: GC cannot read mapping dir {}: {e}",
+                    base_dir.display()
                 );
                 return;
             }
@@ -843,6 +977,447 @@ impl Store {
         let meta: PageMeta = serde_json::from_slice(&bytes).ok()?;
         Some(meta.created_at)
     }
+
+    // --- Gap 1: multi-artifact hosted spaces -------------------------------
+
+    /// Publish a multi-artifact **space** for `tenant`, or — with a stable
+    /// `space_key` naming a space this tenant already published — **update that space
+    /// in place** at the same slug/URL. `space` is already validated by
+    /// [`space::build_space_bundle`]; this method owns durability + snapshot swap.
+    ///
+    /// Update-in-place is **owner-scoped**: the stable-key mapping is read only from
+    /// this tenant's own `space-idem/<tenant>/` subtree, the mapping records its
+    /// owning tenant, and the target space's own `meta.json` must record the same
+    /// tenant — so a tenant can only ever replace *its own* space. A key that is
+    /// absent, dangling (space GC'd), or not-owned falls through to a fresh mint (and
+    /// re-points the mapping). No key → a fresh slug every publish.
+    pub fn publish_space(
+        &self,
+        tenant: &str,
+        space: Space,
+        space_key: Option<&str>,
+    ) -> Result<PublishedSpace, PublishError> {
+        // Same critical section as page publish / round push / GC: read snapshot →
+        // write disk → swap, serialized so no concurrent mutation loses an update.
+        let _guard = self.lock_mutation();
+        let current = self.host.snapshot();
+
+        // Resolve an in-place target: a served space, owned by this tenant, mapped
+        // by the stable key. Anything else → mint fresh.
+        let existing = match space_key {
+            Some(key) => self.lookup_space_slug(tenant, key, &current)?,
+            None => None,
+        };
+
+        let (slug, created) = match existing {
+            Some(slug) => (slug, false),
+            None => {
+                if current.spaces.len() >= MAX_PAGES {
+                    return Err(PublishError::Full);
+                }
+                (self.fresh_slug(&current)?, true)
+            }
+        };
+
+        let now = Utc::now();
+        // A create stamps `created_at` now; an in-place update preserves the original
+        // so the retention window is measured from first publish, not last refresh.
+        let created_at = if created {
+            now
+        } else {
+            self.read_space_created_at(&self.spaces_dir.join(&slug))
+                .unwrap_or(now)
+        };
+        let meta = SpaceMeta {
+            schema: SPACE_META_SCHEMA,
+            slug: slug.clone(),
+            tenant: tenant.to_string(),
+            title: space.title.clone(),
+            nav: space.nav.clone(),
+            home: space.home.clone(),
+            created_at,
+            updated_at: now,
+        };
+
+        self.materialize_space(&slug, &space, &meta, !created)
+            .map_err(PublishError::Io)?;
+
+        // Record the durable stable-key mapping only AFTER the space is on disk (same
+        // ordering as the page idempotency mapping): a crash between the two leaves at
+        // worst an orphan space with no mapping, never a mapping to a missing space.
+        if let Some(key) = space_key {
+            self.write_space_idem(tenant, key, &slug)
+                .map_err(PublishError::Io)?;
+        }
+
+        let pages: Vec<PublishedPage> = space
+            .nav
+            .iter()
+            .filter_map(|s| {
+                space.artifacts.get(s).map(|a| PublishedPage {
+                    slug: s.clone(),
+                    title: a.title.clone(),
+                })
+            })
+            .collect();
+
+        // Clone-modify-swap the served snapshot (readers in flight keep the old Arc).
+        let mut spaces = current.spaces.clone();
+        spaces.insert(slug.clone(), space.clone());
+        self.host.swap(Snapshot { spaces });
+
+        Ok(PublishedSpace {
+            slug,
+            title: space.title,
+            home: space.home,
+            pages,
+            created,
+        })
+    }
+
+    /// Scan the `spaces/` tree into `snap`. Each subdirectory is one multi-artifact
+    /// space; unreadable/corrupt/invalid spaces are skipped + logged (one bad space
+    /// never stops the server serving the rest).
+    fn scan_spaces_into(&self, snap: &mut Snapshot) {
+        let rd = match std::fs::read_dir(&self.spaces_dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                eprintln!(
+                    "glasspad host: cannot read spaces dir {}: {e}",
+                    self.spaces_dir.display()
+                );
+                return;
+            }
+        };
+        for entry in rd.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            match self.load_space(&dir) {
+                Ok(Some((meta, space))) => {
+                    snap.spaces.insert(meta.slug.clone(), space);
+                }
+                Ok(None) => {}
+                Err(e) => eprintln!(
+                    "glasspad host: skipping unreadable space {}: {e}",
+                    dir.display()
+                ),
+            }
+        }
+    }
+
+    /// Load one `spaces/<slug>/` directory back into `(meta, Space)`, re-validating
+    /// every field. The raw artifact/asset bytes are re-run through
+    /// [`space::build_space_bundle`] — the **same** validation the ingest path uses —
+    /// so a hand-tampered store can never smuggle a bad slug/oversize/traversal entry
+    /// into the router. Symlinks (dir or any file) are rejected. Returns `Ok(None)`
+    /// for a dir that is absent-meta / mismatched / fails validation (skipped, not
+    /// fatal).
+    fn load_space(&self, dir: &Path) -> std::io::Result<Option<(SpaceMeta, Space)>> {
+        if std::fs::symlink_metadata(dir)?.file_type().is_symlink() {
+            eprintln!(
+                "glasspad host: space dir {} is a symlink; skipping",
+                dir.display()
+            );
+            return Ok(None);
+        }
+        let meta_path = dir.join(META_FILE);
+        if !meta_path.is_file() {
+            return Ok(None);
+        }
+        let meta_bytes = read_capped(&meta_path, MAX_META_BYTES)?;
+        if meta_bytes.len() as u64 > MAX_META_BYTES {
+            eprintln!(
+                "glasspad host: space meta.json in {} exceeds {MAX_META_BYTES} bytes; skipping",
+                dir.display()
+            );
+            return Ok(None);
+        }
+        let meta: SpaceMeta = match serde_json::from_slice(&meta_bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("glasspad host: bad space meta.json in {}: {e}", dir.display());
+                return Ok(None);
+            }
+        };
+        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let title_ok = meta
+            .title
+            .as_ref()
+            .is_none_or(|t| t.chars().count() <= space::MAX_TITLE_CHARS);
+        if meta.schema != SPACE_META_SCHEMA
+            || !valid_space(&meta.slug)
+            || meta.slug != dir_name
+            || !valid_space(&meta.tenant)
+            || !title_ok
+        {
+            eprintln!(
+                "glasspad host: space dir {} has invalid meta (schema/slug/tenant/title); skipping",
+                dir.display()
+            );
+            return Ok(None);
+        }
+
+        // Collect the raw pages + assets off disk (bounded reads; symlinks rejected).
+        let pages = match self.read_space_pages(dir)? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let assets = match self.read_space_assets(dir)? {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+
+        // Re-validate through the SAME builder the ingest surface uses.
+        match build_space_bundle(pages, assets, meta.nav.clone(), meta.title.clone()) {
+            Ok(sp) => Ok(Some((meta, sp))),
+            Err(e) => {
+                eprintln!(
+                    "glasspad host: space {} failed revalidation: {e}; skipping",
+                    dir.display()
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// Read a space's `artifacts/<page>.html` bodies into [`BundlePage`]s. Returns
+    /// `Ok(None)` if a symlink is encountered (fail-closed: skip the whole space).
+    fn read_space_pages(&self, dir: &Path) -> std::io::Result<Option<Vec<BundlePage>>> {
+        let art_dir = dir.join(SPACE_ARTIFACTS_DIR);
+        let rd = match std::fs::read_dir(&art_dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Vec::new())),
+            Err(e) => return Err(e),
+        };
+        let mut pages = Vec::new();
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                eprintln!(
+                    "glasspad host: space artifact {} is a symlink; skipping space",
+                    path.display()
+                );
+                return Ok(None);
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            let slug = match name.strip_suffix(".html") {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let html = read_capped_utf8(&path)?;
+            pages.push(BundlePage { slug, html });
+        }
+        Ok(Some(pages))
+    }
+
+    /// Read a space's `assets/` subtree into [`BundleAsset`]s keyed by the path
+    /// **relative to** `assets/` (no prefix — the shape `build_space_bundle` expects).
+    /// Returns `Ok(None)` on a symlink (fail-closed).
+    fn read_space_assets(&self, dir: &Path) -> std::io::Result<Option<Vec<BundleAsset>>> {
+        let assets_root = dir.join(SPACE_ASSETS_SUBDIR);
+        if !assets_root.exists() {
+            return Ok(Some(Vec::new()));
+        }
+        let mut out = Vec::new();
+        let mut stack = vec![assets_root.clone()];
+        while let Some(cur) = stack.pop() {
+            for entry in std::fs::read_dir(&cur)?.flatten() {
+                let path = entry.path();
+                if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                    eprintln!(
+                        "glasspad host: space asset {} is a symlink; skipping space",
+                        path.display()
+                    );
+                    return Ok(None);
+                }
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if !path.is_file() {
+                    continue;
+                }
+                let rel = match path.strip_prefix(&assets_root) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                // Join with '/' — the key grammar `build_space_bundle` enforces.
+                let rel_str = rel
+                    .components()
+                    .filter_map(|c| c.as_os_str().to_str())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                let bytes = read_capped(&path, space::MAX_FILE_BYTES)?;
+                out.push(BundleAsset {
+                    path: rel_str,
+                    bytes,
+                });
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// Atomically + durably materialize a `spaces/<slug>/` directory from a validated
+    /// [`Space`] + [`SpaceMeta`]. Stages the whole tree in `.<slug>.tmp/`, fsyncs it,
+    /// then publishes it with a single rename (fresh create) or an atomic replace
+    /// (rename final → `.<slug>.old`, rename tmp → final, remove backup) so a reader
+    /// never sees a half-written or missing space and a crash leaves either the old
+    /// or the new tree intact.
+    fn materialize_space(
+        &self,
+        slug: &str,
+        space: &Space,
+        meta: &SpaceMeta,
+        replace: bool,
+    ) -> std::io::Result<()> {
+        let final_dir = self.spaces_dir.join(slug);
+        let tmp_dir = self.spaces_dir.join(format!(".{slug}.tmp"));
+        let backup_dir = self.spaces_dir.join(format!(".{slug}.old"));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        let staged = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&tmp_dir)?;
+            // meta.json
+            let meta_json = serde_json::to_vec_pretty(meta)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            write_file_synced(&tmp_dir.join(META_FILE), &meta_json)?;
+            // artifacts/<page>.html
+            let art_dir = tmp_dir.join(SPACE_ARTIFACTS_DIR);
+            std::fs::create_dir_all(&art_dir)?;
+            for (page_slug, artifact) in &space.artifacts {
+                write_file_synced(
+                    &art_dir.join(format!("{page_slug}.html")),
+                    artifact.html.as_bytes(),
+                )?;
+            }
+            // assets/<rel...> — the key already begins with `assets/`, so joining it
+            // onto the space dir reproduces the `assets/<rel>` layout.
+            for (key, asset) in &space.assets {
+                let dest = tmp_dir.join(key);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                write_file_synced(&dest, &asset.bytes)?;
+            }
+            // Flush every directory in the staged tree so its entries are durable
+            // before the publishing rename.
+            fsync_tree(&tmp_dir)?;
+
+            if replace {
+                let _ = std::fs::remove_dir_all(&backup_dir);
+                // Move the current tree aside, swing the new one in, then drop the
+                // backup. A crash between the renames leaves a reclaimable `.old`.
+                if final_dir.exists() {
+                    std::fs::rename(&final_dir, &backup_dir)?;
+                }
+                std::fs::rename(&tmp_dir, &final_dir)?;
+                fsync_dir(&self.spaces_dir)?;
+                let _ = std::fs::remove_dir_all(&backup_dir);
+            } else {
+                std::fs::rename(&tmp_dir, &final_dir)?;
+                fsync_dir(&self.spaces_dir)?;
+            }
+            Ok(())
+        })();
+        if staged.is_err() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+        staged
+    }
+
+    /// Resolve a stable space key to a served space slug **owned by `tenant`**, or
+    /// `None` if there is no live, owned mapping. Mirrors [`Store::lookup_idempotent`]'s
+    /// layered isolation: only `<space-idem>/<tenant>/…` is read; the record's tenant
+    /// must match; and the target space's own `meta.json` must record the same tenant.
+    /// A dangling/corrupt/foreign mapping returns `None` (→ fresh mint).
+    fn lookup_space_slug(
+        &self,
+        tenant: &str,
+        key: &str,
+        current: &Snapshot,
+    ) -> Result<Option<String>, PublishError> {
+        let path = self.space_idem_path(tenant, key);
+        let bytes = match read_capped(&path, MAX_META_BYTES) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(PublishError::Io(e)),
+        };
+        if bytes.len() as u64 > MAX_META_BYTES {
+            eprintln!(
+                "glasspad host: space-idem mapping {} exceeds {MAX_META_BYTES} bytes; ignoring",
+                path.display()
+            );
+            return Ok(None);
+        }
+        let rec: IdemRecord = match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "glasspad host: bad space-idem mapping {}: {e}; ignoring",
+                    path.display()
+                );
+                return Ok(None);
+            }
+        };
+        if rec.schema != IDEM_SCHEMA || !valid_space(&rec.slug) || rec.tenant != tenant {
+            eprintln!(
+                "glasspad host: space-idem mapping {} has invalid schema/slug/tenant; ignoring",
+                path.display()
+            );
+            return Ok(None);
+        }
+        // Dangling: only reuse the slug if the space is still served AND owned by this
+        // tenant (authoritative check against the space's own meta).
+        if !current.spaces.contains_key(&rec.slug) || !self.space_owned_by(&rec.slug, tenant) {
+            return Ok(None);
+        }
+        Ok(Some(rec.slug))
+    }
+
+    /// True iff `spaces/<slug>/meta.json` records `tenant` as owner (and its own
+    /// slug). A missing/unreadable/corrupt meta returns `false` (fail-closed).
+    fn space_owned_by(&self, slug: &str, tenant: &str) -> bool {
+        let meta_path = self.spaces_dir.join(slug).join(META_FILE);
+        let bytes = match read_capped(&meta_path, MAX_META_BYTES) {
+            Ok(b) if b.len() as u64 <= MAX_META_BYTES => b,
+            _ => return false,
+        };
+        serde_json::from_slice::<SpaceMeta>(&bytes)
+            .map(|m| m.tenant == tenant && m.slug == slug)
+            .unwrap_or(false)
+    }
+
+    /// The `created_at` recorded in a space directory's `meta.json`, or `None`.
+    fn read_space_created_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
+        let bytes = read_capped(&dir.join(META_FILE), MAX_META_BYTES).ok()?;
+        if bytes.len() as u64 > MAX_META_BYTES {
+            return None;
+        }
+        let meta: SpaceMeta = serde_json::from_slice(&bytes).ok()?;
+        Some(meta.created_at)
+    }
+
+    /// Filesystem path of the stable-space-key mapping sidecar for `(tenant, key)`
+    /// (key SHA-256'd for a fixed-length, path-safe filename).
+    fn space_idem_path(&self, tenant: &str, key: &str) -> PathBuf {
+        self.space_idem_dir
+            .join(tenant)
+            .join(format!("{}.json", sha256_hex(key.as_bytes())))
+    }
+
+    /// Durably write the stable-space-key `key → slug` mapping for `tenant`.
+    fn write_space_idem(&self, tenant: &str, key: &str, slug: &str) -> std::io::Result<()> {
+        let base = self.space_idem_dir.clone();
+        self.write_mapping(&base, tenant, key, slug)
+    }
 }
 
 /// Build a single-artifact [`Space`] (home = `index`) from a body + resolved title.
@@ -890,6 +1465,20 @@ fn fsync_dir(dir: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn fsync_dir(_dir: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+/// Recursively fsync `dir` and every subdirectory beneath it, so all directory
+/// entries in a staged tree are durable before it is renamed into place. Files are
+/// already fsync'd by `write_file_synced`; this flushes the containing directories
+/// (their entries) which a file fsync does not cover.
+fn fsync_tree(dir: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            fsync_tree(&path)?;
+        }
+    }
+    fsync_dir(dir)
 }
 
 /// Ceiling on a `meta.json` sidecar read — it is a handful of small fields, so a
@@ -1603,6 +2192,174 @@ mod tests {
             !mapping.exists(),
             "GC must reclaim the now-dangling idem mapping"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- Gap 1: multi-artifact spaces --------------------------------------
+
+    fn sample_space(home_title: &str) -> Space {
+        build_space_bundle(
+            vec![
+                BundlePage {
+                    slug: "index".into(),
+                    html: format!("<title>{home_title}</title><h1>{home_title}</h1><a href=\"./guide\">g</a>"),
+                },
+                BundlePage {
+                    slug: "guide".into(),
+                    html: "<h1>Guide</h1>".into(),
+                },
+            ],
+            vec![BundleAsset {
+                path: "logo.svg".into(),
+                bytes: b"<svg></svg>".to_vec(),
+            }],
+            vec!["index".into(), "guide".into()],
+            Some("Docs".into()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn publish_space_persists_serves_and_survives_reopen() {
+        let root = tmp_root("space-persist");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let pubd = store
+            .publish_space("acme", sample_space("Home"), None)
+            .unwrap();
+        assert!(crate::artifact_host::valid_name(&pubd.slug));
+        assert!(pubd.created);
+        assert_eq!(pubd.pages.len(), 2);
+
+        // Served as a multi-artifact space in the snapshot.
+        let snap = h.snapshot();
+        let sp = snap.space(&pubd.slug).unwrap();
+        assert_eq!(sp.artifacts.len(), 2);
+        assert!(sp.artifact("index").is_some());
+        assert!(sp.artifact("guide").is_some());
+        assert!(sp.asset("assets/logo.svg").is_some());
+        assert_eq!(sp.home.as_deref(), Some("index"));
+
+        // On-disk layout.
+        let dir = root.join("spaces").join(&pubd.slug);
+        assert!(dir.join("meta.json").is_file());
+        assert!(dir.join("artifacts/index.html").is_file());
+        assert!(dir.join("artifacts/guide.html").is_file());
+        assert!(dir.join("assets/logo.svg").is_file());
+
+        // Reopen: space reloads (re-validated) from disk.
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        let sp2 = h2.snapshot().space(&pubd.slug).cloned().unwrap();
+        assert_eq!(sp2.artifacts.len(), 2);
+        assert_eq!(store2.page_count(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn space_key_updates_in_place_same_slug() {
+        let root = tmp_root("space-idem");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish_space("acme", sample_space("V1"), Some("docs"))
+            .unwrap();
+        assert!(first.created);
+        // Re-publish with the same key → SAME slug, updated in place, created=false.
+        let again = store
+            .publish_space("acme", sample_space("V2"), Some("docs"))
+            .unwrap();
+        assert_eq!(first.slug, again.slug, "same key must reuse the slug");
+        assert!(!again.created, "re-publish updates in place");
+        assert_eq!(store.page_count(), 1, "no duplicate space");
+        // The served home body reflects the NEW content.
+        let sp = h.snapshot().space(&first.slug).cloned().unwrap();
+        assert!(sp.artifact("index").unwrap().html.contains("V2"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn space_key_is_scoped_per_tenant() {
+        let root = tmp_root("space-idem-tenant");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let a = store
+            .publish_space("acme", sample_space("A"), Some("shared"))
+            .unwrap();
+        let b = store
+            .publish_space("globex", sample_space("B"), Some("shared"))
+            .unwrap();
+        assert_ne!(a.slug, b.slug, "same key, different tenants → different spaces");
+        // Each tenant's repeat still updates its own space.
+        let a2 = store
+            .publish_space("acme", sample_space("A2"), Some("shared"))
+            .unwrap();
+        assert_eq!(a.slug, a2.slug);
+        assert_eq!(store.page_count(), 2);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn no_space_key_mints_fresh_every_time() {
+        let root = tmp_root("space-nokey");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let a = store.publish_space("acme", sample_space("A"), None).unwrap();
+        let b = store.publish_space("acme", sample_space("A"), None).unwrap();
+        assert_ne!(a.slug, b.slug);
+        assert_eq!(store.page_count(), 2);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn gc_removes_expired_space_and_stops_serving_it() {
+        let root = tmp_root("space-gc");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store.publish_space("acme", sample_space("X"), None).unwrap();
+        // Backdate the space meta.
+        let meta_path = root.join("spaces").join(&p.slug).join("meta.json");
+        let mut meta: SpaceMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta.created_at = Utc::now() - Duration::days(100);
+        std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta).unwrap()).unwrap();
+        let removed = store.gc(Duration::days(90)).unwrap();
+        assert_eq!(removed, 1);
+        assert!(!root.join("spaces").join(&p.slug).exists());
+        assert!(h.snapshot().space(&p.slug).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn cross_tenant_space_key_mapping_is_never_honored() {
+        // A hand-forged mapping under tenant A naming a space owned by B must not let
+        // A overwrite B's space: A gets its own fresh space.
+        let root = tmp_root("space-crosstenant");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let victim = store
+            .publish_space("globex", sample_space("secret"), None)
+            .unwrap();
+        // Forge a mapping under acme pointing at globex's slug, recording acme owner.
+        let tenant_dir = root.join("space-idem").join("acme");
+        std::fs::create_dir_all(&tenant_dir).unwrap();
+        let forged = IdemRecord {
+            schema: IDEM_SCHEMA,
+            tenant: "acme".into(),
+            slug: victim.slug.clone(),
+        };
+        std::fs::write(
+            store.space_idem_path("acme", "k"),
+            serde_json::to_vec(&forged).unwrap(),
+        )
+        .unwrap();
+        let mine = store
+            .publish_space("acme", sample_space("mine"), Some("k"))
+            .unwrap();
+        assert_ne!(mine.slug, victim.slug, "forged mapping must not target B's space");
+        // The victim's space is unchanged.
+        let sp = h.snapshot().space(&victim.slug).cloned().unwrap();
+        assert!(sp.artifact("index").unwrap().html.contains("secret"));
         std::fs::remove_dir_all(&root).ok();
     }
 }

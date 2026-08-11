@@ -207,6 +207,195 @@ impl fmt::Display for ScanError {
 
 impl std::error::Error for ScanError {}
 
+// --- in-memory space bundle (hosted space ingest, Gap 1) -------------------
+
+/// One page in an ingest **bundle** — an already-final HTML artifact body plus its
+/// slug (filename stem). The hosted space-ingest surface (`POST /api/v1/spaces`)
+/// carries these instead of a directory; [`build_space_bundle`] validates them with
+/// the **same** rules the filesystem scanner ([`scan_dir`]) applies, so the
+/// security-sensitive checks have one implementation exercised from both paths.
+#[derive(Clone, Debug)]
+pub struct BundlePage {
+    pub slug: String,
+    pub html: String,
+}
+
+/// One static asset in an ingest bundle. `path` is the space-relative path *under*
+/// `assets/` (e.g. `logo.svg` or `sub/logo.svg`), **without** the `assets/` prefix —
+/// exactly the shape the request `{*path}` and `asset_key_for_request` use.
+#[derive(Clone, Debug)]
+pub struct BundleAsset {
+    pub path: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Everything that can go wrong assembling an in-memory bundle into a `Space`.
+/// Distinct from [`ScanError`] (which is path-oriented) but enforces the identical
+/// grammar/cap/reserved rules; each renders an informative message (AI-first §10).
+#[derive(Debug)]
+pub enum BundleError {
+    Empty,
+    ReservedSlug(String),
+    BadSlug(String),
+    DuplicateSlug(String),
+    BadAssetPath(String),
+    DuplicateAsset(String),
+    FileTooLarge(String, u64),
+    SpaceTooLarge(u64),
+    TooManyEntries(usize),
+}
+
+impl fmt::Display for BundleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BundleError::Empty => write!(f, "a space must contain at least one page"),
+            BundleError::ReservedSlug(s) => write!(
+                f,
+                "reserved slug {s:?}: the names {} are reserved and cannot be page slugs",
+                RESERVED.join(", ")
+            ),
+            BundleError::BadSlug(s) => write!(
+                f,
+                "invalid slug {s:?}: a page slug must be lowercase [a-z0-9-], start alphanumeric, \
+                 and be ≤64 chars"
+            ),
+            BundleError::DuplicateSlug(s) => write!(
+                f,
+                "duplicate slug {s:?}: two pages map to the same slug — rename one"
+            ),
+            BundleError::BadAssetPath(p) => write!(
+                f,
+                "invalid asset path {p:?}: each segment must be [A-Za-z0-9._-], no '.'/'..'/empty \
+                 segments, and no leading 'assets/'"
+            ),
+            BundleError::DuplicateAsset(p) => {
+                write!(f, "duplicate asset path {p:?}: two assets map to the same key")
+            }
+            BundleError::FileTooLarge(name, n) => write!(
+                f,
+                "{name} is {n} bytes, over the {MAX_FILE_BYTES}-byte per-file limit"
+            ),
+            BundleError::SpaceTooLarge(n) => write!(
+                f,
+                "space totals {n} bytes, over the {MAX_SPACE_BYTES}-byte per-space limit"
+            ),
+            BundleError::TooManyEntries(n) => write!(
+                f,
+                "space has more than {MAX_ENTRIES} entries (counted {n}); split it or prune assets"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BundleError {}
+
+/// Assemble a validated multi-artifact [`Space`] from an in-memory bundle (hosted
+/// space ingest). Applies the **same** untrusted-input rules as [`scan_dir`]: slug
+/// grammar + reserved-name + collision rejection, per-file and per-space byte caps,
+/// entry-count cap, asset-path grammar + collision rejection, per-artifact title
+/// resolution, and nav/home finalization. The caller (`hosted::ingest`) has already
+/// bounded the request body; this is the authoritative content validation regardless
+/// of what the client claims. Never touches the filesystem, so there is no symlink /
+/// traversal surface here — the asset *key* grammar is still enforced so a stored key
+/// can never contain a traversal token.
+pub fn build_space_bundle(
+    pages: Vec<BundlePage>,
+    assets: Vec<BundleAsset>,
+    nav: Vec<String>,
+    title: Option<String>,
+) -> Result<Space, BundleError> {
+    if pages.is_empty() {
+        return Err(BundleError::Empty);
+    }
+    let total_entries = pages.len() + assets.len();
+    if total_entries > MAX_ENTRIES {
+        return Err(BundleError::TooManyEntries(total_entries));
+    }
+
+    let mut space = Space::default();
+    let mut total: u64 = 0;
+
+    for page in pages {
+        let BundlePage { slug, html } = page;
+        if RESERVED.contains(&slug.as_str()) {
+            return Err(BundleError::ReservedSlug(slug));
+        }
+        if !valid_name(&slug) {
+            return Err(BundleError::BadSlug(slug));
+        }
+        if space.artifacts.contains_key(&slug) {
+            return Err(BundleError::DuplicateSlug(slug));
+        }
+        let len = html.len() as u64;
+        if len > MAX_FILE_BYTES {
+            return Err(BundleError::FileTooLarge(format!("page {slug}"), len));
+        }
+        total = total.saturating_add(len);
+        if total > MAX_SPACE_BYTES {
+            return Err(BundleError::SpaceTooLarge(total));
+        }
+        let title = resolve_title(&html).unwrap_or_else(|| slug.clone());
+        space.artifacts.insert(slug, Artifact { html, title });
+    }
+
+    for asset in assets {
+        let BundleAsset { path, bytes } = asset;
+        let key = bundle_asset_key(&path).ok_or_else(|| BundleError::BadAssetPath(path.clone()))?;
+        if space.assets.contains_key(&key) {
+            return Err(BundleError::DuplicateAsset(path));
+        }
+        let len = bytes.len() as u64;
+        if len > MAX_FILE_BYTES {
+            return Err(BundleError::FileTooLarge(format!("asset {path}"), len));
+        }
+        total = total.saturating_add(len);
+        if total > MAX_SPACE_BYTES {
+            return Err(BundleError::SpaceTooLarge(total));
+        }
+        let content_type = mime_for(Path::new(&key));
+        space.assets.insert(key, Asset { content_type, bytes });
+    }
+
+    // Space title (from the producer's manifest) — sanitized exactly like the
+    // filesystem manifest path: entity-decoded, spoof-char-stripped, length-bounded.
+    if let Some(t) = title {
+        let t = strip_unsafe_display_chars(&decode_entities(t.trim()));
+        let t = t.trim();
+        if !t.is_empty() {
+            space.title = Some(bound_chars(t, MAX_TITLE_CHARS));
+        }
+    }
+    // Record the requested nav order; `finalize` reconciles it against reality
+    // (keeps only existing slugs, dedups, appends the rest lexicographically) and
+    // resolves the home slug (`index` > `home` > first in nav order).
+    space.nav = nav;
+    finalize(&mut space);
+    Ok(space)
+}
+
+/// Validate a bundle asset path into its stored key (`assets/<segs...>`). Mirrors
+/// [`asset_key_for_request`] (same per-segment grammar), but rejects a leading
+/// `assets/` component so the caller passes the path *relative to* `assets/`, and a
+/// key can never itself contain a traversal token.
+fn bundle_asset_key(path: &str) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut segs = vec![ASSETS_DIR.to_string()];
+    for (i, seg) in path.split('/').enumerate() {
+        if !valid_asset_segment(seg) {
+            return None;
+        }
+        // Reject a redundant leading `assets/` (the caller passes paths relative to
+        // the assets dir); a deeper segment literally named "assets" is fine.
+        if i == 0 && seg == ASSETS_DIR {
+            return None;
+        }
+        segs.push(seg.to_string());
+    }
+    Some(segs.join("/"))
+}
+
 /// Derive a space name from a directory path (its final component) and validate
 /// it against the space grammar + reserved list.
 pub fn space_name_for(dir: &Path) -> Result<String, ScanError> {
@@ -1029,6 +1218,96 @@ mod tests {
         assert_eq!(html_stem("a.htm"), Some("a"));
         assert_eq!(html_stem("data.json"), None);
         assert_eq!(html_stem("noext"), None);
+    }
+
+    // --- bundle builder (hosted space ingest) ------------------------------
+
+    fn page(slug: &str, html: &str) -> BundlePage {
+        BundlePage {
+            slug: slug.to_string(),
+            html: html.to_string(),
+        }
+    }
+
+    #[test]
+    fn bundle_builds_multi_page_space_with_nav_home_and_titles() {
+        let space = build_space_bundle(
+            vec![
+                page("index", "<title>Home</title><h1>hi</h1>"),
+                page("guide", "<h1>Guide</h1>"),
+            ],
+            vec![BundleAsset {
+                path: "logo.svg".into(),
+                bytes: b"<svg></svg>".to_vec(),
+            }],
+            vec!["guide".into(), "index".into()],
+            Some("My Docs".into()),
+        )
+        .unwrap();
+        assert_eq!(space.artifacts.len(), 2);
+        assert_eq!(space.artifact("index").unwrap().title, "Home");
+        assert_eq!(space.artifact("guide").unwrap().title, "Guide");
+        // nav honors the manifest order; home is still `index` (index > home > first).
+        assert_eq!(space.nav, vec!["guide".to_string(), "index".to_string()]);
+        assert_eq!(space.home.as_deref(), Some("index"));
+        assert_eq!(space.title.as_deref(), Some("My Docs"));
+        assert_eq!(
+            space.asset("assets/logo.svg").unwrap().content_type,
+            "image/svg+xml"
+        );
+    }
+
+    #[test]
+    fn bundle_rejects_reserved_bad_and_duplicate_slugs() {
+        assert!(matches!(
+            build_space_bundle(vec![page("api", "x")], vec![], vec![], None),
+            Err(BundleError::ReservedSlug(_))
+        ));
+        assert!(matches!(
+            build_space_bundle(vec![page("Bad Name", "x")], vec![], vec![], None),
+            Err(BundleError::BadSlug(_))
+        ));
+        assert!(matches!(
+            build_space_bundle(
+                vec![page("a", "x"), page("a", "y")],
+                vec![],
+                vec![],
+                None
+            ),
+            Err(BundleError::DuplicateSlug(_))
+        ));
+    }
+
+    #[test]
+    fn bundle_rejects_empty_and_bad_asset_paths() {
+        assert!(matches!(
+            build_space_bundle(vec![], vec![], vec![], None),
+            Err(BundleError::Empty)
+        ));
+        for bad in ["../secret", "a/../b", "assets/logo.svg", "", "a//b", "bad name"] {
+            let r = build_space_bundle(
+                vec![page("index", "x")],
+                vec![BundleAsset {
+                    path: bad.into(),
+                    bytes: b"x".to_vec(),
+                }],
+                vec![],
+                None,
+            );
+            assert!(
+                matches!(r, Err(BundleError::BadAssetPath(_))),
+                "path {bad:?} should be rejected, got {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundle_enforces_per_file_and_per_space_caps() {
+        let big = "a".repeat((MAX_FILE_BYTES + 1) as usize);
+        assert!(matches!(
+            build_space_bundle(vec![page("index", &big)], vec![], vec![], None),
+            Err(BundleError::FileTooLarge(_, _))
+        ));
     }
 }
 
