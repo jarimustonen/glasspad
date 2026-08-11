@@ -2414,8 +2414,9 @@ pub async fn await_submission(
 /// prints (one per event), otherwise as one compact JSON line on stdout (the data
 /// channel). Without `--follow` the first submission ends the command (backgrounded
 /// ergonomics — fire, get the answer as the result); with `--follow` it keeps printing
-/// each as it lands until `timeout`. Keep-alive comment lines and the SSE `id:`/`event:`
-/// framing are parsed but the cursor is taken from the record's own `id`.
+/// each as it lands until `timeout`. The cursor comes from each record's own `id`, and
+/// only **strictly-forward** ids are accepted (a duplicate/backward/id-less event is
+/// ignored) so the client keeps the same no-redeliver contract as the store.
 async fn consume_submission_stream(
     resp: reqwest::Response,
     since: u64,
@@ -2447,12 +2448,34 @@ async fn consume_submission_stream(
             None,
         );
     }
+    // A 2xx that is not an SSE stream (a proxy / login page returning 200 text/html)
+    // must be a clear protocol error, not a silent "timed out with no submission".
+    let is_event_stream = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| {
+            ct.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("text/event-stream")
+        })
+        .unwrap_or(false);
+    if !is_event_stream {
+        exit_error(
+            json,
+            2,
+            "unexpected_content_type",
+            "the server did not return an SSE stream (Content-Type text/event-stream)",
+            None,
+            None,
+        );
+    }
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout);
     let mut body = resp.bytes_stream();
-    let mut buf = String::new();
-    let mut ev_name: Option<String> = None;
-    let mut ev_data = String::new();
+    let mut decoder = SseDecoder::default();
     let mut cursor = since;
     let mut received = 0usize;
 
@@ -2481,55 +2504,41 @@ async fn consume_submission_stream(
                 );
             }
         };
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-
-        // Process every complete line the buffer now holds (SSE is line-oriented).
-        while let Some(nl) = buf.find('\n') {
-            let mut line: String = buf.drain(..=nl).collect();
-            while line.ends_with('\n') || line.ends_with('\r') {
-                line.pop();
-            }
-            if line.is_empty() {
-                // Blank line dispatches the accumulated event.
-                if ev_name.as_deref() == Some("submission")
-                    && let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev_data)
-                {
-                    if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
-                        cursor = id;
-                    }
-                    received += 1;
-                    if json {
-                        emit_json_line(&json!({
-                            "schema_version": SCHEMA_VERSION,
-                            "timed_out": false,
-                            "submissions": [v],
-                            "cursor": cursor,
-                            "warnings": [],
-                        }));
-                    } else {
-                        println!("{}", serde_json::to_string(&v).unwrap_or_default());
-                    }
-                    if !follow {
-                        eprintln!("received 1 submission via stream (next cursor {cursor})");
-                        std::process::exit(0);
-                    }
-                }
-                ev_name = None;
-                ev_data.clear();
+        // Decode over raw bytes (never per-chunk lossy UTF-8) with bounded buffers.
+        let mut items = Vec::new();
+        if decoder.feed(&chunk, &mut items).is_err() {
+            exit_error(
+                json,
+                2,
+                "stream_too_large",
+                "the SSE stream exceeded the per-line / per-event size bound",
+                None,
+                None,
+            );
+        }
+        for SseItem::Submission { id, value } in items {
+            // Cursor invariant: accept only a strictly-forward id (skip a duplicate,
+            // out-of-order, or id-less/degraded event without counting or printing it).
+            if id <= cursor {
                 continue;
             }
-            if line.starts_with(':') {
-                continue; // comment / keep-alive
+            cursor = id;
+            received += 1;
+            if json {
+                emit_json_line(&json!({
+                    "schema_version": SCHEMA_VERSION,
+                    "timed_out": false,
+                    "submissions": [value],
+                    "cursor": cursor,
+                    "warnings": [],
+                }));
+            } else {
+                println!("{}", serde_json::to_string(&value).unwrap_or_default());
             }
-            if let Some(rest) = line.strip_prefix("event:") {
-                ev_name = Some(rest.strip_prefix(' ').unwrap_or(rest).to_string());
-            } else if let Some(rest) = line.strip_prefix("data:") {
-                if !ev_data.is_empty() {
-                    ev_data.push('\n');
-                }
-                ev_data.push_str(rest.strip_prefix(' ').unwrap_or(rest));
+            if !follow {
+                eprintln!("received 1 submission via stream (next cursor {cursor})");
+                std::process::exit(0);
             }
-            // `id:` lines are parsed away; the cursor comes from the record's own id.
         }
     }
 
@@ -2550,6 +2559,107 @@ async fn consume_submission_stream(
         eprintln!("no submission before the {timeout}s timeout (re-arm from cursor {cursor})");
     }
     std::process::exit(3);
+}
+
+/// Upper bound on one buffered SSE line before the peer is treated as hostile: a
+/// submission's public JSON (one `data:` line) plus SSE/envelope slack.
+const MAX_SSE_LINE_BYTES: usize = crate::submissions::MAX_SUBMISSION_BYTES + 16 * 1024;
+/// Upper bound on one event's accumulated `data` across its `data:` lines.
+const MAX_SSE_EVENT_BYTES: usize = crate::submissions::MAX_SUBMISSION_BYTES + 32 * 1024;
+
+/// One decoded item the SSE stream produced.
+enum SseItem {
+    /// A complete `submission` event whose `data` parsed to an object with a numeric id.
+    Submission { id: u64, value: serde_json::Value },
+}
+
+/// The peer violated an SSE size bound (a line or event exceeded its cap).
+#[derive(Debug)]
+struct SseOverflow;
+
+/// A bounded, incremental Server-Sent-Events line decoder. It operates on **raw bytes**
+/// so a multi-byte UTF-8 code point split across network chunks is never corrupted (a
+/// complete line is UTF-8-decoded once, as a whole — the store's payloads are valid
+/// UTF-8). Line and event buffers are size-capped, so a hostile or broken `--server`
+/// that streams without a newline, or an oversize event, fails closed with
+/// [`SseOverflow`] instead of growing memory without bound. Only `submission` events
+/// whose `data` is a JSON object with a numeric `id` are surfaced; `id:`/`retry:`/
+/// unknown fields and comment (`:`) keep-alives are ignored (the cursor is the record's
+/// own `id`).
+#[derive(Default)]
+struct SseDecoder {
+    /// Bytes of the current (still-incomplete) line.
+    line: Vec<u8>,
+    /// The in-progress event's `event:` name (last one wins before dispatch).
+    event: Option<Vec<u8>>,
+    /// The in-progress event's accumulated `data:` bytes.
+    data: Vec<u8>,
+}
+
+impl SseDecoder {
+    /// Feed a chunk of raw bytes; append any completed `submission` events to `out`.
+    fn feed(&mut self, chunk: &[u8], out: &mut Vec<SseItem>) -> Result<(), SseOverflow> {
+        for &b in chunk {
+            if b == b'\n' {
+                let mut line = std::mem::take(&mut self.line);
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+                self.dispatch_line(&line, out)?;
+            } else {
+                if self.line.len() >= MAX_SSE_LINE_BYTES {
+                    return Err(SseOverflow);
+                }
+                self.line.push(b);
+            }
+        }
+        Ok(())
+    }
+
+    /// Process one complete line (SSE field grammar).
+    fn dispatch_line(&mut self, line: &[u8], out: &mut Vec<SseItem>) -> Result<(), SseOverflow> {
+        if line.is_empty() {
+            // Blank line → dispatch the accumulated event, then reset for the next one.
+            let is_submission = self.event.as_deref() == Some(b"submission");
+            let data = std::mem::take(&mut self.data);
+            self.event = None;
+            if is_submission
+                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&data)
+                && let Some(id) = v.get("id").and_then(|i| i.as_u64())
+            {
+                out.push(SseItem::Submission { id, value: v });
+            }
+            return Ok(());
+        }
+        if line.first() == Some(&b':') {
+            return Ok(()); // comment / keep-alive
+        }
+        // `field: value`; one optional space after the colon is stripped. A line with no
+        // colon is a field name with an empty value (per the SSE grammar).
+        let (field, mut value) = match line.iter().position(|&b| b == b':') {
+            Some(i) => (&line[..i], &line[i + 1..]),
+            None => (line, &b""[..]),
+        };
+        if value.first() == Some(&b' ') {
+            value = &value[1..];
+        }
+        match field {
+            b"event" => self.event = Some(value.to_vec()),
+            b"data" => {
+                // +1 for the joining '\n' between multiple data lines.
+                if self.data.len() + value.len() + 1 > MAX_SSE_EVENT_BYTES {
+                    return Err(SseOverflow);
+                }
+                if !self.data.is_empty() {
+                    self.data.push(b'\n');
+                }
+                self.data.extend_from_slice(value);
+            }
+            // `id:`/`retry:`/unknown fields are ignored — the cursor is the record's id.
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 // --- data (legacy-format helper) ------------------------------------------
@@ -2916,6 +3026,77 @@ pub fn skill(install_claude: bool, user: bool, json: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Feed `chunks` to a fresh decoder and collect the ids it surfaces.
+    fn decode_ids(chunks: &[&[u8]]) -> Result<Vec<u64>, ()> {
+        let mut dec = SseDecoder::default();
+        let mut out = Vec::new();
+        for c in chunks {
+            dec.feed(c, &mut out).map_err(|_| ())?;
+        }
+        Ok(out
+            .into_iter()
+            .map(|SseItem::Submission { id, .. }| id)
+            .collect())
+    }
+
+    #[test]
+    fn sse_decoder_reassembles_a_utf8_char_split_across_chunks() {
+        // A submission whose data contains a multi-byte char (€ = 3 bytes) split at an
+        // arbitrary byte boundary must decode intact — the old per-chunk lossy decode
+        // corrupted it. Frame: `event: submission\ndata: {"id":7,"v":"€"}\n\n`.
+        let frame = b"event: submission\ndata: {\"id\":7,\"v\":\"\xe2\x82\xac\"}\n\n";
+        // Split mid-way through the € bytes.
+        let cut = frame.iter().position(|&b| b == 0xe2).unwrap() + 1;
+        let mut dec = SseDecoder::default();
+        let mut out = Vec::new();
+        dec.feed(&frame[..cut], &mut out).unwrap();
+        dec.feed(&frame[cut..], &mut out).unwrap();
+        assert_eq!(out.len(), 1);
+        let SseItem::Submission { id, value } = &out[0];
+        assert_eq!(*id, 7);
+        assert_eq!(value["v"], "€", "the split multi-byte char is intact");
+    }
+
+    #[test]
+    fn sse_decoder_handles_crlf_comments_and_ignores_non_submission() {
+        // CRLF endings, keep-alive comment lines, and a non-`submission` event are all
+        // tolerated; only the numeric-id submission event is surfaced.
+        let ids = decode_ids(&[
+            b": keep-alive\r\n",
+            b"event: reload\r\ndata: 1\r\n\r\n",
+            b"event: submission\r\nid: 4\r\ndata: {\"id\":4}\r\n\r\n",
+        ])
+        .unwrap();
+        assert_eq!(ids, vec![4]);
+    }
+
+    #[test]
+    fn sse_decoder_skips_a_submission_without_a_numeric_id() {
+        // A degraded/id-less `submission` event is NOT surfaced (the client must never
+        // count it as a real submission or fail to advance its cursor).
+        let ids = decode_ids(&[b"event: submission\ndata: {\"no\":\"id\"}\n\n"]).unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn sse_decoder_bounds_an_oversize_line() {
+        // A hostile/broken peer streaming a line with no newline past the cap fails
+        // closed (Err), never growing memory without bound.
+        let big = vec![b'a'; MAX_SSE_LINE_BYTES + 1];
+        let mut dec = SseDecoder::default();
+        let mut out = Vec::new();
+        assert!(dec.feed(&big, &mut out).is_err());
+    }
+
+    #[test]
+    fn sse_decoder_streams_multiple_events_from_one_chunk() {
+        let ids = decode_ids(&[
+            b"event: submission\ndata: {\"id\":1}\n\nevent: submission\ndata: {\"id\":2}\n\n",
+        ])
+        .unwrap();
+        assert_eq!(ids, vec![1, 2]);
+    }
 
     #[test]
     fn detected_kind_matches_wrap_classifier() {

@@ -225,7 +225,7 @@ enum Commands {
         stream: bool,
         /// With --stream: keep the stream open and print every submission as it lands
         /// (until --timeout), rather than returning after the first.
-        #[arg(long)]
+        #[arg(long, requires = "stream")]
         follow: bool,
     },
     /// Stop the running loopback server (`serve` / `create` / `render`).

@@ -136,10 +136,11 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   cursor store (`since=<id>`, no re-deliver/skip): plain poll (A1 `…/submissions`),
   long-poll (A3 `…/submissions/wait`, the default `await-submission`), and an **SSE
   stream** (A2 `…/submissions/stream`, `await-submission --stream`) that pushes each
-  submission as a `submission` event. The stream reuses `wait`'s keyed broadcast + the
-  shared `MAX_WAITERS` held-connection cap and is agent-facing only (API-key / loopback);
-  the **artifact** never reaches it (`connect-src 'none'` unchanged — the stream path is
-  not named in the artifact CSP).
+  submission as a `submission` event. The stream reuses `wait`'s keyed broadcast but a
+  **separate** held-connection budget (`MAX_STREAM_WAITERS` + a per-key cap, so
+  indefinitely-held streams never starve the long-poll) and is agent-facing only
+  (API-key / loopback); the **artifact** never reaches it (`connect-src 'none'` unchanged
+  — the stream path is not named in the artifact CSP).
 - **Multi-round (B2) reuses the reload SSE carrier — no new push channel.** After a
   submission the agent re-renders the *same live page* and the connected shell swaps
   the framed artifact **in place**. The shell's one `EventSource("/_gp/reload")` now

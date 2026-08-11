@@ -46,9 +46,11 @@ for live-reload, so the server-side primitive exists.)
 > `GET /<space>/_gp/submissions/stream` (loopback) push each submission after
 > `since=<id>` as a `submission` SSE event (its id stamped as the SSE `id`, so a
 > `Last-Event-ID` reconnect resumes at the cursor — no re-deliver / no skip). It
-> **reuses the same primitive as `wait`**: the store's keyed broadcast + the global
-> `MAX_WAITERS` held-connection cap (a stream and a long-poll share one budget; past the
-> cap → `503`, fall back to polling). `await-submission --stream` consumes it (`--follow`
+> **reuses the same primitive as `wait`**: the store's keyed broadcast + the RAII
+> held-connection guard. Streams have a **separate** budget from the long-poll
+> (`MAX_STREAM_WAITERS` global + a per-key cap), so indefinitely-held streams can never
+> starve the primary `await-submission` surface; past the cap → `503`, fall back to
+> polling. `await-submission --stream` consumes it (`--follow`
 > to keep streaming); the plain long-poll (A3) stays the default/fallback. Each stream is
 > agent-facing (API-key / loopback-only) — the artifact stays `connect-src 'none'` and
 > cannot reach it — proven by new `./test-security.sh` A2 probes (auth, cross-tenant

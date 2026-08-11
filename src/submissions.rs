@@ -42,9 +42,10 @@
 //! submission after the cursor lands or the timeout fires, bounded by a global
 //! waiter cap so held connections can never grow without limit. [`open_stream`] is
 //! the server-push transport (A2): it holds an SSE connection and pushes each
-//! submission after the cursor as it lands, reusing the *same* keyed broadcast +
-//! held-connection cap as `wait` — the same `since=<id>` cursor guarantees (no
-//! re-deliver, no skip) apply to all three.
+//! submission after the cursor as it lands, reusing the *same* keyed broadcast as
+//! `wait` but a **separate** held-connection budget ([`MAX_STREAM_WAITERS`] +
+//! [`MAX_STREAMS_PER_KEY`], so indefinitely-held streams never starve the long-poll).
+//! The same `since=<id>` cursor guarantees (no re-deliver, no skip) apply to all three.
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -96,6 +97,19 @@ pub const MAX_LIST: usize = 100;
 /// `wait` returns [`WaitOutcome::TooBusy`] immediately rather than holding another
 /// connection — the resource bound the design's quality bar (d) requires.
 pub const MAX_WAITERS: usize = 256;
+
+/// Maximum concurrently-held **SSE streams** across the whole store. Streams get a
+/// budget **separate** from [`MAX_WAITERS`] (they are held indefinitely, unlike the
+/// time-bounded long-poll): a flood of streams can therefore never consume the
+/// long-poll budget, so the primary `await-submission` surface keeps its full
+/// headroom regardless of stream load. Past this, `open_stream` returns `None` (the
+/// caller answers "too busy" → fall back to polling).
+pub const MAX_STREAM_WAITERS: usize = 128;
+
+/// Maximum concurrently-held SSE streams for a **single key** (page slug / space).
+/// Bounds a single page from monopolizing the stream budget — the fairness half of
+/// the [`MAX_STREAM_WAITERS`] cap for the "watch many pages" use case.
+pub const MAX_STREAMS_PER_KEY: usize = 8;
 
 /// Sliding-window rate limit on **accepted submits** per key.
 const RATE_MAX: usize = 30;
@@ -201,6 +215,13 @@ pub struct SubmissionStore {
     tx: broadcast::Sender<Arc<str>>,
     /// Count of currently-held long-poll waiters (bounded by [`MAX_WAITERS`]).
     waiters: AtomicUsize,
+    /// Count of currently-held SSE streams (bounded by [`MAX_STREAM_WAITERS`],
+    /// separate from `waiters` so streams cannot starve the long-poll budget).
+    stream_waiters: AtomicUsize,
+    /// Per-key held-stream counts (bounded by [`MAX_STREAMS_PER_KEY`]). Entries are
+    /// removed when a key's count returns to zero, so the map stays bounded to keys
+    /// with live streams.
+    stream_per_key: Mutex<HashMap<String, usize>>,
     /// Per-key sliding-window submit timestamps for the rate limiter.
     rate: Mutex<HashMap<String, VecDeque<Instant>>>,
 }
@@ -225,6 +246,8 @@ impl SubmissionStore {
             next_id: AtomicU64::new(next_from_disk.max(next_from_seq)),
             tx,
             waiters: AtomicUsize::new(0),
+            stream_waiters: AtomicUsize::new(0),
+            stream_per_key: Mutex::new(HashMap::new()),
             rate: Mutex::new(HashMap::new()),
         }))
     }
@@ -416,6 +439,57 @@ impl SubmissionStore {
         })
     }
 
+    /// Try to reserve one SSE-stream slot for `key`, enforcing **both** the global
+    /// [`MAX_STREAM_WAITERS`] budget (separate from the long-poll budget, so streams
+    /// never starve `wait`) **and** the per-key [`MAX_STREAMS_PER_KEY`] cap (so one
+    /// page cannot monopolize the stream budget). `None` when either is reached. The
+    /// per-key count is taken first under the lock and rolled back if the global slot
+    /// is unavailable, so the two counters never drift. The returned guard releases
+    /// both on drop.
+    fn try_acquire_stream(self: &Arc<Self>, key: &str) -> Option<StreamGuard> {
+        // Per-key admission first (under the lock).
+        {
+            let mut map = self
+                .stream_per_key
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let count = map.entry(key.to_string()).or_insert(0);
+            if *count >= MAX_STREAMS_PER_KEY {
+                if *count == 0 {
+                    map.remove(key); // never leave a zero entry we just inserted
+                }
+                return None;
+            }
+            *count += 1;
+        }
+        // Global stream budget.
+        let prev = self.stream_waiters.fetch_add(1, Ordering::SeqCst);
+        if prev >= MAX_STREAM_WAITERS {
+            self.stream_waiters.fetch_sub(1, Ordering::SeqCst);
+            self.release_stream_key(key); // roll back the per-key increment
+            return None;
+        }
+        Some(StreamGuard {
+            store: self.clone(),
+            key: key.to_string(),
+        })
+    }
+
+    /// Decrement (and prune at zero) the per-key held-stream count. Paired with the
+    /// increment in [`try_acquire_stream`]; called from [`StreamGuard::drop`].
+    fn release_stream_key(&self, key: &str) {
+        let mut map = self
+            .stream_per_key
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(count) = map.get_mut(key) {
+            *count -= 1;
+            if *count == 0 {
+                map.remove(key);
+            }
+        }
+    }
+
     /// Remove submissions older than `retention`, then reap emptied key
     /// directories and leftover `.tmp` staging files. Returns the number removed.
     /// Best-effort per-file; a single failure is logged, not fatal.
@@ -565,29 +639,30 @@ const STREAM_CHANNEL_CAP: usize = 64;
 /// submission for `key` with `id > since` as it lands, in id order, preserving the
 /// exact no-redeliver / no-skip semantics of [`list_since`] and [`wait`]. Reuses the
 /// same keyed broadcast (a wake for a different key is ignored without a filesystem
-/// read) and counts against the same global [`MAX_WAITERS`] held-connection cap, so
-/// SSE streams and long-polls share one resource budget. Returns `None` when that cap
-/// is reached — the caller answers "too busy" and the agent falls back to polling,
-/// exactly as for [`WaitOutcome::TooBusy`].
+/// read). Held streams have their **own** budget ([`MAX_STREAM_WAITERS`] global +
+/// [`MAX_STREAMS_PER_KEY`] per key), *separate* from the long-poll [`MAX_WAITERS`]
+/// budget — so a flood of streams can never starve `await-submission`, and one page
+/// cannot monopolize the stream budget. Returns `None` when either stream cap is
+/// reached; the caller answers "too busy" and the agent falls back to polling.
 ///
 /// The returned receiver streams until the consumer drops it (the SSE client
 /// disconnects — axum's keep-alive turns a dead socket into a failed write, which
 /// drops the response body and thus this receiver): the pump then observes the closed
-/// channel and exits, releasing the waiter slot. There is deliberately **no** server
+/// channel and exits, releasing the stream slot. There is deliberately **no** server
 /// hard timeout (unlike `wait`): a held stream is the point of A2 (watch many pages /
-/// sub-second streaming), and the waiter cap + disconnect detection are what bound it.
+/// sub-second streaming), and the separate stream cap + disconnect detection bound it.
 pub fn open_stream(
     store: Arc<SubmissionStore>,
     key: String,
     since: u64,
 ) -> Option<mpsc::Receiver<Submission>> {
-    let guard = store.try_acquire_waiter()?;
+    let guard = store.try_acquire_stream(&key)?;
     let (tx, rx) = mpsc::channel(STREAM_CHANNEL_CAP);
     tokio::spawn(stream_pump(store, key, since, tx, guard));
     Some(rx)
 }
 
-/// The push loop behind [`open_stream`]. Holds the waiter slot (`_guard`) for its
+/// The push loop behind [`open_stream`]. Holds the stream slot (`_guard`) for its
 /// whole lifetime and exits — freeing the slot — as soon as the consumer drops the
 /// receiver. The subscribe-before-first-read ordering is the same lost-wakeup defense
 /// as [`wait`]: a submit that notifies after we subscribe is received; one that landed
@@ -597,14 +672,19 @@ async fn stream_pump(
     key: String,
     mut since: u64,
     tx: mpsc::Sender<Submission>,
-    _guard: WaiterGuard,
+    _guard: StreamGuard,
 ) {
     // Subscribe BEFORE the first drain so no notification is lost in the gap.
     let mut rx = store.subscribe();
     let want: Arc<str> = Arc::from(key.as_str());
     loop {
-        // Drain everything currently after the cursor, a page at a time, so a backlog
-        // larger than MAX_LIST is delivered in order with neither skip nor duplicate.
+        // Drain everything after the cursor, re-reading until a page comes back EMPTY.
+        // Draining until empty (rather than "stop when a page is not full") is correct
+        // even when a page contains skipped/corrupt records: `list_since` advances the
+        // cursor to the last GOOD id, so a mixed page returns fewer than MAX_LIST rows
+        // yet more valid rows may lie beyond it — a "not full ⇒ done" test would leave
+        // them undelivered until the next wake. `id > since` keeps every re-read
+        // strictly forward, so this never re-delivers.
         loop {
             let page = {
                 let store = store.clone();
@@ -626,16 +706,11 @@ async fn stream_pump(
             if page.submissions.is_empty() {
                 break;
             }
-            // A full page may not be the whole backlog — loop to drain the rest.
-            let full = page.submissions.len() >= MAX_LIST;
             for sub in page.submissions {
                 since = sub.id;
                 if tx.send(sub).await.is_err() {
                     return; // consumer (SSE client) gone
                 }
-            }
-            if !full {
-                break;
             }
         }
         // Park until OUR key changes or the consumer disconnects. Unrelated-key wakes
@@ -668,15 +743,34 @@ pub fn submission_sse(
     rx: mpsc::Receiver<Submission>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let stream = ReceiverStream::new(rx).map(|sub| {
+        let id = sub.id;
         let event = Event::default()
             .event("submission")
-            .id(sub.id.to_string())
+            .id(id.to_string())
             .json_data(sub.to_public_json())
-            // Two strings + an int always serialize; degrade rather than drop.
-            .unwrap_or_else(|_| Event::default().event("submission").data("{}"));
+            // A `Value` of standard types always serializes; if it somehow does not,
+            // still stamp the real id so the client can advance its cursor past this
+            // record (an id-less event would wedge a client that keys off the id).
+            .unwrap_or_else(|e| {
+                eprintln!("glasspad: submission {id} failed to serialize for SSE: {e}");
+                Event::default()
+                    .event("submission")
+                    .id(id.to_string())
+                    .data(format!("{{\"id\":{id}}}"))
+            });
         Ok::<Event, Infallible>(event)
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Parse a `Last-Event-ID` HTTP header value into a cursor. A reconnecting browser
+/// `EventSource` re-sends the last delivered submission id here; a missing/unparseable
+/// value yields `None` so the caller starts from its query default. Shared by the
+/// hosted and loopback stream handlers so the cursor grammar can never drift between
+/// them. It only ever selects *which already-persisted* records the (already key- and
+/// tenant-scoped) caller re-reads — never a cross-key/-tenant escape.
+pub fn parse_last_event_id(raw: Option<&str>) -> Option<u64> {
+    raw.and_then(|s| s.trim().parse::<u64>().ok())
 }
 
 /// RAII release of a long-poll waiter slot.
@@ -687,6 +781,21 @@ struct WaiterGuard {
 impl Drop for WaiterGuard {
     fn drop(&mut self) {
         self.store.waiters.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// RAII release of an SSE-stream slot: drops both the global stream counter and the
+/// per-key count (see [`SubmissionStore::try_acquire_stream`]). Held for the pump's
+/// whole lifetime, so a returned/aborted/panicked pump reclaims both exactly once.
+struct StreamGuard {
+    store: Arc<SubmissionStore>,
+    key: String,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        self.store.stream_waiters.fetch_sub(1, Ordering::SeqCst);
+        self.store.release_stream_key(&self.key);
     }
 }
 
@@ -809,6 +918,25 @@ mod tests {
         ));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// Write `n` records (ids `1..=n`) for `key` straight to disk, bypassing `submit`'s
+    /// per-key rate limit so a backlog larger than `MAX_LIST` can be exercised.
+    fn seed_records(store: &SubmissionStore, key: &str, n: u64) {
+        let key_dir = store.root.join(key);
+        for id in 1..=n {
+            let rec = Submission {
+                schema: SUBMISSION_SCHEMA,
+                id,
+                key: key.to_string(),
+                artifact: "index".into(),
+                tenant: "acme".into(),
+                content_version: "v1".into(),
+                created_at: Utc::now(),
+                data: serde_json::json!({ "n": id }),
+            };
+            store.write_record(&key_dir, id, &rec).unwrap();
+        }
     }
 
     #[test]
@@ -1157,32 +1285,145 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_too_busy_at_the_waiter_cap() {
-        // The stream counts against the SAME held-connection cap as `wait`: past the
-        // cap, `open_stream` returns None so the caller answers "too busy" rather than
-        // holding another connection.
+    async fn stream_too_busy_at_the_global_stream_cap_without_starving_waits() {
+        // Streams have their OWN budget, separate from the long-poll budget: past the
+        // global stream cap `open_stream` returns None, but a long-poll `wait` is NOT
+        // refused (streams can never exhaust the primary long-poll surface).
         let root = tmp_root("streambusy");
         let store = SubmissionStore::open(&root).unwrap();
+        // Fill the global stream budget with DISTINCT keys (so the per-key cap is not
+        // what rejects — this exercises the global `MAX_STREAM_WAITERS` bound).
         let mut held = Vec::new();
-        for _ in 0..MAX_WAITERS {
-            held.push(open_stream(store.clone(), "abc".into(), 0).expect("under the cap"));
+        for i in 0..MAX_STREAM_WAITERS {
+            held.push(
+                open_stream(store.clone(), format!("k{i}"), 0).expect("under the global cap"),
+            );
+        }
+        assert!(
+            open_stream(store.clone(), "knew".into(), 0).is_none(),
+            "a stream is refused once the global stream cap is reached"
+        );
+        // The long-poll budget is untouched — a wait still holds (times out, not busy).
+        let outcome = wait(
+            store.clone(),
+            "kwait".into(),
+            0,
+            Duration::from_millis(50),
+            MAX_LIST,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(outcome, WaitOutcome::TimedOut { .. }),
+            "streams at their cap must not exhaust the separate long-poll budget"
+        );
+        // Dropping one held stream frees a global slot (the pump exits, releasing it).
+        held.pop();
+        for _ in 0..50 {
+            if store.stream_waiters.load(Ordering::SeqCst) < MAX_STREAM_WAITERS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            open_stream(store.clone(), "kafter".into(), 0).is_some(),
+            "a global stream slot frees up after a held stream is dropped"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_per_key_cap_bounds_one_key_only() {
+        // One page/space cannot monopolize the stream budget: past MAX_STREAMS_PER_KEY
+        // for a key, that key is refused while a DIFFERENT key is still admitted.
+        let root = tmp_root("streamperkey");
+        let store = SubmissionStore::open(&root).unwrap();
+        let mut held = Vec::new();
+        for _ in 0..MAX_STREAMS_PER_KEY {
+            held.push(open_stream(store.clone(), "abc".into(), 0).expect("under the per-key cap"));
         }
         assert!(
             open_stream(store.clone(), "abc".into(), 0).is_none(),
-            "the stream is refused once the waiter cap is reached"
+            "one key cannot exceed the per-key stream cap"
         );
-        // Dropping one held stream frees a slot (the pump exits, releasing the guard).
+        assert!(
+            open_stream(store.clone(), "xyz".into(), 0).is_some(),
+            "the per-key cap does not block a different key"
+        );
+        // Dropping one `abc` stream frees a per-key slot.
         held.pop();
-        // Give the freed pump task a moment to drop its guard.
         for _ in 0..50 {
-            if store.waiters.load(Ordering::SeqCst) < MAX_WAITERS {
+            let n = store
+                .stream_per_key
+                .lock()
+                .unwrap()
+                .get("abc")
+                .copied()
+                .unwrap_or(0);
+            if n < MAX_STREAMS_PER_KEY {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(
             open_stream(store.clone(), "abc".into(), 0).is_some(),
-            "a slot frees up after a held stream is dropped"
+            "a per-key slot frees up after a held stream is dropped"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_delivers_a_backlog_larger_than_one_page() {
+        // A backlog spanning more than one `list_since` page (MAX_LIST) is streamed in
+        // full, in id order, with neither skip nor duplicate — the drain-until-empty
+        // contract, not "stop when a page is not full".
+        let root = tmp_root("streambacklog");
+        let store = SubmissionStore::open(&root).unwrap();
+        let total = MAX_LIST as u64 + 25;
+        seed_records(&store, "abc", total);
+        let mut rx = open_stream(store.clone(), "abc".into(), 0).expect("a slot is free");
+        for expect in 1..=total {
+            let got = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("a record arrives")
+                .expect("channel open");
+            assert_eq!(
+                got.id, expect,
+                "records stream in id order across page boundaries"
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_drains_past_a_corrupt_record_in_a_full_page() {
+        // Regression for the `full = len >= MAX_LIST` under-drain bug: a corrupt record
+        // inside the first page made the page look "not full", so records BEYOND it were
+        // withheld until the next wake. Draining until an empty page delivers them now.
+        let root = tmp_root("streamcorrupt");
+        let store = SubmissionStore::open(&root).unwrap();
+        let total = MAX_LIST as u64 + 1; // id `total` lies beyond the first 100-id page
+        seed_records(&store, "abc", total);
+        // Corrupt id 50 (inside the first page) so it is skipped by `list_since`.
+        std::fs::write(root.join("abc").join("50.json"), b"{ not json").unwrap();
+        let mut rx = open_stream(store.clone(), "abc".into(), 0).expect("a slot is free");
+        let mut seen = Vec::new();
+        for _ in 0..(total - 1) {
+            let got = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("a record arrives")
+                .expect("channel open");
+            seen.push(got.id);
+        }
+        assert!(!seen.contains(&50), "the corrupt record is skipped");
+        assert!(
+            seen.contains(&total),
+            "id {total} beyond the corrupt page is still delivered"
+        );
+        assert_eq!(
+            seen.len(),
+            (total - 1) as usize,
+            "every good record arrives exactly once"
         );
         std::fs::remove_dir_all(&root).ok();
     }

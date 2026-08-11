@@ -292,10 +292,9 @@ async fn stream(
 fn effective_since(query: Option<u64>, headers: &HeaderMap) -> u64 {
     query
         .or_else(|| {
-            headers
-                .get("last-event-id")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.trim().parse::<u64>().ok())
+            submissions::parse_last_event_id(
+                headers.get("last-event-id").and_then(|v| v.to_str().ok()),
+            )
         })
         .unwrap_or(0)
 }

@@ -5,6 +5,9 @@ type: improvement
 status: in-progress
 priority: normal
 blocked_by: ['@return-channel-multi-round']
+commits:
+- hash: 1f22737
+  summary: A2 SSE transport — stream endpoints, await-submission --stream/--follow, security probes
 ---
 
 # Return channel A2 — SSE transport for await-submission

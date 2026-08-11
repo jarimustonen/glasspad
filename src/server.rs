@@ -298,15 +298,12 @@ async fn loopback_stream(
     }
 }
 
-/// Parse a `Last-Event-ID` header into a cursor (a reconnecting `EventSource` sends
-/// the last delivered submission id). A missing/unparseable value yields `None`, so
-/// the caller starts from the default 0 — a harmless full re-read, never a cross-space
-/// escape (the space is still bound from the URL path).
+/// Read a `Last-Event-ID` header cursor via the shared parser (a reconnecting
+/// `EventSource` sends the last delivered submission id). A missing/unparseable value
+/// yields `None`, so the caller starts from the default 0 — a harmless full re-read,
+/// never a cross-space escape (the space is still bound from the URL path).
 fn last_event_id(headers: &HeaderMap) -> Option<u64> {
-    headers
-        .get("last-event-id")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse::<u64>().ok())
+    submissions::parse_last_event_id(headers.get("last-event-id").and_then(|v| v.to_str().ok()))
 }
 
 fn sub_list_response(page: &submissions::ListPage, timed_out: bool) -> Response {
