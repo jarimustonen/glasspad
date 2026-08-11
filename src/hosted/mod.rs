@@ -158,8 +158,9 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
 
     // Space ingest (Gap 1): a whole space bundle. Same auth, but a body limit sized
     // for a full space (per-space byte cap + base64 (~4/3) + JSON overhead slack).
-    let space_body_limit =
-        (space::MAX_SPACE_BYTES as usize) * 4 / 3 + space::MAX_SPACE_BYTES as usize / 4 + 1024 * 1024;
+    let space_body_limit = (space::MAX_SPACE_BYTES as usize) * 4 / 3
+        + space::MAX_SPACE_BYTES as usize / 4
+        + 1024 * 1024;
     let space_ingest = Router::new()
         .route("/api/v1/spaces", post(ingest::publish_space))
         .route_layer(middleware::from_fn_with_state(
@@ -789,8 +790,11 @@ mod tests {
         let j = body_json(r).await;
         let slug = j["slug"].as_str().unwrap().to_string();
         assert_eq!(j["page_count"].as_u64().unwrap(), 2);
-        assert_eq!(j["created"].as_bool().unwrap(), true);
-        assert_eq!(j["url"].as_str().unwrap(), format!("https://pad.example.com/p/{slug}/"));
+        assert!(j["created"].as_bool().unwrap());
+        assert_eq!(
+            j["url"].as_str().unwrap(),
+            format!("https://pad.example.com/p/{slug}/")
+        );
 
         // Both pages serve under the FROZEN artifact CSP (sandbox, egress closed).
         for page in ["index", "guide"] {
@@ -811,10 +815,16 @@ mod tests {
         // The shell lists both pages in its nav (built from the server-resolved table).
         let r = send(&app, get_req(format!("/p/{slug}/"))).await;
         assert_eq!(r.status(), StatusCode::OK);
-        let html =
-            String::from_utf8_lossy(&axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap())
-                .into_owned();
-        assert!(html.contains(&format!("/p/{slug}/_c/index")), "home content path");
+        let html = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(
+            html.contains(&format!("/p/{slug}/_c/index")),
+            "home content path"
+        );
 
         // The asset serves.
         let r = send(&app, get_req(format!("/p/{slug}/assets/logo.svg"))).await;
@@ -848,17 +858,27 @@ mod tests {
         let slug1 = body_json(r).await["slug"].as_str().unwrap().to_string();
 
         let r = send(&app, space_req(Some(KEY), mk("<h1>V2</h1>"))).await;
-        assert_eq!(r.status(), StatusCode::OK, "re-publish must be 200, not 201");
+        assert_eq!(
+            r.status(),
+            StatusCode::OK,
+            "re-publish must be 200, not 201"
+        );
         let j = body_json(r).await;
         assert_eq!(j["slug"].as_str().unwrap(), slug1, "same slug on update");
-        assert_eq!(j["created"].as_bool().unwrap(), false);
+        assert!(!j["created"].as_bool().unwrap());
 
         // The served body now reflects V2.
         let r = send(&app, get_req(format!("/p/{slug1}/_c/index"))).await;
-        let html =
-            String::from_utf8_lossy(&axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap())
-                .into_owned();
-        assert!(html.contains("V2"), "in-place update did not swap the served body");
+        let html = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(
+            html.contains("V2"),
+            "in-place update did not swap the served body"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -869,18 +889,28 @@ mod tests {
         // Unauthenticated → 401.
         let r = send(
             &app,
-            space_req(None, serde_json::json!({ "pages": [ { "slug": "index", "html": "x" } ] })),
+            space_req(
+                None,
+                serde_json::json!({ "pages": [ { "slug": "index", "html": "x" } ] }),
+            ),
         )
         .await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
         // Empty pages → 400 invalid_space.
-        let r = send(&app, space_req(Some(KEY), serde_json::json!({ "pages": [] }))).await;
+        let r = send(
+            &app,
+            space_req(Some(KEY), serde_json::json!({ "pages": [] })),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::BAD_REQUEST);
         assert_eq!(body_json(r).await["error"]["code"], "invalid_space");
         // Reserved page slug → 400.
         let r = send(
             &app,
-            space_req(Some(KEY), serde_json::json!({ "pages": [ { "slug": "api", "html": "x" } ] })),
+            space_req(
+                Some(KEY),
+                serde_json::json!({ "pages": [ { "slug": "api", "html": "x" } ] }),
+            ),
         )
         .await;
         assert_eq!(r.status(), StatusCode::BAD_REQUEST);
@@ -928,7 +958,10 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(csp.starts_with("sandbox allow-scripts"));
-        assert!(csp.contains("connect-src 'none'"), "body widened egress: {csp}");
+        assert!(
+            csp.contains("connect-src 'none'"),
+            "body widened egress: {csp}"
+        );
         assert!(!csp.contains("default-src *"), "meta widened header: {csp}");
         std::fs::remove_dir_all(&root).ok();
     }

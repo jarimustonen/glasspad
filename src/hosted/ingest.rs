@@ -385,17 +385,21 @@ pub async fn publish_space(
         .collect();
     let mut assets: Vec<BundleAsset> = Vec::with_capacity(req.assets.len());
     for a in req.assets {
-        let bytes = match base64::engine::general_purpose::STANDARD.decode(a.content_base64.as_bytes()) {
-            Ok(b) => b,
-            Err(e) => {
-                return err(
-                    StatusCode::BAD_REQUEST,
-                    "bad_asset_base64",
-                    &format!("asset {:?} has invalid base64 content: {e}", a.path),
-                );
-            }
-        };
-        assets.push(BundleAsset { path: a.path, bytes });
+        let bytes =
+            match base64::engine::general_purpose::STANDARD.decode(a.content_base64.as_bytes()) {
+                Ok(b) => b,
+                Err(e) => {
+                    return err(
+                        StatusCode::BAD_REQUEST,
+                        "bad_asset_base64",
+                        &format!("asset {:?} has invalid base64 content: {e}", a.path),
+                    );
+                }
+            };
+        assets.push(BundleAsset {
+            path: a.path,
+            bytes,
+        });
     }
 
     // Build + validate the space with the SAME rules the filesystem scanner applies.
@@ -408,10 +412,9 @@ pub async fn publish_space(
     let store = state.store.clone();
     let tenant_id = tenant.0.clone();
     let key = space_key.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        store.publish_space(&tenant_id, space, key.as_deref())
-    })
-    .await;
+    let result =
+        tokio::task::spawn_blocking(move || store.publish_space(&tenant_id, space, key.as_deref()))
+            .await;
     let result = match result {
         Ok(r) => r,
         Err(join) => {
@@ -426,8 +429,7 @@ pub async fn publish_space(
 
     match result {
         Ok(published) => {
-            let space_url =
-                format!("{}{}/{}/", state.public_origin, state.mount, published.slug);
+            let space_url = format!("{}{}/{}/", state.public_origin, state.mount, published.slug);
             let pages_json: Vec<serde_json::Value> = published
                 .pages
                 .iter()

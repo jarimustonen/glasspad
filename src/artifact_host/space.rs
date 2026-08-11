@@ -269,7 +269,10 @@ impl fmt::Display for BundleError {
                  segments, and no leading 'assets/'"
             ),
             BundleError::DuplicateAsset(p) => {
-                write!(f, "duplicate asset path {p:?}: two assets map to the same key")
+                write!(
+                    f,
+                    "duplicate asset path {p:?}: two assets map to the same key"
+                )
             }
             BundleError::FileTooLarge(name, n) => write!(
                 f,
@@ -353,7 +356,13 @@ pub fn build_space_bundle(
             return Err(BundleError::SpaceTooLarge(total));
         }
         let content_type = mime_for(Path::new(&key));
-        space.assets.insert(key, Asset { content_type, bytes });
+        space.assets.insert(
+            key,
+            Asset {
+                content_type,
+                bytes,
+            },
+        );
     }
 
     // Space title (from the producer's manifest) — sanitized exactly like the
@@ -1268,12 +1277,7 @@ mod tests {
             Err(BundleError::BadSlug(_))
         ));
         assert!(matches!(
-            build_space_bundle(
-                vec![page("a", "x"), page("a", "y")],
-                vec![],
-                vec![],
-                None
-            ),
+            build_space_bundle(vec![page("a", "x"), page("a", "y")], vec![], vec![], None),
             Err(BundleError::DuplicateSlug(_))
         ));
     }
@@ -1284,7 +1288,14 @@ mod tests {
             build_space_bundle(vec![], vec![], vec![], None),
             Err(BundleError::Empty)
         ));
-        for bad in ["../secret", "a/../b", "assets/logo.svg", "", "a//b", "bad name"] {
+        for bad in [
+            "../secret",
+            "a/../b",
+            "assets/logo.svg",
+            "",
+            "a//b",
+            "bad name",
+        ] {
             let r = build_space_bundle(
                 vec![page("index", "x")],
                 vec![BundleAsset {

@@ -1137,7 +1137,10 @@ impl Store {
         let meta: SpaceMeta = match serde_json::from_slice(&meta_bytes) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("glasspad host: bad space meta.json in {}: {e}", dir.display());
+                eprintln!(
+                    "glasspad host: bad space meta.json in {}: {e}",
+                    dir.display()
+                );
                 return Ok(None);
             }
         };
@@ -2202,7 +2205,9 @@ mod tests {
             vec![
                 BundlePage {
                     slug: "index".into(),
-                    html: format!("<title>{home_title}</title><h1>{home_title}</h1><a href=\"./guide\">g</a>"),
+                    html: format!(
+                        "<title>{home_title}</title><h1>{home_title}</h1><a href=\"./guide\">g</a>"
+                    ),
                 },
                 BundlePage {
                     slug: "guide".into(),
@@ -2289,7 +2294,10 @@ mod tests {
         let b = store
             .publish_space("globex", sample_space("B"), Some("shared"))
             .unwrap();
-        assert_ne!(a.slug, b.slug, "same key, different tenants → different spaces");
+        assert_ne!(
+            a.slug, b.slug,
+            "same key, different tenants → different spaces"
+        );
         // Each tenant's repeat still updates its own space.
         let a2 = store
             .publish_space("acme", sample_space("A2"), Some("shared"))
@@ -2304,8 +2312,12 @@ mod tests {
         let root = tmp_root("space-nokey");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
-        let a = store.publish_space("acme", sample_space("A"), None).unwrap();
-        let b = store.publish_space("acme", sample_space("A"), None).unwrap();
+        let a = store
+            .publish_space("acme", sample_space("A"), None)
+            .unwrap();
+        let b = store
+            .publish_space("acme", sample_space("A"), None)
+            .unwrap();
         assert_ne!(a.slug, b.slug);
         assert_eq!(store.page_count(), 2);
         std::fs::remove_dir_all(&root).ok();
@@ -2316,7 +2328,9 @@ mod tests {
         let root = tmp_root("space-gc");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
-        let p = store.publish_space("acme", sample_space("X"), None).unwrap();
+        let p = store
+            .publish_space("acme", sample_space("X"), None)
+            .unwrap();
         // Backdate the space meta.
         let meta_path = root.join("spaces").join(&p.slug).join("meta.json");
         let mut meta: SpaceMeta =
@@ -2356,7 +2370,10 @@ mod tests {
         let mine = store
             .publish_space("acme", sample_space("mine"), Some("k"))
             .unwrap();
-        assert_ne!(mine.slug, victim.slug, "forged mapping must not target B's space");
+        assert_ne!(
+            mine.slug, victim.slug,
+            "forged mapping must not target B's space"
+        );
         // The victim's space is unchanged.
         let sp = h.snapshot().space(&victim.slug).cloned().unwrap();
         assert!(sp.artifact("index").unwrap().html.contains("secret"));

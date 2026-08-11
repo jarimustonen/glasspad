@@ -164,6 +164,31 @@ enum Commands {
         #[arg(long)]
         no_open: bool,
     },
+    /// Publish a whole SPACE (a directory of linked .html artifacts) into one hosted
+    /// namespace /p/{slug}/… with in-space nav + relative links working across pages.
+    ///
+    /// The directory is scanned locally with the same rules as `serve`/`build`
+    /// (slug grammar, reserved names, symlink/traversal rejection, size caps, MIME,
+    /// glasspad.yaml nav/title) and sent as one bundle. Config precedence mirrors
+    /// `publish`. The API key is never printed.
+    PublishSpace {
+        /// The directory to publish (a space of .html artifacts).
+        dir: PathBuf,
+        /// Hosted server base URL, e.g. https://pad.example.com.
+        #[arg(long)]
+        server: Option<String>,
+        /// Bearer API key for ingest auth.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Optional stable space key: a re-publish with the same key updates the
+        /// space IN PLACE at the same slug/URL (idempotent hosting of a docsite that
+        /// changes over time). Absent → a fresh slug each publish.
+        #[arg(long)]
+        space_key: Option<String>,
+        /// Do not open the published space URL in a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Re-render an already-published hosted page in response to a submission (B2
     /// multi-round). POSTs a new body to the page's round endpoint (API-key auth,
     /// owner-scoped); the server swaps the live page's content in place for every
@@ -349,6 +374,13 @@ async fn main() {
             )
             .await
         }
+        Some(Commands::PublishSpace {
+            dir,
+            server,
+            api_key,
+            space_key,
+            no_open,
+        }) => cli::publish_space(dir, server, api_key, space_key, json, no_open).await,
         Some(Commands::PushRound {
             slug,
             file,

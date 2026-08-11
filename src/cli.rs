@@ -1917,6 +1917,220 @@ pub async fn publish(
     }
 }
 
+/// `glasspad publish-space <dir> [--server <url>] [--api-key <key>] [--space-key
+/// <key>] [--no-open]` — publish a whole **space** (a directory of linked `.html`
+/// artifacts) into one hosted namespace `/p/<slug>/…` with in-space nav + relative
+/// links working across pages. The directory is scanned locally with the exact same
+/// `space::scan_dir` `serve`/`build` use (slug grammar, reserved names, symlink /
+/// traversal rejection, size caps, MIME, `glasspad.yaml` nav/title), then sent as one
+/// bundle to `POST /api/v1/spaces`. A `--space-key` makes the publish update the space
+/// **in place** at the same slug on re-publish. Config precedence mirrors `publish`.
+pub async fn publish_space(
+    dir: PathBuf,
+    server: Option<String>,
+    api_key: Option<String>,
+    space_key: Option<String>,
+    json: bool,
+    no_open: bool,
+) {
+    use base64::Engine as _;
+
+    let cfg = load_publish_config(json);
+    let server = resolve_setting(server, "GLASSPAD_SERVER", cfg.server).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_server",
+            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
+             to ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        )
+    });
+    let api_key = resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_api_key",
+            "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` to \
+             ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        )
+    });
+
+    // Scan the directory into a validated space with the SAME rules serve/build use.
+    let space = match crate::artifact_host::space::scan_dir(&dir) {
+        Ok(sp) => sp,
+        Err(e) => exit_error(
+            json,
+            1,
+            "invalid_space",
+            &format!("cannot publish {}: {e}", dir.display()),
+            None,
+            None,
+        ),
+    };
+    if space.artifacts.is_empty() {
+        exit_error(
+            json,
+            1,
+            "empty_space",
+            &format!(
+                "{} has no .html artifacts to publish (a space is a directory of .html files)",
+                dir.display()
+            ),
+            None,
+            None,
+        );
+    }
+
+    // Shape the JSON bundle: pages (slug → html), assets (path → base64), nav, title.
+    let pages: Vec<serde_json::Value> = space
+        .artifacts
+        .iter()
+        .map(|(slug, art)| json!({ "slug": slug, "html": art.html }))
+        .collect();
+    let assets: Vec<serde_json::Value> = space
+        .assets
+        .iter()
+        .map(|(key, asset)| {
+            // The scanned key is `assets/<rel>`; the bundle wants the path relative to
+            // the assets dir (no prefix).
+            let rel = key.strip_prefix("assets/").unwrap_or(key);
+            json!({
+                "path": rel,
+                "content_base64": base64::engine::general_purpose::STANDARD.encode(&asset.bytes),
+            })
+        })
+        .collect();
+    let mut body = serde_json::Map::new();
+    body.insert("pages".into(), json!(pages));
+    if !assets.is_empty() {
+        body.insert("assets".into(), json!(assets));
+    }
+    if !space.nav.is_empty() {
+        body.insert("nav".into(), json!(space.nav));
+    }
+    if let Some(t) = &space.title {
+        body.insert("title".into(), json!(t));
+    }
+    if let Some(k) = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", None) {
+        body.insert("space_key".into(), json!(k));
+    }
+
+    if server.starts_with("http://") && !server_is_loopback(&server) {
+        eprintln!(
+            "warning: publishing over plaintext http:// to a non-local host sends the API key \
+             in the clear; prefer https://"
+        );
+    }
+
+    let url = format!("{}/api/v1/spaces", server.trim_end_matches('/'));
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
+    };
+    let resp = client
+        .post(&url)
+        .bearer_auth(&api_key)
+        .json(&serde_json::Value::Object(body))
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => exit_error(
+            json,
+            2,
+            "request_failed",
+            &format!("cannot reach {url}: {e}"),
+            None,
+            None,
+        ),
+    };
+
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let msg = payload
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("the server rejected the space publish");
+        let code = payload
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("publish_rejected");
+        let exit = if status.is_client_error() { 1 } else { 2 };
+        exit_error(
+            json,
+            exit,
+            code,
+            &format!("{msg} (HTTP {})", status.as_u16()),
+            None,
+            None,
+        );
+    }
+
+    let slug = payload
+        .get("slug")
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let space_url = payload
+        .get("url")
+        .and_then(|u| u.as_str())
+        .filter(|u| !u.is_empty())
+        .map(str::to_string);
+    let (slug, space_url) = match (slug, space_url) {
+        (Some(s), Some(u)) => (s, u),
+        _ => exit_error(
+            json,
+            2,
+            "malformed_response",
+            &format!(
+                "server returned {} but no slug/url in the body",
+                status.as_u16()
+            ),
+            None,
+            None,
+        ),
+    };
+    let page_count = payload
+        .get("page_count")
+        .and_then(|c| c.as_u64())
+        .unwrap_or(space.artifacts.len() as u64);
+    let created = payload
+        .get("created")
+        .and_then(|c| c.as_bool())
+        .unwrap_or(true);
+
+    let launched = if no_open {
+        false
+    } else {
+        launch_browser(&space_url)
+    };
+
+    if json {
+        let mut out = payload.clone();
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("published".into(), json!(true));
+            obj.insert("browser_launched".into(), json!(launched));
+        }
+        emit_json_line(&out);
+    } else {
+        println!("{space_url}");
+        let verb = if created { "published" } else { "updated" };
+        eprintln!("{verb} space '{slug}' ({page_count} pages) to {space_url}");
+    }
+}
+
 /// `glasspad push-round <slug> <file> [--server <url>] [--api-key <key>] [--markdown
 /// [--template <ref>]]` — the B2 **multi-round** client. Re-render an already-published
 /// hosted page in response to a submission: it POSTs the new body to
