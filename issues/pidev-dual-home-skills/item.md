@@ -2,11 +2,14 @@
 created: 2026-08-11
 updated: 2026-08-11
 type: feature
-status: in-progress
+status: done
 priority: high
 commits:
 - hash: fbcc1a7
   summary: dual-home skill install into ~/.pi/agent/skills; --agent selector; targets[] envelope; tests+README
+- hash: 34e669f
+  summary: apply llm-review findings — symlink guard, no-panic targets.first(), --agent requires --install, --install alias, docs+tests
+closed: 2026-08-11
 ---
 
 # Dual-home skills into pi.dev's skill dir (~/.pi/agent/skills)
