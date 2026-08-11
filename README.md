@@ -54,6 +54,26 @@ glasspad open myspace          # open it in the browser
 glasspad data ./old.csv        # parse a legacy CSV/JSON/mbox file to JSON rows
 ```
 
+### Installing the companion skill
+
+`glasspad skill` prints the agent-facing operating guide to stdout; `glasspad
+skill --install-claude` installs it as `SKILL.md` into an agent's skills
+directory instead:
+
+```bash
+glasspad skill --install-claude               # install into ./.claude and ./.pi (project)
+glasspad skill --install-claude --user        # install into ~/.claude and ~/.pi/agent (home)
+glasspad skill --install-claude --agent claude  # Claude Code only
+glasspad skill --install-claude --agent pi      # pi.dev only
+```
+
+By default the install **dual-homes** the skill so it is discoverable under both
+harnesses: Claude Code loads `~/.claude/skills/glasspad/SKILL.md`, and pi.dev
+loads `~/.pi/agent/skills/glasspad/SKILL.md` (invoking it as `/skill:glasspad`).
+`--agent {claude|pi|all}` selects the target(s) (default `all`); the install is
+idempotent, so re-running is always safe. Under `--json`, the success envelope's
+`targets[]` array reports every path written.
+
 See [`src/skill.md`](src/skill.md) for the agent-facing guide and
 [`DESIGN.md`](DESIGN.md) for the `--gp-*` design system that `base.css` provides.
 

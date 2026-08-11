@@ -2904,122 +2904,205 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
 /// path (e.g. no project-level `.claude/`) uses the shared [`exit_error`] contract
 /// (structured error on stderr, non-zero exit). The bare, non-install `skill`
 /// stays a pure content dump on stdout in both modes.
-pub fn skill(install_claude: bool, user: bool, json: bool) {
-    let skill_content = include_str!("skill.md");
+/// Which agent skill directory(ies) `skill --install-claude` writes into.
+///
+/// The CLI ships one companion skill (`SKILL.md`); the migration from Claude Code
+/// to pi.dev means the *same* skill must be discoverable under both harnesses.
+/// Claude Code loads `~/.claude/skills/<name>/SKILL.md`; pi.dev loads
+/// `~/.pi/agent/skills/<name>/SKILL.md` (and invokes it as `/skill:name`). Rather
+/// than force the caller to run the installer twice, `--agent all` (the default)
+/// *dual-homes* — one invocation writes both. This mirrors the agent-target
+/// convention already used by homebase / orchestratectl (`--agent claude|…|all`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum SkillAgent {
+    /// Claude Code skills dir (`~/.claude/skills/` for `--user`, else `./.claude/skills/`).
+    Claude,
+    /// pi.dev skills dir (`~/.pi/agent/skills/` for `--user`, else `./.pi/skills/`).
+    Pi,
+    /// Dual-home into both Claude Code and pi.dev (the default).
+    All,
+}
 
-    // `--user` requires `--install-claude` (clap-enforced), so `install_claude`
-    // alone gates the install branch.
-    if install_claude {
-        let base = if user {
-            match dirs::home_dir() {
-                Some(h) => h.join(".claude"),
-                // A missing home dir is a system-level failure the caller cannot
-                // fix by correcting input → structured error, exit 2 (never panic,
-                // which would bypass the --json contract with a raw backtrace).
-                None => exit_error(
-                    json,
-                    2,
-                    "home_dir_not_found",
-                    "cannot determine home directory for a --user install ($HOME unset)",
-                    None,
-                    None,
-                ),
-            }
-        } else {
-            let claude_dir = PathBuf::from(".claude");
-            if !claude_dir.exists() {
+/// Write `content` to `<dir>/SKILL.md`, creating the tree as needed, and report
+/// whether the file was freshly created (vs. overwritten). Any I/O failure exits
+/// via the structured-error contract (exit 2), so this never returns on error.
+///
+/// `created` is decided atomically with an exclusive `create_new` open: it tells a
+/// fresh install apart from an in-place refresh even under a racing installer,
+/// where a plain `exists()`-then-`write` would misreport. The returned path is
+/// canonicalized (the file now exists) for a stable absolute path in the envelope.
+fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        exit_error(
+            json,
+            2,
+            "io_error",
+            &format!("cannot create {}: {e}", dir.display()),
+            None,
+            None,
+        );
+    }
+    let path = dir.join("SKILL.md");
+    use std::io::Write as _;
+    let created = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(content.as_bytes()) {
                 exit_error(
                     json,
-                    1,
-                    "claude_dir_not_found",
-                    ".claude/ directory not found in current directory. \
-                     Are you in a project root? Use --install-claude --user for a user-level install.",
+                    2,
+                    "io_error",
+                    &format!("cannot write {}: {e}", path.display()),
                     None,
                     None,
                 );
             }
-            claude_dir
-        };
-
-        let dir = base.join("skills/glasspad");
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            exit_error(
-                json,
-                2,
-                "io_error",
-                &format!("cannot create {}: {e}", dir.display()),
-                None,
-                None,
-            );
+            true
         }
-        let path = dir.join("SKILL.md");
-        // `created` tracks the SKILL.md file specifically (not the dir tree, which
-        // may pre-exist). Decide it atomically: an exclusive create_new tells a
-        // fresh install (created=true) from an in-place refresh apart from any
-        // racing installer — a plain exists()+write would misreport under a race.
-        use std::io::Write as _;
-        let created = match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut f) => {
-                if let Err(e) = f.write_all(skill_content.as_bytes()) {
-                    exit_error(
-                        json,
-                        2,
-                        "io_error",
-                        &format!("cannot write {}: {e}", path.display()),
-                        None,
-                        None,
-                    );
-                }
-                true
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if let Err(e) = std::fs::write(&path, content) {
+                exit_error(
+                    json,
+                    2,
+                    "io_error",
+                    &format!("cannot write {}: {e}", path.display()),
+                    None,
+                    None,
+                );
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Err(e) = std::fs::write(&path, skill_content) {
-                    exit_error(
-                        json,
-                        2,
-                        "io_error",
-                        &format!("cannot write {}: {e}", path.display()),
-                        None,
-                        None,
-                    );
-                }
-                false
-            }
-            Err(e) => exit_error(
+            false
+        }
+        Err(e) => exit_error(
+            json,
+            2,
+            "io_error",
+            &format!("cannot write {}: {e}", path.display()),
+            None,
+            None,
+        ),
+    };
+    // Prefer the canonical absolute path (the file now exists, so this resolves),
+    // falling back to the join if canonicalization fails.
+    let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    (resolved, created)
+}
+
+pub fn skill(install_claude: bool, user: bool, agent: SkillAgent, json: bool) {
+    let skill_content = include_str!("skill.md");
+
+    // `--user` requires `--install-claude` (clap-enforced), so `install_claude`
+    // alone gates the install branch. Without it we just print the skill.
+    if !install_claude {
+        print!("{skill_content}");
+        return;
+    }
+
+    let scope = if user { "user" } else { "project" };
+
+    // Resolve HOME once — both agent targets share it under `--user`. A missing
+    // home dir is a system-level failure the caller cannot fix by correcting
+    // input → structured error, exit 2 (never panic, which would bypass the
+    // --json contract with a raw backtrace).
+    let home = if user {
+        match dirs::home_dir() {
+            Some(h) => Some(h),
+            None => exit_error(
                 json,
                 2,
-                "io_error",
-                &format!("cannot write {}: {e}", path.display()),
+                "home_dir_not_found",
+                "cannot determine home directory for a --user install ($HOME unset)",
                 None,
                 None,
             ),
-        };
-
-        if json {
-            // Prefer the canonical absolute path (the file now exists, so this
-            // resolves), falling back to the join if canonicalization fails.
-            let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            let payload = json!({
-                "schema_version": SCHEMA_VERSION,
-                "installed": true,
-                "scope": if user { "user" } else { "project" },
-                "path": resolved.display().to_string(),
-                "created": created,
-                "cli_version": env!("CARGO_PKG_VERSION"),
-                // Present (empty) for cross-command uniformity: callers read
-                // `warnings` unconditionally across every envelope (see `data`).
-                "warnings": [],
-            });
-            emit_json_line(&payload);
-        } else {
-            println!("Installed skill to {}", path.display());
         }
     } else {
-        print!("{skill_content}");
+        None
+    };
+
+    let want_claude = matches!(agent, SkillAgent::Claude | SkillAgent::All);
+    let want_pi = matches!(agent, SkillAgent::Pi | SkillAgent::All);
+
+    // Claude is written first so its top-level envelope fields (path/scope/created)
+    // and the human "Installed skill to …" line stay backward-compatible: an
+    // existing `skill --install-claude [--user]` invocation writes the same Claude
+    // path with the same reported shape; the pi target is added alongside it.
+    let mut targets: Vec<(&str, PathBuf, bool)> = Vec::new();
+
+    if want_claude {
+        let base = match &home {
+            Some(h) => h.join(".claude"),
+            None => {
+                // Project scope keeps the "are you in a project root?" guard: a
+                // missing `.claude/` is a user error (exit 1), not a system fault.
+                let claude_dir = PathBuf::from(".claude");
+                if !claude_dir.exists() {
+                    exit_error(
+                        json,
+                        1,
+                        "claude_dir_not_found",
+                        ".claude/ directory not found in current directory. \
+                         Are you in a project root? Use --install-claude --user for a user-level install.",
+                        None,
+                        None,
+                    );
+                }
+                claude_dir
+            }
+        };
+        let (path, created) = write_skill_file(&base.join("skills/glasspad"), skill_content, json);
+        targets.push(("claude", path, created));
+    }
+
+    if want_pi {
+        // pi.dev: `~/.pi/agent/skills/` (user) or `./.pi/skills/` (project). Unlike
+        // Claude's project guard, the pi project dir is created on demand — pi has
+        // no established project-root marker to key off, and creating `.pi/skills/`
+        // is the least-surprise behavior for a pi-only project install.
+        let base = match &home {
+            Some(h) => h.join(".pi/agent"),
+            None => PathBuf::from(".pi"),
+        };
+        let (path, created) = write_skill_file(&base.join("skills/glasspad"), skill_content, json);
+        targets.push(("pi", path, created));
+    }
+
+    if json {
+        // Per AI-first §10: report every path written — never silently write a
+        // second target the envelope omits. The top-level path/created describe the
+        // first target (Claude when present) for backward compatibility; `targets`
+        // enumerates all of them.
+        let targets_json: Vec<_> = targets
+            .iter()
+            .map(|(a, p, c)| {
+                json!({
+                    "agent": a,
+                    "scope": scope,
+                    "path": p.display().to_string(),
+                    "created": c,
+                })
+            })
+            .collect();
+        let (_, first_path, first_created) = &targets[0];
+        let payload = json!({
+            "schema_version": SCHEMA_VERSION,
+            "installed": true,
+            "scope": scope,
+            "path": first_path.display().to_string(),
+            "created": first_created,
+            "targets": targets_json,
+            "cli_version": env!("CARGO_PKG_VERSION"),
+            // Present (empty) for cross-command uniformity: callers read
+            // `warnings` unconditionally across every envelope (see `data`).
+            "warnings": [],
+        });
+        emit_json_line(&payload);
+    } else {
+        for (_, path, _) in &targets {
+            println!("Installed skill to {}", path.display());
+        }
     }
 }
 

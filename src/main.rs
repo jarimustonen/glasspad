@@ -268,14 +268,19 @@ enum Commands {
     /// Report the installed CLI version (for version-gating; use --json for a
     /// machine-readable envelope). Mirrors the built-in `--version` / `-V` flag.
     Version,
-    /// Output or install the Claude Code skill (the CLI's operating manual).
+    /// Output or install the CLI's companion skill (its operating manual).
     Skill {
-        /// Install to .claude/skills/. Project-level by default, --user for ~/.claude/
+        /// Install the skill file. Project-level by default, --user for the home dir.
         #[arg(long)]
         install_claude: bool,
-        /// Use with --install-claude: install to ~/.claude/ instead of project
+        /// Use with --install-claude: install under the home dir instead of the project
         #[arg(long, requires = "install_claude")]
         user: bool,
+        /// With --install-claude: which agent skill dir(s) to install into —
+        /// `claude` (~/.claude or ./.claude), `pi` (~/.pi/agent or ./.pi), or `all`
+        /// (dual-home both). Default: all.
+        #[arg(long, value_enum, default_value_t = cli::SkillAgent::All)]
+        agent: cli::SkillAgent,
     },
 }
 
@@ -375,7 +380,8 @@ async fn main() {
         Some(Commands::Skill {
             install_claude,
             user,
-        }) => cli::skill(install_claude, user, json),
+            agent,
+        }) => cli::skill(install_claude, user, agent, json),
         // `arg_required_else_help` covers a bare `glasspad`; this reaches only a
         // no-subcommand invocation that still carried an arg (e.g. `glasspad
         // --json`). Print help and exit non-zero (a usage error, like clap's).
