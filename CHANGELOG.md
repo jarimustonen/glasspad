@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.5.0] - 2026-08-11
+
+Completes the artifact **return channel** with its two planned later increments —
+multi-round dialogue and an SSE delivery transport — and teaches `glasspad skill
+install` to dual-home its companion skill under the pi.dev harness. The artifact
+sandbox is unchanged throughout: every round stays a null-origin sandboxed iframe
+with `connect-src 'none'`; the round-trip runs through the trusted shell + server.
+
+### Added
+
+- **Multi-round return channel (B2).** After an artifact calls `gp.submit()`, the
+  creating agent can re-render the artifact **in place** and the user acts again — a
+  conversational UI in one hosted page — via an owner-authenticated round push over
+  the shell's live-reload stream. Each submission is bound to the content-version /
+  round it answered: a stale-round submit is rejected (`409`), and every new round is
+  re-verified to keep `connect-src 'none'` with no new sandbox grant (airlock held).
+- **SSE transport for `await-submission` (A2).** A new
+  `GET /api/v1/pages/<slug>/submissions/stream` endpoint pushes each submission to a
+  held `EventSource`, with `since=<id>` cursor semantics (no re-deliver, no skip) and
+  per-tenant isolation (a cross-tenant stream is refused with an opaque `404`). The
+  backgrounded long-poll remains the default surface; SSE is the opt-in transport for
+  watching many pages at once or sub-second streaming.
+- **Dual-home skill install for pi.dev.** `glasspad skill install` now writes each
+  skill's `SKILL.md` into `~/.pi/agent/skills/<name>/` in addition to the Claude Code
+  path, so the companion skill is discoverable under the pi.dev harness
+  (`/skill:name`). Idempotent and vendored-filtering-aware; the Claude Code install
+  path is unchanged.
+
 ## [0.4.0] - 2026-08-10
 
 Interactive artifacts can now **return user input to the agent that created
