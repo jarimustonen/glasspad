@@ -2,12 +2,15 @@
 created: 2026-08-10
 updated: 2026-08-11
 type: improvement
-status: in-progress
+status: done
 priority: normal
 blocked_by: ['@return-channel-multi-round']
 commits:
 - hash: 1f22737
   summary: A2 SSE transport — stream endpoints, await-submission --stream/--follow, security probes
+- hash: a4da430
+  summary: apply llm-review findings — SSE parser hardening, drain-until-empty, separate stream budget
+closed: 2026-08-11
 ---
 
 # Return channel A2 — SSE transport for await-submission
