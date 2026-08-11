@@ -130,8 +130,16 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   content-version from the *trusted request context* (URL path + stored page
   meta/body), never the payload; the submit endpoint is `Origin`-allowlisted (CSRF),
   size + rate capped; hosted reads are API-key + per-tenant scoped. See
-  `issues/artifact-return-channel/`. The store + long-poll are in `src/submissions.rs`;
-  handlers in `hosted/submit.rs` (hosted) and `server.rs` (loopback).
+  `issues/artifact-return-channel/`. The store + long-poll + SSE stream are in
+  `src/submissions.rs`; handlers in `hosted/submit.rs` (hosted) and `server.rs`
+  (loopback). The agent consumes submissions three ways over the **same** persisted-
+  cursor store (`since=<id>`, no re-deliver/skip): plain poll (A1 `…/submissions`),
+  long-poll (A3 `…/submissions/wait`, the default `await-submission`), and an **SSE
+  stream** (A2 `…/submissions/stream`, `await-submission --stream`) that pushes each
+  submission as a `submission` event. The stream reuses `wait`'s keyed broadcast + the
+  shared `MAX_WAITERS` held-connection cap and is agent-facing only (API-key / loopback);
+  the **artifact** never reaches it (`connect-src 'none'` unchanged — the stream path is
+  not named in the artifact CSP).
 - **Multi-round (B2) reuses the reload SSE carrier — no new push channel.** After a
   submission the agent re-renders the *same live page* and the connected shell swaps
   the framed artifact **in place**. The shell's one `EventSource("/_gp/reload")` now

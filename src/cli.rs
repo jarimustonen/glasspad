@@ -2232,6 +2232,8 @@ pub async fn await_submission(
     server: Option<String>,
     api_key: Option<String>,
     port: Option<u16>,
+    stream: bool,
+    follow: bool,
     json: bool,
 ) {
     // The slug/space addressing token obeys the same grammar the router enforces.
@@ -2280,22 +2282,26 @@ pub async fn await_submission(
                 );
             }
             let base = server.trim_end_matches('/');
-            (
+            let url = if stream {
+                format!("{base}/api/v1/pages/{slug}/submissions/stream?since={since}")
+            } else {
                 format!(
                     "{base}/api/v1/pages/{slug}/submissions/wait?since={since}&timeout={timeout}"
-                ),
-                Some(api_key),
-            )
+                )
+            };
+            (url, Some(api_key))
         }
         None => {
             // Loopback: target the local `serve` process on the resolved port.
             let port = resolve_port(port, json);
-            (
+            let url = if stream {
+                format!("http://127.0.0.1:{port}/{slug}/_gp/submissions/stream?since={since}")
+            } else {
                 format!(
                     "http://127.0.0.1:{port}/{slug}/_gp/submissions/wait?since={since}&timeout={timeout}"
-                ),
-                None,
-            )
+                )
+            };
+            (url, None)
         }
     };
 
@@ -2314,6 +2320,10 @@ pub async fn await_submission(
     if let Some(k) = &bearer {
         request = request.bearer_auth(k);
     }
+    // SSE requests advertise the media type so a proxy never buffers/transcodes.
+    if stream {
+        request = request.header(reqwest::header::ACCEPT, "text/event-stream");
+    }
     let resp = match request.send().await {
         Ok(r) => r,
         Err(e) => exit_error(
@@ -2325,6 +2335,11 @@ pub async fn await_submission(
             None,
         ),
     };
+
+    // SSE transport (A2): consume the server-push stream instead of the long-poll.
+    if stream {
+        consume_submission_stream(resp, since, timeout, follow, json).await;
+    }
 
     let status = resp.status();
     let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -2388,6 +2403,153 @@ pub async fn await_submission(
     // Exit code encodes the outcome: 0 = at least one submission, 3 = timed out with
     // none (a distinct, non-error status so a backgrounded agent can branch on it).
     std::process::exit(if timed_out { 3 } else { 0 });
+}
+
+/// Consume the return-channel **SSE stream** (A2 transport) and diverge with the same
+/// exit-code contract as the long-poll path: `0` once at least one submission is
+/// printed, `3` if the `timeout` elapses (or the server closes the stream) with none.
+///
+/// Each `submission` event's `data` is a submission's public JSON; under `--json` it is
+/// re-emitted as the same `{submissions:[…], cursor, timed_out}` envelope the long-poll
+/// prints (one per event), otherwise as one compact JSON line on stdout (the data
+/// channel). Without `--follow` the first submission ends the command (backgrounded
+/// ergonomics — fire, get the answer as the result); with `--follow` it keeps printing
+/// each as it lands until `timeout`. Keep-alive comment lines and the SSE `id:`/`event:`
+/// framing are parsed but the cursor is taken from the record's own `id`.
+async fn consume_submission_stream(
+    resp: reqwest::Response,
+    since: u64,
+    timeout: u64,
+    follow: bool,
+    json: bool,
+) -> ! {
+    use tokio_stream::StreamExt as _;
+    let status = resp.status();
+    if !status.is_success() {
+        let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+        let msg = payload
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("the server rejected the stream");
+        let code = payload
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("stream_rejected");
+        let exit = if status.is_client_error() { 1 } else { 2 };
+        exit_error(
+            json,
+            exit,
+            code,
+            &format!("{msg} (HTTP {})", status.as_u16()),
+            None,
+            None,
+        );
+    }
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout);
+    let mut body = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut ev_name: Option<String> = None;
+    let mut ev_data = String::new();
+    let mut cursor = since;
+    let mut received = 0usize;
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let chunk = match tokio::time::timeout(deadline - now, body.next()).await {
+            Err(_) => break,      // our logical --timeout elapsed
+            Ok(None) => break,    // the server closed the stream
+            Ok(Some(Ok(b))) => b, // more stream bytes
+            Ok(Some(Err(e))) => {
+                // A mid-hold transport error: if we already delivered something this is
+                // a normal end; otherwise it is a genuine failure.
+                if received > 0 {
+                    break;
+                }
+                exit_error(
+                    json,
+                    2,
+                    "stream_failed",
+                    &format!("stream error: {e}"),
+                    None,
+                    None,
+                );
+            }
+        };
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process every complete line the buffer now holds (SSE is line-oriented).
+        while let Some(nl) = buf.find('\n') {
+            let mut line: String = buf.drain(..=nl).collect();
+            while line.ends_with('\n') || line.ends_with('\r') {
+                line.pop();
+            }
+            if line.is_empty() {
+                // Blank line dispatches the accumulated event.
+                if ev_name.as_deref() == Some("submission")
+                    && let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev_data)
+                {
+                    if let Some(id) = v.get("id").and_then(|i| i.as_u64()) {
+                        cursor = id;
+                    }
+                    received += 1;
+                    if json {
+                        emit_json_line(&json!({
+                            "schema_version": SCHEMA_VERSION,
+                            "timed_out": false,
+                            "submissions": [v],
+                            "cursor": cursor,
+                            "warnings": [],
+                        }));
+                    } else {
+                        println!("{}", serde_json::to_string(&v).unwrap_or_default());
+                    }
+                    if !follow {
+                        eprintln!("received 1 submission via stream (next cursor {cursor})");
+                        std::process::exit(0);
+                    }
+                }
+                ev_name = None;
+                ev_data.clear();
+                continue;
+            }
+            if line.starts_with(':') {
+                continue; // comment / keep-alive
+            }
+            if let Some(rest) = line.strip_prefix("event:") {
+                ev_name = Some(rest.strip_prefix(' ').unwrap_or(rest).to_string());
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                if !ev_data.is_empty() {
+                    ev_data.push('\n');
+                }
+                ev_data.push_str(rest.strip_prefix(' ').unwrap_or(rest));
+            }
+            // `id:` lines are parsed away; the cursor comes from the record's own id.
+        }
+    }
+
+    // The stream ended (timeout or server close). Any delivered submissions → success.
+    if received > 0 {
+        eprintln!("streamed {received} submission(s) (next cursor {cursor})");
+        std::process::exit(0);
+    }
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "timed_out": true,
+            "submissions": [],
+            "cursor": cursor,
+            "warnings": [],
+        }));
+    } else {
+        eprintln!("no submission before the {timeout}s timeout (re-arm from cursor {cursor})");
+    }
+    std::process::exit(3);
 }
 
 // --- data (legacy-format helper) ------------------------------------------

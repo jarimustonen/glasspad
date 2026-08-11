@@ -26,7 +26,7 @@ mail-parser = "0.9"
 rand = "0.8"
 sha2 = "0.10"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 url = "2"
 
 # Unix-only: process liveness (`kill(pid, 0)`) and graceful stop (`kill(pid,

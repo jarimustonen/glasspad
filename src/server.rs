@@ -75,6 +75,7 @@ fn loopback_submissions_router(host: Arc<ArtifactHost>) -> Router {
         )
         .route("/{space}/_gp/submissions", get(loopback_list))
         .route("/{space}/_gp/submissions/wait", get(loopback_wait))
+        .route("/{space}/_gp/submissions/stream", get(loopback_stream))
         .with_state(host)
 }
 
@@ -262,6 +263,50 @@ async fn loopback_wait(
             "could not read submissions",
         ),
     }
+}
+
+/// `GET /{space}/_gp/submissions/stream?since=<cursor>` — server-push SSE (loopback).
+/// The loopback analogue of the hosted stream: no API key (loopback-only, the Host
+/// guard already refuses any non-loopback Host), space bound from the URL path. Pushes
+/// each submission for the space after the cursor as a `submission` event, sharing the
+/// same held-connection cap as the long-poll; at the cap it answers 503 and the caller
+/// falls back to polling. Cursor is `since`, falling back to `Last-Event-ID`.
+async fn loopback_stream(
+    State(host): State<Arc<ArtifactHost>>,
+    AxumPath(space): AxumPath<String>,
+    Query(q): Query<LoopbackListQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(store) = host.submissions().cloned() else {
+        return sub_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "return_channel_unavailable",
+            "the return channel is not available on this server",
+        );
+    };
+    if !valid_space(&space) {
+        return sub_err(StatusCode::NOT_FOUND, "not_found", "no such space");
+    }
+    let since = q.since.or_else(|| last_event_id(&headers)).unwrap_or(0);
+    match submissions::open_stream(store, space, since) {
+        Some(rx) => submissions::submission_sse(rx).into_response(),
+        None => sub_err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too_many_waiters",
+            "too many streams are held; retry with the plain poll",
+        ),
+    }
+}
+
+/// Parse a `Last-Event-ID` header into a cursor (a reconnecting `EventSource` sends
+/// the last delivered submission id). A missing/unparseable value yields `None`, so
+/// the caller starts from the default 0 — a harmless full re-read, never a cross-space
+/// escape (the space is still bound from the URL path).
+fn last_event_id(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
 fn sub_list_response(page: &submissions::ListPage, timed_out: bool) -> Response {
@@ -794,6 +839,42 @@ mod tests {
         assert_eq!(j["submissions"].as_array().unwrap().len(), 1);
         assert_eq!(j["submissions"][0]["data"]["choice"], "b");
         assert_eq!(j["submissions"][0]["artifact"], "index");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn loopback_stream_opens_event_stream_and_503_without_store() {
+        // A2 SSE (loopback parity): a valid space opens a held `text/event-stream`
+        // (200); a server with NO return channel answers 503, never a panic. The held
+        // body is not read (it stays open) — only the status + content-type matter.
+        let root = tmp_root("stream");
+        let chan_app = app_with_channel(&root);
+        let r = chan_app
+            .clone()
+            .oneshot(lb_req(
+                Method::GET,
+                "/myspace/_gp/submissions/stream",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
+
+        // The default test app carries no submission store → 503.
+        let (status, j) = resp_json(
+            &app(),
+            lb_req(Method::GET, "/demo/_gp/submissions/stream", None, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(j["error"]["code"], "return_channel_unavailable");
         std::fs::remove_dir_all(&root).ok();
     }
 

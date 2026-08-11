@@ -174,6 +174,16 @@ sub_post "$LB_ORIGIN" '{"data":{"tag":"bound"},"slug":"sales"}' >/dev/null
 curl -s "$SB/myspace/_gp/submissions" | grep -q '"key":"myspace"'; scheck $? "return: submission keyed by the URL-path space, not a payload field"
 curl -s "$SB/otherspace/_gp/submissions" | grep -q '"submissions":\[\]'; scheck $? "return: an unrelated space has no submissions (no cross-space leak)"
 
+# A2 SSE (loopback parity): the server-push stream delivers a space's submissions as
+# `submission` events keyed to the URL-path space; an unrelated space's stream is
+# empty (the same no-cross-space-leak boundary as the poll). `--max-time` bounds each
+# held stream; curl's timeout exit is swallowed (`|| true`).
+curl -s --max-time 2 "$SB/myspace/_gp/submissions/stream?since=0" > "$WORK/sse_lb.txt" 2>/dev/null || true
+grep -q "event: *submission" "$WORK/sse_lb.txt"; scheck $? "return/sse: loopback stream delivers the space's submissions"
+grep -q '"key":"myspace"' "$WORK/sse_lb.txt"; scheck $? "return/sse: streamed submission is keyed by the URL-path space"
+curl -s --max-time 2 "$SB/otherspace/_gp/submissions/stream?since=0" > "$WORK/sse_lb_other.txt" 2>/dev/null || true
+! grep -q "event: *submission" "$WORK/sse_lb_other.txt"; scheck $? "return/sse: an unrelated space's stream is empty (no cross-space leak)"
+
 # Flood / rate limit: a burst of submits eventually 429s (per-space rate cap).
 RL=0
 for i in $(seq 1 40); do
@@ -279,6 +289,54 @@ curl -s -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" -H "Authorization: Bea
   -H 'content-type: application/json' -d '{"html":"<h1>scoped delivery</h1>"}' >/dev/null
 sleep 2
 grep -q "event: *round" "$WORK/sse_scoped.txt"; scheck $? "b2/SSE: a slug-scoped stream DOES receive its own round event"
+
+# ---------------------------------------------------------------------------
+# A2 SSE transport (return-channel submission streaming). The AGENT consumes
+# submissions as a server-push stream (GET /api/v1/pages/<slug>/submissions/stream).
+# The gate: the stream carries the SAME API-key + per-tenant scope as the poll/wait
+# reads (a cross-tenant stream is an opaque 404, an unauthenticated one 401 — decided
+# BEFORE any submission byte is streamed), it honors the since=<id> cursor (no
+# re-deliver), a submission landing during the hold is pushed live, and adding it
+# widened NOTHING in the artifact sandbox (the artifact CSP still names no stream path
+# and stays connect-src 'none', so a sandboxed artifact can never reach it).
+# ---------------------------------------------------------------------------
+echo "==> Running A2 SSE streaming (return-channel stream) probes"
+SSTREAM="$HOST_ORIGIN/api/v1/pages/$HSLUG/submissions/stream"
+
+# (auth) An unauthenticated stream is rejected (401) before any streaming begins.
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$SSTREAM")" = "401" ]; scheck $? "sse: an unauthenticated stream is rejected (401)"
+# (isolation) A DIFFERENT tenant streaming acme's page is an opaque 404 (no bytes).
+[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEYB" "$SSTREAM")" = "404" ]; scheck $? "sse: a cross-tenant stream is refused (opaque 404)"
+
+# (delivery) The owner streams from since=0 and receives the page's stored submission
+# (created earlier by the round-1 submit) as a `submission` SSE event.
+curl -s --max-time 3 -H "Authorization: Bearer $KEYA" "$SSTREAM?since=0" > "$WORK/sse_owner.txt" 2>/dev/null || true
+grep -q "event: *submission" "$WORK/sse_owner.txt"; scheck $? "sse: the owner stream delivers a submission event"
+LASTID="$(grep '^id:' "$WORK/sse_owner.txt" | tail -1 | sed 's/^id: *//')"
+[ -n "$LASTID" ]; scheck $? "sse: the stream stamps a per-submission id cursor"
+
+# (cursor integrity) Streaming from a cursor AT the last id re-delivers nothing — no
+# already-seen submission is repeated (no skip/dup across a reconnect).
+curl -s --max-time 3 -H "Authorization: Bearer $KEYA" "$SSTREAM?since=$LASTID" > "$WORK/sse_cursor.txt" 2>/dev/null || true
+! grep -q "event: *submission" "$WORK/sse_cursor.txt"; scheck $? "sse: a cursor at the last id re-delivers nothing"
+
+# (live push) A submission landing DURING the hold is pushed. Hold the stream from the
+# cursor as a real background job (a `( … & )` subshell loses curl's stdout buffer when
+# --max-time kills it; a plain `&` + `wait` flushes it), submit, then confirm the new
+# payload arrived on the held stream.
+curl -s --max-time 4 -H "Authorization: Bearer $KEYA" "$SSTREAM?since=$LASTID" > "$WORK/sse_live.txt" 2>/dev/null &
+SSE_LIVE_PID=$!
+sleep 0.5
+CVNOW="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index" | sed -n 's/.*name="gp-content-version" content="\([0-9a-f]*\)".*/\1/p')"
+curl -s -o /dev/null -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/submit" \
+  -H "Origin: $HOST_ORIGIN" -H 'content-type: application/json' \
+  -d '{"data":{"live":"sse"},"content_version":"'"$CVNOW"'"}'
+wait "$SSE_LIVE_PID" || true
+grep -q '"live":"sse"' "$WORK/sse_live.txt"; scheck $? "sse: a submission landing during the hold is pushed live"
+
+# (sandbox unwidened) The artifact CSP still names no stream path and stays closed —
+# a sandboxed artifact (connect-src 'none', no allow-forms) can never reach the stream.
+! echo "$HCSP1" | grep -q "submissions/stream"; scheck $? "sse: the artifact CSP never names the stream path (artifact cannot reach it)"
 
 kill "$HOST_PID" 2>/dev/null || true
 sleep 0.3

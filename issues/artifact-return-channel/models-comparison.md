@@ -40,6 +40,20 @@ for live-reload, so the server-side primitive exists.)
   anyway, so it carries A1's cursor complexity *plus* connection management).
 - ➖ Idle agents holding sockets is the opposite of the batch/disconnected use case.
 
+> **Status: A2 SHIPPED (2026-08-11).** SSE landed as a clean **additive** transport
+> over the A1 persisted-cursor store, exactly as recommended below. `GET
+> /api/v1/pages/<slug>/submissions/stream` (hosted; API-key + per-tenant scoped) and
+> `GET /<space>/_gp/submissions/stream` (loopback) push each submission after
+> `since=<id>` as a `submission` SSE event (its id stamped as the SSE `id`, so a
+> `Last-Event-ID` reconnect resumes at the cursor — no re-deliver / no skip). It
+> **reuses the same primitive as `wait`**: the store's keyed broadcast + the global
+> `MAX_WAITERS` held-connection cap (a stream and a long-poll share one budget; past the
+> cap → `503`, fall back to polling). `await-submission --stream` consumes it (`--follow`
+> to keep streaming); the plain long-poll (A3) stays the default/fallback. Each stream is
+> agent-facing (API-key / loopback-only) — the artifact stays `connect-src 'none'` and
+> cannot reach it — proven by new `./test-security.sh` A2 probes (auth, cross-tenant
+> isolation, cursor-integrity, live push, sandbox-unwidened).
+
 ### A3 — Backgrounded blocking CLI · `glasspad await-submission <slug> --since <cur> --timeout <d>`
 **The primary agent-facing model (refined 2026-08-10).** The command blocks on a **server-side
 long-poll** (`GET …/submissions/wait?since=<cursor>&timeout=<d>` — the server holds the

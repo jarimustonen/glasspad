@@ -17,6 +17,11 @@
 //! * `GET /api/v1/pages/{slug}/submissions/wait?since=<cursor>&timeout=<secs>` —
 //!   the **server-side long-poll** (A3 primary). Same auth/scoping, holds the
 //!   connection until a submission after the cursor lands or the timeout fires.
+//! * `GET /api/v1/pages/{slug}/submissions/stream?since=<cursor>` — the **server-
+//!   push SSE transport** (A2). Same auth/scoping; holds an `EventSource` and pushes
+//!   each submission after the cursor as a `submission` event (its id stamped as the
+//!   SSE `id`, so a `Last-Event-ID` reconnect resumes from the cursor). For an agent
+//!   watching many pages or wanting sub-second streaming; the long-poll stays primary.
 //!
 //! The read endpoints are gated by [`auth::ingest_auth`]; the submit endpoint is
 //! not, so it is registered on a separate sub-router without that layer.
@@ -62,6 +67,7 @@ pub fn router(state: HostedState, keys: std::sync::Arc<auth::KeyTable>) -> Route
     let read = Router::new()
         .route("/api/v1/pages/{slug}/submissions", get(list))
         .route("/api/v1/pages/{slug}/submissions/wait", get(wait))
+        .route("/api/v1/pages/{slug}/submissions/stream", get(stream))
         .route_layer(axum::middleware::from_fn_with_state(
             keys,
             auth::ingest_auth,
@@ -247,6 +253,51 @@ async fn wait(
             )
         }
     }
+}
+
+/// `GET /api/v1/pages/{slug}/submissions/stream?since=<cursor>` — server-push SSE.
+/// Same API-key auth + per-tenant scoping as the poll/wait reads (a tenant may stream
+/// a page only when it owns it — a cross-tenant or unknown page is an opaque 404,
+/// decided **before** any stream is opened, so no submission bytes can leak). The
+/// cursor is the `since` query param, falling back to the `Last-Event-ID` header so a
+/// browser `EventSource` reconnect resumes where it left off. Held streams share the
+/// same global waiter cap as the long-poll; at the cap the caller gets a 503 and falls
+/// back to polling.
+async fn stream(
+    State(state): State<HostedState>,
+    Extension(tenant): Extension<Tenant>,
+    Path(slug): Path<String>,
+    Query(q): Query<ListQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(resp) = authorize_read(&state, &tenant, &slug) {
+        return resp;
+    }
+    let since = effective_since(q.since, &headers);
+    match submissions::open_stream(state.submissions.clone(), slug, since) {
+        Some(rx) => submissions::submission_sse(rx).into_response(),
+        None => err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too_many_waiters",
+            "the server is holding too many streams; retry with the plain poll",
+        ),
+    }
+}
+
+/// The stream cursor: the explicit `since` query param wins; absent, a `Last-Event-ID`
+/// header (set by a reconnecting browser `EventSource` from the last event's id) is
+/// used; absent or unparseable, start from 0. This only ever affects *which already-
+/// persisted* submissions this owner re-reads — key/tenant are still bound server-side
+/// — so a malformed value is a harmless full re-read, never a cross-tenant escape.
+fn effective_since(query: Option<u64>, headers: &HeaderMap) -> u64 {
+    query
+        .or_else(|| {
+            headers
+                .get("last-event-id")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+        })
+        .unwrap_or(0)
 }
 
 /// A tenant may read a page's submissions only when it owns that page. Returns

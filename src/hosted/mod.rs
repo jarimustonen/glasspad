@@ -1008,6 +1008,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_requires_owner_key_and_scopes_by_tenant() {
+        // A2 SSE: the stream carries the SAME API-key + per-tenant scope as the poll/
+        // wait reads. Unauth → 401; a non-owner → an opaque 404 (no submission bytes);
+        // the owner → a held `text/event-stream` (200). All decided before any stream
+        // body is produced, so a denied caller never receives a submission frame.
+        let root = tmp_root("subs-stream");
+        let key2 = "fedcba9876543210fedcba9876543210";
+        let host = Arc::new(ArtifactHost::new_public(
+            "https://pad.example.com".into(),
+            MOUNT.to_string(),
+        ));
+        let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
+        let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}\nglobex:{key2}")).unwrap());
+        let state = HostedState {
+            store: store.clone(),
+            submissions,
+            public_origin: "https://pad.example.com".into(),
+            mount: MOUNT.to_string(),
+        };
+        let app = build_router(state, host, keys);
+        let slug = publish_slug(&app, serde_json::json!({ "html": "<h1>form</h1>" })).await;
+        let uri = format!("/api/v1/pages/{slug}/submissions/stream");
+
+        // Unauthenticated → 401.
+        let r = send(&app, read_req(&uri, None)).await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+
+        // A different tenant (globex) streaming acme's page → opaque 404.
+        let r = send(&app, read_req(&uri, Some(key2))).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+
+        // The owner → a held SSE stream (200, text/event-stream). Do NOT read the body
+        // (it holds open); only the status + content-type are asserted.
+        let r = send(&app, read_req(&uri, Some(KEY))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
     async fn submit_rejects_foreign_origin_csrf() {
         let root = tmp_root("subs-csrf");
         let (app, _, _) = app_with(&root);

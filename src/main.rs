@@ -217,6 +217,16 @@ enum Commands {
         /// `serve`) even when a hosted server is configured.
         #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
         port: Option<u16>,
+        /// Consume the server-push SSE stream instead of the long-poll. An opt-in
+        /// transport for watching many pages or sub-second streaming; the plain
+        /// long-poll stays the default. Returns the first submission then exits (add
+        /// --follow to keep streaming). Honors --timeout as the overall hold.
+        #[arg(long)]
+        stream: bool,
+        /// With --stream: keep the stream open and print every submission as it lands
+        /// (until --timeout), rather than returning after the first.
+        #[arg(long)]
+        follow: bool,
     },
     /// Stop the running loopback server (`serve` / `create` / `render`).
     ///
@@ -346,7 +356,14 @@ async fn main() {
             server,
             api_key,
             port,
-        }) => cli::await_submission(slug, since, timeout, server, api_key, port, json).await,
+            stream,
+            follow,
+        }) => {
+            cli::await_submission(
+                slug, since, timeout, server, api_key, port, stream, follow, json,
+            )
+            .await
+        }
         Some(Commands::Stop) => cli::stop(json),
         Some(Commands::Open {
             space,

@@ -40,19 +40,27 @@
 //! [`list_since`] is the plain-poll substrate (A1): every submission for `key` with
 //! `id > since`. [`wait`] is the server-side long-poll (A3): it holds until a
 //! submission after the cursor lands or the timeout fires, bounded by a global
-//! waiter cap so held connections can never grow without limit.
+//! waiter cap so held connections can never grow without limit. [`open_stream`] is
+//! the server-push transport (A2): it holds an SSE connection and pushes each
+//! submission after the cursor as it lands, reusing the *same* keyed broadcast +
+//! held-connection cap as `wait` — the same `since=<id>` cursor guarantees (no
+//! re-deliver, no skip) apply to all three.
 
 use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::response::sse::{Event, KeepAlive, Sse};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::{Stream, StreamExt};
 
 use crate::artifact_host::valid_space;
 
@@ -547,6 +555,130 @@ pub async fn wait(
     }
 }
 
+/// Buffered submissions in a stream channel before the pump applies backpressure.
+/// Small on purpose: a fast producer parks the pump (never the store) once the
+/// consumer falls this far behind, and a slow/dead consumer is detected within one
+/// buffer rather than being allowed to queue unboundedly.
+const STREAM_CHANNEL_CAP: usize = 64;
+
+/// Open a **server-push stream** (A2) over the persisted-cursor store: yields each
+/// submission for `key` with `id > since` as it lands, in id order, preserving the
+/// exact no-redeliver / no-skip semantics of [`list_since`] and [`wait`]. Reuses the
+/// same keyed broadcast (a wake for a different key is ignored without a filesystem
+/// read) and counts against the same global [`MAX_WAITERS`] held-connection cap, so
+/// SSE streams and long-polls share one resource budget. Returns `None` when that cap
+/// is reached — the caller answers "too busy" and the agent falls back to polling,
+/// exactly as for [`WaitOutcome::TooBusy`].
+///
+/// The returned receiver streams until the consumer drops it (the SSE client
+/// disconnects — axum's keep-alive turns a dead socket into a failed write, which
+/// drops the response body and thus this receiver): the pump then observes the closed
+/// channel and exits, releasing the waiter slot. There is deliberately **no** server
+/// hard timeout (unlike `wait`): a held stream is the point of A2 (watch many pages /
+/// sub-second streaming), and the waiter cap + disconnect detection are what bound it.
+pub fn open_stream(
+    store: Arc<SubmissionStore>,
+    key: String,
+    since: u64,
+) -> Option<mpsc::Receiver<Submission>> {
+    let guard = store.try_acquire_waiter()?;
+    let (tx, rx) = mpsc::channel(STREAM_CHANNEL_CAP);
+    tokio::spawn(stream_pump(store, key, since, tx, guard));
+    Some(rx)
+}
+
+/// The push loop behind [`open_stream`]. Holds the waiter slot (`_guard`) for its
+/// whole lifetime and exits — freeing the slot — as soon as the consumer drops the
+/// receiver. The subscribe-before-first-read ordering is the same lost-wakeup defense
+/// as [`wait`]: a submit that notifies after we subscribe is received; one that landed
+/// before is seen by the initial drain.
+async fn stream_pump(
+    store: Arc<SubmissionStore>,
+    key: String,
+    mut since: u64,
+    tx: mpsc::Sender<Submission>,
+    _guard: WaiterGuard,
+) {
+    // Subscribe BEFORE the first drain so no notification is lost in the gap.
+    let mut rx = store.subscribe();
+    let want: Arc<str> = Arc::from(key.as_str());
+    loop {
+        // Drain everything currently after the cursor, a page at a time, so a backlog
+        // larger than MAX_LIST is delivered in order with neither skip nor duplicate.
+        loop {
+            let page = {
+                let store = store.clone();
+                let key = key.clone();
+                match tokio::task::spawn_blocking(move || store.list_since(&key, since, MAX_LIST))
+                    .await
+                {
+                    Ok(Ok(page)) => page,
+                    Ok(Err(e)) => {
+                        eprintln!("glasspad: submission stream read error: {e}");
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("glasspad: submission stream task panicked: {e}");
+                        return;
+                    }
+                }
+            };
+            if page.submissions.is_empty() {
+                break;
+            }
+            // A full page may not be the whole backlog — loop to drain the rest.
+            let full = page.submissions.len() >= MAX_LIST;
+            for sub in page.submissions {
+                since = sub.id;
+                if tx.send(sub).await.is_err() {
+                    return; // consumer (SSE client) gone
+                }
+            }
+            if !full {
+                break;
+            }
+        }
+        // Park until OUR key changes or the consumer disconnects. Unrelated-key wakes
+        // loop here cheaply without touching the filesystem (no thundering herd).
+        loop {
+            tokio::select! {
+                _ = tx.closed() => return,
+                r = rx.recv() => match r {
+                    Ok(k) if k == want => break,
+                    Ok(_) => continue,
+                    // A burst overran the channel — we may have missed our key; re-check.
+                    Err(broadcast::error::RecvError::Lagged(_)) => break,
+                    // The store's sender was dropped: stop holding.
+                    Err(broadcast::error::RecvError::Closed) => return,
+                },
+            }
+        }
+    }
+}
+
+/// Wrap a stream receiver from [`open_stream`] into an SSE response, so the hosted
+/// and loopback handlers push **identical** frames (parity): each submission is a
+/// `submission` event carrying its `to_public_json()` body, with the submission id
+/// stamped as the SSE `id` — a valid per-key cursor now the stream is key-scoped, so
+/// a browser `EventSource` resumes via `Last-Event-ID`. axum's keep-alive turns a
+/// dead socket into a failed write, which drops the response body (and thus the pump's
+/// receiver), so a disconnected client's waiter slot is reclaimed. The public JSON
+/// never includes the internal `tenant` (see [`Submission::to_public_json`]).
+pub fn submission_sse(
+    rx: mpsc::Receiver<Submission>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let stream = ReceiverStream::new(rx).map(|sub| {
+        let event = Event::default()
+            .event("submission")
+            .id(sub.id.to_string())
+            .json_data(sub.to_public_json())
+            // Two strings + an int always serialize; degrade rather than drop.
+            .unwrap_or_else(|_| Event::default().event("submission").data("{}"));
+        Ok::<Event, Infallible>(event)
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 /// RAII release of a long-poll waiter slot.
 struct WaiterGuard {
     store: Arc<SubmissionStore>,
@@ -931,6 +1063,127 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, WaitOutcome::Ready(_)));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_backfills_then_pushes_live_in_order() {
+        // A2: the stream first drains everything after the cursor (backfill), then
+        // pushes each further submission live, all in id order and none skipped.
+        let root = tmp_root("stream");
+        let store = SubmissionStore::open(&root).unwrap();
+        let a = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({"n": 1}))
+            .unwrap();
+        let b = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({"n": 2}))
+            .unwrap();
+        let mut rx = open_stream(store.clone(), "abc".into(), 0).expect("a slot is free");
+        // Backfill: the two already-persisted submissions arrive first, in order.
+        let first = rx.recv().await.unwrap();
+        let second = rx.recv().await.unwrap();
+        assert_eq!(first.id, a.id);
+        assert_eq!(second.id, b.id);
+        // A submission landing DURING the hold is pushed live.
+        let c = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({"n": 3}))
+            .unwrap();
+        let third = rx.recv().await.unwrap();
+        assert_eq!(third.id, c.id);
+        assert!(third.id > second.id, "ids stream monotonically");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_honors_the_cursor_no_redeliver() {
+        // A reconnect resumes from `since`: a submission at/under the cursor is never
+        // re-delivered, only strictly-newer ones stream.
+        let root = tmp_root("streamcur");
+        let store = SubmissionStore::open(&root).unwrap();
+        let seen = store
+            .submit(
+                "abc",
+                "index",
+                "acme",
+                "v1",
+                serde_json::json!({"old": true}),
+            )
+            .unwrap();
+        let mut rx = open_stream(store.clone(), "abc".into(), seen.id).expect("a slot is free");
+        // Nothing newer yet → the stream must not hand back the already-seen record.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(120), rx.recv())
+                .await
+                .is_err(),
+            "a cursor at the last id must re-deliver nothing"
+        );
+        // Only a strictly-newer submission streams.
+        let fresh = store
+            .submit(
+                "abc",
+                "index",
+                "acme",
+                "v1",
+                serde_json::json!({"new": true}),
+            )
+            .unwrap();
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got.id, fresh.id);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_ignores_other_keys() {
+        // Per-tenant/-space isolation at the store: a submit to a DIFFERENT key never
+        // appears on a stream bound to `abc`.
+        let root = tmp_root("streamkey");
+        let store = SubmissionStore::open(&root).unwrap();
+        let mut rx = open_stream(store.clone(), "abc".into(), 0).expect("a slot is free");
+        store
+            .submit("other", "index", "acme", "v1", serde_json::json!({}))
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(120), rx.recv())
+                .await
+                .is_err(),
+            "an unrelated-key submit must not appear on this stream"
+        );
+        // The stream's OWN key still delivers.
+        let mine = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(rx.recv().await.unwrap().id, mine.id);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn stream_too_busy_at_the_waiter_cap() {
+        // The stream counts against the SAME held-connection cap as `wait`: past the
+        // cap, `open_stream` returns None so the caller answers "too busy" rather than
+        // holding another connection.
+        let root = tmp_root("streambusy");
+        let store = SubmissionStore::open(&root).unwrap();
+        let mut held = Vec::new();
+        for _ in 0..MAX_WAITERS {
+            held.push(open_stream(store.clone(), "abc".into(), 0).expect("under the cap"));
+        }
+        assert!(
+            open_stream(store.clone(), "abc".into(), 0).is_none(),
+            "the stream is refused once the waiter cap is reached"
+        );
+        // Dropping one held stream frees a slot (the pump exits, releasing the guard).
+        held.pop();
+        // Give the freed pump task a moment to drop its guard.
+        for _ in 0..50 {
+            if store.waiters.load(Ordering::SeqCst) < MAX_WAITERS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            open_stream(store.clone(), "abc".into(), 0).is_some(),
+            "a slot frees up after a held stream is dropped"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

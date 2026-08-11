@@ -158,6 +158,14 @@ glasspad await-submission <slug> --server https://pad.example.com --json
 The typical loop: `publish`/`serve` an interactive page → `await-submission`
 backgrounded → act on the returned `data` → (optionally) re-render the next step.
 
+**Optional SSE transport (`--stream`).** For sub-second streaming or watching many
+pages, add `--stream`: the command holds a server-push `EventSource`
+(`…/submissions/stream`) instead of the long-poll and returns the first submission
+(exit `0`) or times out (exit `3`) with the **same** result shape — so it is a drop-in
+for the default. Add `--follow` to keep the stream open and print every submission as
+it lands (until `--timeout`). The plain long-poll stays the default/fallback; reach for
+`--stream` only when the latency or many-pages case calls for it.
+
 **Multi-round (re-render in place).** After a submission you can update the *same
 live page* and the user's open view swaps to the new content — a conversational UI
 in one page, no new URL:
