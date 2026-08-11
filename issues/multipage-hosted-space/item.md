@@ -3,7 +3,7 @@ created: 2026-08-11
 updated: 2026-08-11
 type: feature
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 05899b6
@@ -14,6 +14,9 @@ commits:
   summary: 'feat(cli): glasspad publish-space — publish a directory of .'
 - hash: bdad225
   summary: 'test(security)+docs: Gap 1 space-ingest Wave + skill/README/'
+- hash: 87ef73b
+  summary: 'fix(hosted): apply llm-review — space crash-recovery, updated_at reten'
+closed: 2026-08-11
 ---
 
 # Multi-page hosted publish (space ingest) + markdown-native spaces
