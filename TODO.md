@@ -94,16 +94,29 @@ released** — code is on `main` at 0.4.0; a release would be 0.5.0 (see below).
   hosted publish / space ingest + markdown-native spaces — a tilictl docsite use case).
   Open, unstarted, needs scoping.
 
+## 0.5.0 cut 2026-08-11 (CI in progress) + Gap 1 in flight
+
+**0.5.0 cut autonomously** (reaffirmed release autonomy — no permission asked): bundles
+the round's three landed, reviewed, green features — B2 multi-round + A2 SSE + pi.dev
+dual-home skill install. Tag `v0.5.0` pushed off `main` (`1763964`); both CI workflows
+triggered (Release/cargo-dist + Publish-to-crates). Full gate was green: fmt + clippy
+-D warnings + cargo test (355) + `./test-security.sh` (48 + Wave 2a) + `ossctl audit`
+(gated core complete, 0 gaps) + `cargo publish --dry-run` (packaged + verified 106 files).
+**Verify CI landed all three channels** (crates.io 0.5.0, GitHub Release v0.5.0, Homebrew
+tap) — mac build runs on hauis. `pidev` also shipped in this release.
+
+**`multipage-hosted-space` Gap 1 is in flight** (spinoff off `main` before the 0.5.0 bump;
+its merge rebases onto 0.5.0 main). When it lands → green-gate → it becomes **0.6.0**.
+
 ## ▶ Start here (on return)
 
-**Nothing in flight.** `main == origin` (`b1ef061`), clean tree, 0.4.0 in `Cargo.toml`.
-The return channel now has both later increments (A2 SSE + B2 multi-round) on `main`,
-green + reviewed, **unreleased**. Two open decisions for the next round:
-1. **Cut 0.5.0?** A2+B2 are a releasable, meaningful feature bump on top of shipped
-   0.4.0. Release autonomy applies (green gate + tag-push→CI recipe). No hard gate —
-   the agent may decide to cut it.
-2. **`multipage-hosted-space`** — the only open issue; needs scoping/decompose before a
-   worktree (Lane B, hosted core). Pick it, or defer.
+1. **Confirm 0.5.0 CI finished green** on all three channels (see above). If the mac
+   build failed on hauis, re-run `gh run rerun <id> --failed` (do NOT re-add
+   `GIT_CONFIG_GLOBAL`); the tag is already published.
+2. **`multipage-hosted-space` (Gap 1)** — verify it landed + green; if so, decide on
+   **0.6.0** (release autonomy: green gate is the go — do not ask).
+3. **`markdown-native-spaces` (Gap 2)** — sequenced after Gap 1 (shares hosted/cli.rs);
+   spawn once Gap 1 is on main.
 
 **Candidate next work (no hard gate, pick or defer):**
 - **Return-channel A2/B2 increment** — A2 (SSE transport) / B2 (multi-round); the
