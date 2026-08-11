@@ -2,12 +2,15 @@
 created: 2026-08-11
 updated: 2026-08-11
 type: feature
-status: in-progress
+status: done
 priority: normal
 blocked_by: ['@multipage-hosted-space']
 commits:
 - hash: c721430
   summary: render a dir of .md as a space (scan_dir renders md via template; +security probes)
+- hash: cb4457a
+  summary: apply llm-review (aggregate byte cap, fail-fast template, md_stem alloc, +tests/probes)
+closed: 2026-08-11
 ---
 
 # Markdown-native spaces (serve/build/space-publish render a dir of .md)
