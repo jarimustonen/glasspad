@@ -304,6 +304,129 @@ fn dual_home_user_install_writes_both_dirs() {
 }
 
 #[test]
+fn pi_project_install_writes_pi_dir_only() {
+    // `--agent pi` at project scope creates ./.pi/skills/glasspad/ on demand (no
+    // .claude/ guard needed) and never touches a Claude dir. Top-level path/created
+    // describe the pi target since Claude is not selected.
+    let root = temp_dir("pi-proj");
+
+    let out = bin()
+        .current_dir(&root)
+        .arg("--json")
+        .arg("skill")
+        .arg("--install-claude")
+        .arg("--agent")
+        .arg("pi")
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["scope"], "project");
+    let path = v["path"].as_str().unwrap();
+    assert!(
+        path.ends_with(".pi/skills/glasspad/SKILL.md"),
+        "path: {path}"
+    );
+    let targets = v["targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 1, "targets: {targets:?}");
+    assert_eq!(targets[0]["agent"], "pi");
+    assert_eq!(targets[0]["created"], true);
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        include_str!("../src/skill.md")
+    );
+    // No Claude tree was created.
+    assert!(
+        !root.join(".claude").exists(),
+        "unexpected .claude/ created"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn install_refuses_to_overwrite_a_symlinked_skill() {
+    // A pre-planted `SKILL.md` symlink must NOT be followed and truncated with the
+    // skill content (CWE-59); the install refuses with a structured error, exit 1,
+    // and leaves the symlink's target untouched.
+    let root = temp_dir("symlink");
+    let skill_dir = root.join(".claude/skills/glasspad");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    // A sensitive file the symlink points at; it must survive untouched.
+    let secret = root.join("secret.txt");
+    std::fs::write(&secret, "SECRET").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&secret, skill_dir.join("SKILL.md")).unwrap();
+
+    #[cfg(unix)]
+    {
+        let out = bin()
+            .current_dir(&root)
+            .arg("--json")
+            .arg("skill")
+            .arg("--install-claude")
+            .arg("--agent")
+            .arg("claude")
+            .output()
+            .unwrap();
+
+        assert_eq!(out.status.code(), Some(1), "stdout: {:?}", out.stdout);
+        assert!(out.stdout.is_empty(), "stdout should be empty on error");
+        let err: serde_json::Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(err["error"]["code"], "symlink_rejected");
+        // The symlink target was NOT overwritten with skill content.
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), "SECRET");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn agent_without_install_is_a_usage_error() {
+    // `--agent` requires `--install-claude` (clap `requires`); passing it alone must
+    // be a usage error (exit 2), not a silent skill-content dump.
+    let root = temp_dir("agent-no-install");
+
+    let out = bin()
+        .current_dir(&root)
+        .arg("skill")
+        .arg("--agent")
+        .arg("pi")
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(2), "stdout: {:?}", out.stdout);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn install_alias_matches_install_claude() {
+    // `--install` is the preferred spelling; it must behave identically to the
+    // `--install-claude` compatibility alias.
+    let root = temp_dir("install-alias");
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+
+    let out = bin()
+        .current_dir(&root)
+        .arg("--json")
+        .arg("skill")
+        .arg("--install")
+        .arg("--agent")
+        .arg("claude")
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["installed"], true);
+    assert_eq!(v["targets"].as_array().unwrap()[0]["agent"], "claude");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn project_install_missing_claude_dir_json_error() {
     // No `.claude/` in the cwd → structured error on stderr, exit 1, empty stdout.
     let root = temp_dir("proj-missing");

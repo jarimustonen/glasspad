@@ -271,16 +271,19 @@ enum Commands {
     /// Output or install the CLI's companion skill (its operating manual).
     Skill {
         /// Install the skill file. Project-level by default, --user for the home dir.
-        #[arg(long)]
+        /// (`--install` is the preferred spelling now that the install dual-homes
+        /// beyond Claude Code; `--install-claude` is kept as a compatibility alias.)
+        #[arg(long = "install-claude", alias = "install")]
         install_claude: bool,
-        /// Use with --install-claude: install under the home dir instead of the project
+        /// Use with --install: install under the home dir instead of the project
         #[arg(long, requires = "install_claude")]
         user: bool,
-        /// With --install-claude: which agent skill dir(s) to install into —
-        /// `claude` (~/.claude or ./.claude), `pi` (~/.pi/agent or ./.pi), or `all`
-        /// (dual-home both). Default: all.
-        #[arg(long, value_enum, default_value_t = cli::SkillAgent::All)]
-        agent: cli::SkillAgent,
+        /// With --install: which agent skill dir(s) to install into — `claude`
+        /// (~/.claude or ./.claude), `pi` (~/.pi/agent or ./.pi), or `all` (dual-home
+        /// both). Omit to dual-home (the default). Optional so that passing it
+        /// without --install is a usage error rather than a silent no-op.
+        #[arg(long, value_enum, requires = "install_claude")]
+        agent: Option<cli::SkillAgent>,
     },
 }
 

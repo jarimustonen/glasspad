@@ -2896,14 +2896,6 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
 
 // --- skill (AI-first §15) -------------------------------------------------
 
-/// `glasspad skill` — print the companion `SKILL.md`, or install it into a Claude
-/// Code skills directory (`--install-claude`, `--user` for `~/.claude`).
-///
-/// Under `--json`, an install emits the AI-first §10 success envelope
-/// (`{schema_version, installed, scope, path, created, cli_version}`); the error
-/// path (e.g. no project-level `.claude/`) uses the shared [`exit_error`] contract
-/// (structured error on stderr, non-zero exit). The bare, non-install `skill`
-/// stays a pure content dump on stdout in both modes.
 /// Which agent skill directory(ies) `skill --install-claude` writes into.
 ///
 /// The CLI ships one companion skill (`SKILL.md`); the migration from Claude Code
@@ -2931,6 +2923,11 @@ pub enum SkillAgent {
 /// fresh install apart from an in-place refresh even under a racing installer,
 /// where a plain `exists()`-then-`write` would misreport. The returned path is
 /// canonicalized (the file now exists) for a stable absolute path in the envelope.
+///
+/// The refresh path refuses to follow a symlinked `SKILL.md`: a planted
+/// `…/SKILL.md -> /some/sensitive/file` would otherwise be truncated with the skill
+/// content on overwrite. This matches the scanner's `symlink_rejected` policy — the
+/// installer never writes *through* a symlink at the destination.
 fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
     if let Err(e) = std::fs::create_dir_all(dir) {
         exit_error(
@@ -2963,6 +2960,26 @@ fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
             true
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // The name already exists — refuse to overwrite *through* a symlink
+            // (CWE-59). `symlink_metadata` does not follow the link, so a symlinked
+            // destination is rejected with a stable code rather than truncating its
+            // target. A real file (or hard link) falls through to the refresh write.
+            if std::fs::symlink_metadata(&path)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                exit_error(
+                    json,
+                    1,
+                    "symlink_rejected",
+                    &format!(
+                        "refusing to install over {}: destination is a symlink",
+                        path.display()
+                    ),
+                    None,
+                    None,
+                );
+            }
             if let Err(e) = std::fs::write(&path, content) {
                 exit_error(
                     json,
@@ -2990,16 +3007,40 @@ fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
     (resolved, created)
 }
 
-pub fn skill(install_claude: bool, user: bool, agent: SkillAgent, json: bool) {
+/// `glasspad skill` — print the companion `SKILL.md`, or install it into one or
+/// more agent skill directories (`--install-claude`; `--user` for the home dir;
+/// `--agent {claude|pi|all}` selects the target(s), default dual-home both — see
+/// [`SkillAgent`]).
+///
+/// Under `--json`, an install emits the AI-first §10 success envelope
+/// (`{schema_version, installed, scope, path, created, targets, cli_version,
+/// warnings}`); the top-level `path`/`scope`/`created` describe the first target
+/// (Claude when selected) for backward compatibility, while `targets[]` reports
+/// every path written. The error path (missing `.claude/`, unwritable HOME, a
+/// symlinked destination) uses the shared [`exit_error`] contract (structured
+/// error on stderr, non-zero exit). The bare, non-install `skill` stays a pure
+/// content dump on stdout in both modes.
+///
+/// Partial-failure semantics: targets are written in order (Claude, then pi). If a
+/// later target's write fails the command exits non-zero via `exit_error` and any
+/// earlier target already written is left in place — the install is not
+/// transactional. This is safe because every install is idempotent: re-running
+/// completes the remaining target(s) without disturbing the ones already written.
+pub fn skill(install_claude: bool, user: bool, agent: Option<SkillAgent>, json: bool) {
     let skill_content = include_str!("skill.md");
 
-    // `--user` requires `--install-claude` (clap-enforced), so `install_claude`
-    // alone gates the install branch. Without it we just print the skill.
+    // `--user` and `--agent` both require `--install-claude` (clap-enforced), so
+    // `install_claude` alone gates the install branch. Without it we just print the
+    // skill; `--agent` is meaningless there and clap already rejected it.
     if !install_claude {
         print!("{skill_content}");
         return;
     }
 
+    // `--agent` defaults to dual-home when omitted. Resolving it here (rather than
+    // via a clap `default_value_t`) keeps the flag genuinely optional so its
+    // `requires = "install_claude"` fires only on an explicit `--agent`.
+    let agent = agent.unwrap_or(SkillAgent::All);
     let scope = if user { "user" } else { "project" };
 
     // Resolve HOME once — both agent targets share it under `--user`. A missing
@@ -3044,7 +3085,8 @@ pub fn skill(install_claude: bool, user: bool, agent: SkillAgent, json: bool) {
                         1,
                         "claude_dir_not_found",
                         ".claude/ directory not found in current directory. \
-                         Are you in a project root? Use --install-claude --user for a user-level install.",
+                         Are you in a project root? Use --install-claude --user for a user-level install, \
+                         or --agent pi to install only the pi.dev skill (which needs no .claude/).",
                         None,
                         None,
                     );
@@ -3085,7 +3127,22 @@ pub fn skill(install_claude: bool, user: bool, agent: SkillAgent, json: bool) {
                 })
             })
             .collect();
-        let (_, first_path, first_created) = &targets[0];
+        // At least one of want_claude / want_pi is always true for the three
+        // `SkillAgent` variants, so `targets` is non-empty here — but reach for the
+        // first entry via `first()` rather than an index so a future variant that
+        // selects nothing surfaces the shared structured-error contract instead of
+        // an out-of-bounds panic that would bypass the --json envelope.
+        let (_, first_path, first_created) = match targets.first() {
+            Some(t) => t,
+            None => exit_error(
+                json,
+                2,
+                "no_agent_selected",
+                "no skill install target was selected (internal invariant violated)",
+                None,
+                None,
+            ),
+        };
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
             "installed": true,
