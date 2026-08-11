@@ -145,10 +145,11 @@ Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: multipage-hosted-space   ← only active work; needs scoping/decompose
+GLOBAL HEAD-OF-LINE: multipage-hosted-space   ← Gap 1 (space ingest); start here
 
-LANE B — src/hosted/* + src/cli.rs + src/main.rs (hosted core + CLI dispatch)
-  ▶ multipage-hosted-space   (feature; not started — needs scoping before a worktree)
+LANE B — src/hosted/* + src/cli.rs + src/main.rs + render (hosted core + CLI dispatch)
+  ▶ multipage-hosted-space   (Gap 1 — multi-page hosted publish / space ingest; the unblocker)
+    markdown-native-spaces    after multipage-hosted-space (Gap 2 — .md-dir spaces; shares hosted/cli.rs)
 ```
 <!-- execution-dag:end -->
 

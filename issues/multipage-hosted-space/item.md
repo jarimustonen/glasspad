@@ -47,3 +47,9 @@ Our current generator also does autolinking / glossary cross-refs / section-TOC 
 auto-discovered companion subtrees. We can keep a thin preprocessor for those; not asking
 glasspad to own them. Flagging only so the template/space model leaves room for
 producer-side preprocessing.
+
+## Comments
+
+### 2026-08-11T15:08:27Z · @orchestrator
+
+Scope split for scheduling: THIS issue now tracks Gap 1 (multi-page hosted publish / space ingest — the unblocker). Gap 2 (markdown-native spaces) is split out to markdown-native-spaces, blocked_by this. A worktree here implements Gap 1 only.
