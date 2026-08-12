@@ -75,10 +75,10 @@ Remaining verbs:
 - **Return channel** — `await-submission`, `push-round` (unchanged; already work
   hosted + loopback and compose with the unified `publish`).
 - **`data <file>`** — standalone legacy CSV/JSON/mbox → JSON helper (unchanged).
-- **Loopback management** — **advanced**, discoverable via `--help` only, not in the
-  skill's main flow: start/stop/open a specific loopback server, port control, etc.
-  **[DECIDE]** final names (keep `serve`/`open`/`stop` as the *advanced* loopback
-  commands, or rename under a `glasspad loopback …` subcommand group?).
+- **Loopback management** — **advanced**, grouped under **`glasspad loopback <cmd>`**
+  (e.g. `loopback serve`, `loopback open`, `loopback stop`, port control).
+  Discoverable via `--help` only, not in the skill's main flow. *(Decided
+  2026-08-12.)*
 
 ### Skill rewrite
 
@@ -87,18 +87,38 @@ rewritten around a single default: *"hand glasspad markdown, get a URL."* The mo
 table and the "default to loopback" framing are removed; `build` and loopback
 management appear only as brief "advanced" pointers to `--help`.
 
-## Open decisions [DECIDE]
+## Resolved decisions (2026-08-12)
 
-1. **Hosted: snapshot vs live.** Recommend **hosted = snapshot + idempotent
-   re-publish** (re-run `publish` to update; `push-round` already gives live in-place
-   swaps for the return channel). Live-reload stays a *loopback* property; a hosted
-   `--watch` (auto re-publish on file change) is a later advanced opt-in, not in the
-   first cut. — *Confirm this is the intended asymmetry.*
-2. **Loopback-management verb names** (see above): keep `serve`/`open`/`stop` as
-   advanced, or group under `glasspad loopback <cmd>`?
-3. **`.glasspad.yaml` schema** — exact keys: `target`, `server`, `api_key`/key-file,
-   default `template`, default `space_key`? And does a repo config partially override
-   home (merge) or fully replace it (first-file-wins per key vs per-file)?
+1. **Hosted = snapshot + idempotent re-publish.** Re-run `publish` to update a hosted
+   space (idempotent via `space_key`); `push-round` gives live in-place swaps for the
+   return channel. Live-reload stays a **loopback** property; a hosted `--watch` (auto
+   re-publish on change) is a later advanced opt-in, not in the first cut. The
+   loopback↔hosted asymmetry (live vs snapshot) is intended.
+2. **Loopback management is grouped under `glasspad loopback <cmd>`** (advanced,
+   help-only) — see "Surface after the reshape".
+3. **Config is merged per-key**, not per-file. Each key resolves independently
+   through `.glasspad.yaml` → `~/.config/glasspad/config.yaml` → built-in default
+   (first file that sets *that key* wins). Keys: `target`, `server`, `api_key` /
+   key-file, default `template`, default `space_key`, `favicon` (emoji, see
+   `emoji-favicon`). So a repo can set only `target`/`favicon` and inherit `server` +
+   key from the home config.
+
+## [FUTURE] Multi-worker credential security
+
+Per-key config merge means the **API key** typically lives in the home config
+(`~/.config/glasspad/config.yaml`) and is inherited by every repo. That is fine for a
+single operator, but **does not scale securely to many workers/employees** publishing
+to the same hosted server: a single shared key in a home file is a broad, hard-to-
+rotate, hard-to-attribute credential.
+
+Deferred concern (tracked separately as `hosted-multiworker-credentials`): design a
+secure credential model for many publishers — e.g. per-worker scoped tokens (attributable,
+independently revocable), short-lived/rotatable credentials, key sourced from a secret
+manager or env rather than a plaintext home file, and per-tenant scoping so one worker's
+key can only touch its own spaces. **Not part of this first cut** — the first cut keeps
+today's single-key model — but the config schema here should not *preclude* a token /
+key-file / env-indirection source (the `api_key` key should accept an indirection, not
+only an inline secret). Revisit before rolling hosted publish out to a team.
 
 ## Non-goals
 
