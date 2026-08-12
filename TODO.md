@@ -111,22 +111,57 @@ then tag-push → both CI workflows (Release/cargo-dist + Publish-to-crates), ma
   all three channels** (crates.io `0.6.0` yanked=false, GitHub Release `v0.6.0` 12 assets,
   Homebrew `version "0.6.0"`); mac build ran clean on hauis (2nd clean tag-release of the day).
 
+## Design phase 2026-08-12 — publish-first CLI surface (3 issues filed, design DONE)
+
+0.6.0 is released + verified live (all three channels). This session was a **design
+phase** — no code landed; Jari and the orchestrator co-designed a big CLI reshape and
+filed it. `main == origin` (`852163f`), clean tree, still 0.6.0 in `Cargo.toml`.
+
+The motivating problem: the CLI + skill push agents to loopback `serve`/`open` by default
+(the skill literally says "default to loopback serve"), but the intended standard flow is
+**hand glasspad markdown → get a hosted URL**. The home config already points at
+`glasspad.maalla.dev` but is treated only as a publish credential source, not as "hosted
+is the default".
+
+**Filed (all decisions locked — see `issues/publish-first-surface/design.md`, published
+at a hosted URL this session):**
+- **`publish-first-surface`** (high, design-first) — make **`publish` THE default verb**;
+  resolve `target: loopback | hosted` from config precedence `.glasspad.yaml` (repo) →
+  `~/.config/glasspad/config.yaml` (home) → built-in default (loopback), **merged
+  per-key**. Merge `publish`+`publish-space` (a file = a 1-page space). **Remove**
+  `serve`/`create`/`render`/`open` (NO back-compat); demote `build` to advanced
+  (raw-HTML/debug); loopback mgmt regrouped under **`glasspad loopback <cmd>`** (advanced,
+  help-only). Markdown-first. Skill.md rewrite is part of it. Hosted = snapshot +
+  idempotent re-publish (live-reload stays a loopback property).
+- **`emoji-favicon`** (normal) — zero-dep emoji **SVG** favicon (`<svg><text>…</text>`) for
+  published + built pages; emoji from the repo's `.glasspad.yaml` (`favicon: 🚀`), default
+  fallback. After the config unit of publish-first-surface (shares `.glasspad.yaml`).
+- **`hosted-multiworker-credentials`** (low, **deferred**) — FUTURE: secure credential
+  model for many workers (per-worker scoped tokens, rotatable, secret-manager/env source,
+  not a shared plaintext home key). Constraint on publish-first: `.glasspad.yaml` `api_key`
+  must accept an **indirection** (env/key-file/secret ref), not only an inline secret, so
+  this layers on later without a schema break.
+
 ## ▶ Start here (on return)
 
-**Issue tracker EMPTY; DAG empty; nothing in flight.** `main == origin` (`fdb63ee`),
-clean tree, **0.6.0 released and verified on all three channels**. Both 0.5.0 and 0.6.0
-were cut autonomously this session per reaffirmed release autonomy (no permission asked;
-AGENTS.md operating policy was strengthened 2026-08-11 to forbid the "shall I cut?" prompt).
+**Design is complete and reviewed; ready to build.** `main == origin` (`852163f`), clean
+tree, nothing in flight. Next step is the **design-first implementation of
+`publish-first-surface`** — decompose (per design.md) and spawn:
+1. **(a)** config resolution + `target` + `.glasspad.yaml` (per-key merge; `api_key`
+   accepts an indirection — leave room for `hosted-multiworker-credentials`). **← head**
+2. **(b)** `publish` unification (file|dir; hosted|loopback dispatch) — *after (a)*.
+3. **(c)** remove `serve`/`create`/`render`/`open`; regroup loopback mgmt under
+   `glasspad loopback <cmd>`.
+4. **(d)** rewrite `src/skill.md` around the single default.
+5. **`emoji-favicon`** — *after (a)* (shares `.glasspad.yaml`).
 
-Next work is **unfiled** — file new work then re-populate lanes, or pick a candidate:
-- **tilictl docsite migration** (the natural next step) — retire tilictl's bespoke HTML
-  generator onto glasspad `publish-space` + markdown spaces, now that the whole
-  space-ingest + markdown-native use case is shipped. Tracked in the **tilictl** repo.
-- **Return-channel** further increments only if a concrete need appears (A2 SSE + B2
-  multi-round both shipped in 0.5.0).
-- **Optional polish** (below): `version-commit-stamp` provenance follow-up, close the
-  effectively-complete `release-oss` epic, cosmetic LICENSE/contact confirms (already
-  correct — no-op unless changed).
+All Lane B (`cli.rs`/`main.rs`/config) → **sequenced, not parallel**. This is a big
+surface reshape with NO back-compat — do it design-first, `/llm-review` each unit, keep
+`./test-security.sh` green (should be untouched — CLI/config/skill change, not a host
+change). A release after it lands would be **0.7.0** (agent decides — release autonomy).
+
+_Older candidates still valid:_ tilictl docsite migration (tracked in tilictl; unblocked
+by 0.6.0); optional polish (below).
 
 ### Optional polish (no hard gate)
 
@@ -155,12 +190,19 @@ parallel.)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none — issue tracker empty; backlog empty)
+GLOBAL HEAD-OF-LINE: publish-first-surface   ← design done; start with its config unit (a)
 
-0.5.0 + 0.6.0 both released 2026-08-11. No active non-epic issues.
-Next code round: file new work, then re-populate lanes.
+LANE B — cli.rs + main.rs + config (+ hosted core) — the whole publish-first reshape
+  ▶ publish-first-surface   (high, design-first; decompose (a)config→(b)publish→(c)verb-removal→(d)skill)
+    emoji-favicon            after publish-first-surface (needs its .glasspad.yaml config unit)
 ```
 <!-- execution-dag:end -->
+
+## Adjacent backlog (not in a lane)
+
+- `hosted-multiworker-credentials` (low, **deferred**) — FUTURE secure credential model
+  for many publishers; a constraint on publish-first-surface (`api_key` indirection), not
+  a scheduled unit. Revisit before rolling hosted publish out to a team.
 
 ## How to cut a release (the recipe, now automated)
 
