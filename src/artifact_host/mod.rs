@@ -499,9 +499,13 @@ fn render_shell(
     let nonce = token::generate_token();
     let nav = space_nav(snap, space);
     let nav_refs: Vec<(&str, &str)> = nav.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect();
+    // Per-space wins over the host default over the built-in default. An empty
+    // per-space value is treated as unset (it would render a blank glyph) — all
+    // ingress paths already reject empty, so this is defense-in-depth.
     let favicon = snap
         .space(space)
         .and_then(|s| s.favicon.as_deref())
+        .filter(|f| !f.is_empty())
         .or(host_favicon);
     let body = shell::render(
         mount,
@@ -826,6 +830,71 @@ mod tests {
         let resp = get("/demo/").await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(body_string(resp).await.contains("/demo/_c/index"));
+    }
+
+    #[tokio::test]
+    async fn host_default_favicon_reaches_the_shell_not_the_sandbox() {
+        // The loopback host-default favicon path (repo `.glasspad.yaml` → host
+        // default) must reach the OUTER shell, while the sandboxed content route stays
+        // favicon-free. The demo space carries no per-space favicon, so the host
+        // default is what renders.
+        let host = Arc::new(ArtifactHost::new(3000).with_favicon(Some("🎯".to_string())));
+        let resp = get_on(host.clone(), "/demo/index").await;
+        // Pin the CSP contract the favicon depends on: a `data:` SVG favicon loads
+        // under `img-src`, so the shell CSP MUST permit `data:` images. If a future
+        // tightening drops it, every favicon silently breaks — this test fails first.
+        assert!(
+            header(&resp, "content-security-policy").contains("img-src 'self' data:"),
+            "shell CSP must allow data: images for the favicon"
+        );
+        let shell = body_string(resp).await;
+        assert_eq!(favicon_emoji_in_shell(&shell), Some('🎯'));
+        // The sandboxed artifact content route is byte-for-byte favicon-free.
+        let content = body_string(get_on(host, "/demo/_c/index").await).await;
+        assert!(!content.contains(r#"rel="icon""#));
+    }
+
+    #[tokio::test]
+    async fn per_space_favicon_wins_over_host_default() {
+        // Precedence: a per-space favicon (the hosted multi-tenant emoji) overrides the
+        // host-level default. Serve a live space carrying its own favicon on a host that
+        // also has a (different) default; the per-space emoji must be what renders.
+        let host = Arc::new(ArtifactHost::new(3000).with_favicon(Some("🎯".to_string())));
+        let mut sp = Space::default();
+        sp.artifacts.insert(
+            "index".to_string(),
+            Artifact {
+                html: "<h1>Hi</h1>".to_string(),
+                title: "Hi".to_string(),
+            },
+        );
+        sp.nav = vec!["index".to_string()];
+        sp.home = Some("index".to_string());
+        sp.favicon = Some("🦀".to_string());
+        host.swap(Snapshot {
+            spaces: std::iter::once(("myspace".to_string(), sp)).collect(),
+        });
+        let shell = body_string(get_on(host, "/myspace/index").await).await;
+        assert_eq!(
+            favicon_emoji_in_shell(&shell),
+            Some('🦀'),
+            "per-space favicon must win over the host default"
+        );
+    }
+
+    /// Decode the shell's `<link rel="icon">` base64 SVG and return the first char of
+    /// the emoji it carries (test helper for the favicon precedence assertions).
+    fn favicon_emoji_in_shell(shell: &str) -> Option<char> {
+        use base64::Engine as _;
+        let link = shell
+            .find(r#"<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,"#)?;
+        let b64 = shell[link..].split("base64,").nth(1)?.split('"').next()?;
+        let svg =
+            String::from_utf8(base64::engine::general_purpose::STANDARD.decode(b64).ok()?).ok()?;
+        // The emoji sits in the SVG <text> node: after the last '>' before '</text>'.
+        let close = svg.find("</text>")?;
+        let open = svg[..close].rfind('>')?;
+        svg[open + 1..close].chars().next()
     }
 
     #[tokio::test]

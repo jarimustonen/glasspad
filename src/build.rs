@@ -118,8 +118,15 @@ fn inject_favicon(wrapped: String, favicon: Option<&str>) -> String {
             out
         }
         // wrap_fragment always emits a </head>; if that ever changes, fail loud in
-        // tests rather than silently dropping the favicon.
-        None => wrapped,
+        // debug/tests (so the invariant is caught) while release stays graceful — a
+        // missing favicon is never worth aborting a build over.
+        None => {
+            debug_assert!(
+                false,
+                "inject_favicon: wrap output has no </head> — the fragment-wrap invariant broke"
+            );
+            wrapped
+        }
     }
 }
 
@@ -154,13 +161,17 @@ fn localize_base_libs(wrapped: String) -> String {
 /// A minimal `index.html` that redirects to `home` (used when the space's home
 /// slug is not literally `index`, so the output still has a canonical entry point).
 /// `home` is a validated slug (`[a-z0-9][a-z0-9-]*`), so it needs no escaping — the
-/// grammar excludes every HTML/URL metacharacter.
-fn index_redirect(home: &str) -> String {
+/// grammar excludes every HTML/URL metacharacter. It carries the favicon too (it is a
+/// built outer document a visitor may briefly see), via the same `link_tag` seam.
+fn index_redirect(home: &str, favicon: Option<&str>) -> String {
+    let favicon_link = crate::favicon::link_tag(favicon);
     format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
+         {favicon_link}\n\
          <meta http-equiv=\"refresh\" content=\"0; url={home}.html\">\n\
          <title>Redirecting…</title>\n</head><body>\n\
          <p><a href=\"{home}.html\">Continue to {home}</a></p>\n</body></html>\n",
+        favicon_link = favicon_link,
         home = home
     )
 }
@@ -208,7 +219,7 @@ pub fn plan(
         );
         files.push(OutFile {
             rel_path: "index.html".to_string(),
-            bytes: index_redirect(home).into_bytes(),
+            bytes: index_redirect(home, favicon).into_bytes(),
         });
     }
 
@@ -466,6 +477,19 @@ mod tests {
         assert!(idx.contains(r#"href="report.html""#));
         // The real page still exists under its own name.
         assert!(text(&files, "report.html").contains("<h1>Report</h1>"));
+    }
+
+    #[test]
+    fn non_index_redirect_page_carries_the_favicon() {
+        // The synthetic index.html redirect is a built outer document a visitor may
+        // briefly see, so it too gets the favicon link.
+        let sp = space_with(&[("report", "<h1>Report</h1>")]);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained, Some("🚀"));
+        let idx = text(&files, "index.html");
+        let link = idx
+            .find(r#"<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,"#)
+            .expect("redirect page carries the favicon");
+        assert!(link < idx.find("</head>").unwrap());
     }
 
     #[test]

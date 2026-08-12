@@ -4,6 +4,9 @@ updated: 2026-08-12
 type: feature
 status: in-progress
 priority: normal
+commits:
+- hash: 344764e
+  summary: emoji SVG favicon on the outer shell/build document
 ---
 
 # Emoji SVG favicon for published spaces (repo emoji via .glasspad.yaml)

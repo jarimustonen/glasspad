@@ -1289,10 +1289,23 @@ impl Store {
         // hand-tampered `meta.json` can never smuggle a non-emoji favicon into a shell.
         match build_space_bundle(pages, assets, meta.nav.clone(), meta.title.clone()) {
             Ok(mut sp) => {
-                sp.favicon = meta
-                    .favicon
-                    .as_deref()
-                    .and_then(|f| crate::favicon::validate(f).ok());
+                // The favicon is decorative, so a corrupt/tampered value must not skip
+                // the whole space — but it is logged (not silently dropped) and the page
+                // reverts to the default, matching the diagnostics the rest of load emits.
+                sp.favicon = match meta.favicon.as_deref() {
+                    None => None,
+                    Some(raw) => match crate::favicon::validate(raw) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            eprintln!(
+                                "glasspad host: space {} has an invalid stored favicon: {e}; \
+                                 using the default",
+                                meta.slug
+                            );
+                            None
+                        }
+                    },
+                };
                 Ok(Some((meta, sp)))
             }
             Err(e) => {
@@ -2444,6 +2457,54 @@ mod tests {
         let sp2 = h2.snapshot().space(&pubd.slug).cloned().unwrap();
         assert_eq!(sp2.artifacts.len(), 2);
         assert_eq!(store2.page_count(), 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn space_favicon_persists_and_survives_reopen() {
+        let root = tmp_root("space-favicon-persist");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let mut space = sample_space("Home");
+        space.favicon = Some("🚀".to_string());
+        let pubd = store.publish_space("acme", space, None).unwrap();
+
+        // Served snapshot carries the per-space favicon.
+        assert_eq!(
+            h.snapshot().space(&pubd.slug).unwrap().favicon.as_deref(),
+            Some("🚀")
+        );
+        // Persisted to meta.json.
+        let meta_path = root.join("spaces").join(&pubd.slug).join("meta.json");
+        let meta: SpaceMeta = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        assert_eq!(meta.favicon.as_deref(), Some("🚀"));
+
+        // Reopen: the favicon reloads from disk.
+        let h2 = host();
+        let _store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            h2.snapshot().space(&pubd.slug).unwrap().favicon.as_deref(),
+            Some("🚀")
+        );
+
+        // Backward compat: a pre-feature meta.json without the field loads as None
+        // (`#[serde(default)]`), and a tampered/invalid favicon is dropped to None (the
+        // page reverts to the default) rather than skipping the whole space.
+        for tamper in ["null", "\"<script>\""] {
+            let raw = std::fs::read_to_string(&meta_path).unwrap();
+            let mut json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            if tamper == "null" {
+                json.as_object_mut().unwrap().remove("favicon");
+            } else {
+                json["favicon"] = serde_json::json!("<script>");
+            }
+            std::fs::write(&meta_path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+            let h3 = host();
+            let _s3 = Store::open(&root, h3.clone()).unwrap();
+            let sp3 = h3.snapshot().space(&pubd.slug).cloned();
+            assert!(sp3.is_some(), "space still served with favicon={tamper}");
+            assert_eq!(sp3.unwrap().favicon, None);
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -8,11 +8,15 @@
 //!
 //! Two independent defenses keep the emoji from becoming markup (AI-first §1):
 //!
-//! 1. [`validate`] rejects a configured value that is not a short emoji — empty,
-//!    control characters, whitespace, the HTML/URI metacharacters `< > & " ' / \` `` ` ``,
-//!    plain ASCII (an emoji has a non-ASCII scalar), or an overlong blob. It runs at
-//!    **every ingress** (the CLI at publish/serve/build time, and again server-side in
-//!    the hosted ingest — the untrusted API boundary).
+//! 1. [`validate`] rejects a configured value that is clearly not a favicon glyph —
+//!    empty, overlong, any control character, any Unicode whitespace, the invisible
+//!    bidi/zero-width format controls, Unicode noncharacters, the HTML/URI
+//!    metacharacters `< > & " ' / \` `` ` ``, or pure ASCII (a favicon needs a
+//!    non-ASCII glyph). It is a **heuristic**, not a full Unicode emoji-property check
+//!    (that needs a large dependency; glasspad stays zero-dep), so it accepts a short
+//!    non-ASCII glyph — a plain emoji or a ZWJ sequence — and does not enforce a single
+//!    grapheme. It runs at **every ingress** (the CLI at publish/serve/build time, and
+//!    again server-side in the hosted ingest — the untrusted API boundary).
 //! 2. [`link_tag`] XML-escapes the emoji into the SVG `<text>` (defense-in-depth on
 //!    top of `validate`) and then base64-encodes the whole SVG into the `data:` URI,
 //!    so the outer HTML attribute carries only `[A-Za-z0-9+/=]` — no injection surface
@@ -29,12 +33,20 @@ pub const DEFAULT_EMOJI: &str = "📊";
 /// pasted blob of text/markup, never a real single emoji sequence.
 const MAX_SCALARS: usize = 16;
 
-/// Validate a configured favicon emoji. On success returns the trimmed value; on
-/// failure an **informative** message (AI-first §1: strict, never a silent fallback —
-/// the caller surfaces it as a hard error). Accepts a short emoji (possibly a ZWJ
-/// sequence); rejects empty, control characters, ASCII whitespace, the HTML/URI
-/// metacharacters, a value with no non-ASCII scalar (plain ASCII is not an emoji),
-/// and an overlong value.
+/// Validate a configured favicon. On success returns the trimmed value; on failure
+/// an **informative** message (AI-first §1: strict, never a silent fallback — the
+/// caller surfaces it as a hard error). This is a **heuristic**, not a full Unicode
+/// emoji-property check (which would need a large dependency; glasspad stays
+/// zero-dep): it accepts a short, non-ASCII glyph — a plain emoji or a ZWJ sequence —
+/// and rejects the shapes that are clearly *not* a favicon: empty, an overlong value,
+/// **any** control character (`char::is_control` — C0/C1/DEL), **any** Unicode
+/// whitespace (`char::is_whitespace` — so NBSP / em-space / line & paragraph
+/// separators can't slip past), the invisible bidi/zero-width format controls
+/// (U+200B/C, U+200E/F, U+202A‑E, U+2060, U+2066‑9, U+FEFF — but **not** ZWJ U+200D,
+/// which real emoji sequences need), Unicode **noncharacters** (which would make the
+/// SVG XML ill-formed), the HTML/URI metacharacters, and a value that is pure ASCII
+/// (a favicon needs a non-ASCII glyph). It does **not** enforce a single grapheme, so
+/// e.g. two emoji still pass — see the module docs.
 pub fn validate(raw: &str) -> Result<String, String> {
     let s = raw.trim();
     if s.is_empty() {
@@ -51,20 +63,33 @@ pub fn validate(raw: &str) -> Result<String, String> {
     }
     let mut has_non_ascii = false;
     for c in s.chars() {
-        if (c as u32) < 0x20 || c == '\u{7f}' {
+        // `is_control` covers C0, C1, and DEL (not just the ASCII range); `is_whitespace`
+        // covers NBSP and the Unicode separators an `is_ascii_whitespace` check misses.
+        if c.is_control() {
             return Err(format!(
-                "favicon {s:?} contains a control character: a favicon must be a plain emoji"
+                "favicon {s:?} contains a control character: a favicon must be a plain glyph"
+            ));
+        }
+        if c.is_whitespace() {
+            return Err(format!(
+                "favicon {s:?} contains whitespace: use a single emoji with no spaces"
+            ));
+        }
+        if is_disallowed_format(c) {
+            return Err(format!(
+                "favicon {s:?} contains an invisible bidi/zero-width control ({c:?}): a favicon \
+                 must be a visible glyph"
+            ));
+        }
+        if is_noncharacter(c) {
+            return Err(format!(
+                "favicon {s:?} contains a Unicode noncharacter ({c:?}): not a renderable glyph"
             ));
         }
         if matches!(c, '<' | '>' | '&' | '"' | '\'' | '/' | '\\' | '`') {
             return Err(format!(
-                "favicon {s:?} contains the markup/URI metacharacter {c:?}: a favicon must be an \
-                 emoji, not markup"
-            ));
-        }
-        if c.is_ascii_whitespace() {
-            return Err(format!(
-                "favicon {s:?} contains whitespace: use a single emoji with no spaces"
+                "favicon {s:?} contains the markup/URI metacharacter {c:?}: a favicon must be a \
+                 glyph, not markup"
             ));
         }
         if !c.is_ascii() {
@@ -73,10 +98,33 @@ pub fn validate(raw: &str) -> Result<String, String> {
     }
     if !has_non_ascii {
         return Err(format!(
-            "favicon {s:?} is plain ASCII: a favicon must be an emoji (contain a non-ASCII glyph)"
+            "favicon {s:?} is plain ASCII: a favicon must be a non-ASCII glyph (typically an emoji)"
         ));
     }
     Ok(s.to_string())
+}
+
+/// Invisible bidi / zero-width **format** controls that must not ride in a favicon —
+/// they render nothing and (bidi overrides especially) are a spoofing vector. ZWJ
+/// (U+200D) is deliberately **excluded**: real emoji ZWJ sequences (families, flags)
+/// need it. `char::is_control` does not catch these (they are category `Cf`, not `Cc`).
+fn is_disallowed_format(c: char) -> bool {
+    matches!(c,
+        '\u{200B}' | '\u{200C}'          // zero-width space, zero-width non-joiner
+        | '\u{200E}' | '\u{200F}'        // LTR / RTL marks
+        | '\u{202A}'..='\u{202E}'        // bidi embeddings + override
+        | '\u{2060}'                     // word joiner
+        | '\u{2066}'..='\u{2069}'        // bidi isolates
+        | '\u{FEFF}'                     // BOM / zero-width no-break space
+    )
+}
+
+/// Unicode noncharacters (U+FDD0..U+FDEF and the last two code points of every plane,
+/// `xFFFE`/`xFFFF`). They are permanently unassigned and would make the SVG XML
+/// ill-formed, so a favicon must not contain one.
+fn is_noncharacter(c: char) -> bool {
+    let u = c as u32;
+    (0xFDD0..=0xFDEF).contains(&u) || (u & 0xFFFE) == 0xFFFE
 }
 
 /// The `<link rel="icon">` tag for `emoji` (a value that has already passed
@@ -95,8 +143,11 @@ pub fn link_tag(emoji: Option<&str>) -> String {
 /// XML-escaped so the SVG is well-formed even for a value that slipped past
 /// `validate` (belt-and-suspenders — `validate` already rejects `<`/`>`/`&`).
 fn svg_document(emoji: &str) -> String {
+    // Name an explicit emoji-font stack: without it, Linux/Windows often render an
+    // emoji in an SVG `<text>` node as a tofu box or a monochrome outline. The stack
+    // is a static constant (no injection surface).
     format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="52">{}</text></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="52" font-family="'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji','Segoe UI Symbol',system-ui,sans-serif">{}</text></svg>"#,
         xml_escape(emoji)
     )
 }
@@ -154,9 +205,38 @@ mod tests {
     #[test]
     fn validate_rejects_control_and_whitespace_and_overlong() {
         assert!(validate("🚀\u{7f}").is_err()); // DEL
+        assert!(validate("🚀\u{85}🚀").is_err()); // internal NEL — a C1 control
         assert!(validate("🚀\n🚀").is_err()); // internal newline (trailing would trim)
         assert!(validate("🚀 🚀").is_err()); // internal space
+        assert!(validate("🚀\u{00a0}🚀").is_err()); // no-break space (Unicode whitespace)
+        assert!(validate("🚀\u{2003}🚀").is_err()); // internal em space (Unicode whitespace)
         assert!(validate(&"🚀".repeat(17)).is_err()); // over the scalar cap
+    }
+
+    #[test]
+    fn validate_rejects_invisible_format_and_noncharacters() {
+        // Zero-width / bidi format controls are invisible (and a spoofing vector).
+        assert!(validate("🚀\u{200b}").is_err()); // zero-width space
+        assert!(validate("🚀\u{202e}").is_err()); // RIGHT-TO-LEFT OVERRIDE
+        assert!(validate("🚀\u{feff}").is_err()); // BOM / ZWNBSP
+        assert!(validate("🚀\u{2066}").is_err()); // bidi isolate
+        // Unicode noncharacters would make the SVG XML ill-formed.
+        assert!(validate("\u{fffe}").is_err());
+        assert!(validate("\u{ffff}").is_err());
+        assert!(validate("\u{fdd0}").is_err());
+        assert!(validate("\u{1fffe}").is_err());
+        // ZWJ (U+200D) is allowed — real emoji sequences need it (already covered by
+        // validate_accepts_common_emoji, asserted here explicitly against the denylist).
+        assert!(validate("👩\u{200d}🚀").is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_non_emoji_but_documents_the_heuristic() {
+        // The heuristic accepts any short non-ASCII glyph, so a CJK char passes — this
+        // pins the DOCUMENTED behavior (validate is not a full emoji-property check).
+        assert!(validate("漢").is_ok());
+        // Multiple emoji also pass (no single-grapheme enforcement) — documented.
+        assert!(validate("🚀🦀").is_ok());
     }
 
     #[test]

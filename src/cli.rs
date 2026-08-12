@@ -548,7 +548,7 @@ pub async fn loopback_serve(
 /// `loopback serve` defaults it off). Reached via `glasspad loopback serve` and the
 /// loopback `publish` dispatch.
 pub async fn serve(dir: Option<PathBuf>, port: u16, open: bool, json: bool) {
-    let host = loopback_host(port, resolve_favicon(json));
+    let host = loopback_host(port, resolve_favicon_lenient());
 
     // (name, nav slugs, home) when a live directory is served; None = fixtures.
     let live: Option<(String, Vec<String>, Option<String>)> = match &dir {
@@ -697,7 +697,7 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, open: bool, 
         "full-document"
     };
 
-    let host = loopback_host(port, resolve_favicon(json));
+    let host = loopback_host(port, resolve_favicon_lenient());
     host.swap(server::one_artifact_snapshot(&space_name, html));
 
     let listener = match server::bind_loopback(port).await {
@@ -1007,7 +1007,7 @@ pub async fn render(
         );
     }
 
-    let host = loopback_host(port, resolve_favicon(json));
+    let host = loopback_host(port, resolve_favicon_lenient());
     host.swap(server::one_artifact_snapshot(&space_name, body));
 
     let listener = match server::bind_loopback(port).await {
@@ -2337,9 +2337,40 @@ fn resolve_favicon(json: bool) -> Option<String> {
     validate_favicon(cfg.favicon.as_deref(), json)
 }
 
+/// Like [`resolve_favicon`], but **non-fatal** — for the long-running loopback
+/// serve/create/render paths, where a decorative favicon (or a malformed repo
+/// `.glasspad.yaml`) must not stop the server from binding. On any error it warns to
+/// stderr and falls back to the built-in default (`None`), mirroring how the loopback
+/// submission store degrades to a warning rather than aborting `serve`. `build` and
+/// hosted `publish` are one-shot commands with clear failure output, so they keep the
+/// fatal [`resolve_favicon`] / [`validate_favicon`].
+fn resolve_favicon_lenient() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let cfg = match config::resolve(&cwd, &publish_config_candidates()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "warning: ignoring .glasspad.yaml for the favicon ({}): {}",
+                e.code, e.message
+            );
+            return None;
+        }
+    };
+    match cfg.favicon.as_deref() {
+        None => None,
+        Some(v) => match favicon::validate(v) {
+            Ok(ok) => Some(ok),
+            Err(msg) => {
+                eprintln!("warning: ignoring invalid favicon (using the default): {msg}");
+                None
+            }
+        },
+    }
+}
+
 /// Validate an optional configured favicon, exiting with an informative error on a
-/// non-emoji / injection value. Shared by every path a favicon enters (loopback host
-/// default, `build`, and the hosted per-space publish) so one rule applies uniformly.
+/// non-emoji / injection value. Shared by the fatal paths (`build`, and the hosted
+/// per-space publish) so one rule applies uniformly.
 fn validate_favicon(raw: Option<&str>, json: bool) -> Option<String> {
     match raw {
         None => None,
