@@ -13,6 +13,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.7.0] - 2026-08-12
+
+Reshapes the CLI around a single default: **hand glasspad markdown, get a URL.**
+`publish` is now THE verb, and where a page lands is decided by config, not by the
+agent picking a subcommand. This is a **breaking** surface change — several loopback
+verbs are removed with no back-compat aliases. The artifact security contract is
+unchanged: every page, hosted or loopback, stays a null-origin sandboxed iframe with
+`connect-src 'none'` (`./test-security.sh` 48 checks + Wave 2a green).
+
+### Added
+
+- **`publish <path>` is the default verb.** A `.md`/`.markdown`/`.html` **file** is a
+  one-page space; a **directory** is an N-page space. Markdown is rendered automatically
+  via the space model. One verb, markdown-first — `publish` and `publish-space` are
+  unified.
+- **Config-driven target (`loopback | hosted`).** A new per-key config merge resolves
+  each key independently through repo-root **`.glasspad.yaml`** → `~/.config/glasspad/config.yaml`
+  → built-in default (`target: loopback`), so zero-config still just serves loopback.
+  Keys: `target`, `server`, `api_key`, `template`, `space_key`, `favicon`. `target: hosted`
+  uploads the space and returns the `/p/<slug>/…` URL (idempotent via `space_key`);
+  `target: loopback` spawns/reuses a live-reload server and opens the local URL.
+- **`api_key` indirection.** The `api_key` config key accepts an env-var or key-file
+  reference, not only an inline secret — room for a future multi-worker credential model
+  without a schema break.
+- **Emoji SVG favicon.** Published and built pages carry a zero-dependency inline SVG
+  emoji favicon on the outer served/built document, sourced from `.glasspad.yaml`
+  (`favicon: 🚀`) with a default fallback. The emoji is strictly validated and XML-escaped;
+  the artifact sandbox is byte-for-byte unaffected.
+
+### Changed
+
+- **Loopback management is now advanced**, regrouped under **`glasspad loopback <serve|open|stop>`**
+  (help-only; not the standard flow). `glasspad build <space> <out>` is retained as an
+  advanced static-output/debug verb.
+- **`src/skill.md` rewritten** around the publish-first default; the old "default to
+  loopback serve" mode table is gone.
+
+### Removed
+
+- **`serve`, `create`, `render`, `open`, and top-level `stop`** are removed as top-level
+  verbs (no back-compat aliases). Their behavior is absorbed into `publish` and the
+  `glasspad loopback` group.
+
 ## [0.6.0] - 2026-08-11
 
 Turns glasspad into a **multi-page hosted docsite** tool: publish a whole directory
