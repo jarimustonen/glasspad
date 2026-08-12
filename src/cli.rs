@@ -33,6 +33,7 @@ use serde_json::json;
 use crate::artifact_host::space::{self, ScanError};
 use crate::artifact_host::{self, ArtifactHost, render, wrap};
 use crate::build::{self, LibMode};
+use crate::config::{self, ApiKeySource, Target};
 use crate::hosted::auth::{KeyFileError, KeyTable};
 use crate::hosted::{self, HostedConfig};
 use crate::pidfile::{self, PidError};
@@ -503,9 +504,49 @@ fn loopback_submissions(port: u16) -> Option<Arc<SubmissionStore>> {
     }
 }
 
-/// `glasspad serve [dir]` — serve a live directory as a space, or (with no dir)
-/// the built-in fixtures. Binds loopback, then blocks serving until killed.
-pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
+/// `glasspad loopback serve [path]` — the advanced, explicit loopback entry point.
+/// Serve a directory, a single file, or (with no path) the built-in fixtures live
+/// on 127.0.0.1, blocking until killed. A single `.md`/`.markdown` file is rendered
+/// through the template; a single `.html`/`.htm` file is served verbatim; a
+/// directory is scanned as a space — the same classification the default `publish`
+/// verb uses, so `loopback serve` is `publish`'s loopback path without the config
+/// target resolution. `open` launches the browser after binding.
+pub async fn loopback_serve(
+    path: Option<PathBuf>,
+    template: Option<String>,
+    name: Option<String>,
+    port: u16,
+    open: bool,
+    json: bool,
+) {
+    match path {
+        None => serve(None, port, open, json).await,
+        Some(p) => match classify_publish_path(&p, json) {
+            PathKind::Dir => serve(Some(p), port, open, json).await,
+            PathKind::Markdown => render(p, template, name, port, open, json).await,
+            PathKind::Html => {
+                if template.is_some() {
+                    exit_error(
+                        json,
+                        1,
+                        "template_without_markdown",
+                        "--template only applies to a markdown file (raw HTML is served verbatim)",
+                        None,
+                        None,
+                    );
+                }
+                create(p, name, port, open, json).await;
+            }
+        },
+    }
+}
+
+/// Serve a live directory as a space, or (with no dir) the built-in fixtures.
+/// Binds loopback, then blocks serving until killed. `open` launches the browser
+/// on the served URL after binding (the loopback `publish` path sets it; explicit
+/// `loopback serve` defaults it off). Reached via `glasspad loopback serve` and the
+/// loopback `publish` dispatch.
+pub async fn serve(dir: Option<PathBuf>, port: u16, open: bool, json: bool) {
     let host = loopback_host(port);
 
     // (name, nav slugs, home) when a live directory is served; None = fixtures.
@@ -544,6 +585,13 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, json: bool) {
         server::spawn_watcher(host.clone(), d);
     }
     emit_serving(json, port, live.as_ref(), pid_warnings);
+    if open {
+        let url = match live.as_ref() {
+            Some((name, _, _)) => format!("http://127.0.0.1:{port}/{name}/"),
+            None => format!("http://127.0.0.1:{port}/"),
+        };
+        let _ = launch_browser(&url);
+    }
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
@@ -638,7 +686,7 @@ fn emit_serving(
 /// `glasspad create <file> [--name <space>]` — build a one-artifact space from a
 /// single file and serve it live (a single-file watch reloads on edit). The space
 /// name defaults to the file stem (validated) and can be overridden with `--name`.
-pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) {
+pub async fn create(file: PathBuf, name: Option<String>, port: u16, open: bool, json: bool) {
     let (space_name, html) = load_single_file(&file, name.as_deref(), json);
     // Report which authoring level was detected — the same classifier the content
     // route uses to decide wrap-vs-verbatim (design.md §4 / plan §4).
@@ -666,6 +714,9 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, json: bool) 
     let pid_warnings = acquire_pidfile(json).await;
     server::spawn_file_watcher(host.clone(), file, space_name.clone());
     emit_created(json, port, &space_name, kind, pid_warnings);
+    if open {
+        let _ = launch_browser(&format!("http://127.0.0.1:{port}/{space_name}/"));
+    }
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
@@ -906,6 +957,7 @@ pub async fn render(
     template_ref: Option<String>,
     name: Option<String>,
     port: u16,
+    open: bool,
     json: bool,
 ) {
     // Validate the space name FIRST (fail-fast §1): it comes from `--name` or the
@@ -972,6 +1024,9 @@ pub async fn render(
     warnings.extend(acquire_pidfile(json).await);
     server::spawn_render_watcher(host.clone(), file, template, space_name.clone());
     emit_rendered(json, port, &space_name, &label, kind, warnings);
+    if open {
+        let _ = launch_browser(&format!("http://127.0.0.1:{port}/{space_name}/"));
+    }
 
     let app = server::build_app_with_host(port, host);
     if let Err(e) = server::serve_on(listener, app).await {
@@ -1709,272 +1764,209 @@ fn emit_host_serving(
     }
 }
 
-// --- publish (client) -----------------------------------------------------
+// --- publish (the default verb) -------------------------------------------
 
-/// Config the `publish` client reads (lowest precedence; flag > env > file). YAML
-/// at `${XDG_CONFIG_HOME:-~/.config}/glasspad/config.yaml` on every platform. For
-/// backward compatibility an existing file at the platform `dirs::config_dir()`
-/// location (macOS `~/Library/Application Support/glasspad/config.yaml`) is still
-/// read as a fallback when no XDG-path file exists. Both fields optional.
-#[derive(Default, serde::Deserialize)]
-struct PublishConfig {
-    server: Option<String>,
-    api_key: Option<String>,
+/// What a `publish` / `loopback serve` `<path>` resolves to. A directory is an
+/// N-page space; a single `.md`/`.markdown` file is a one-page space rendered
+/// through a template; a single `.html`/`.htm` file is a one-page space served
+/// verbatim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PathKind {
+    Dir,
+    Markdown,
+    Html,
 }
 
-/// `glasspad publish <file> [--server <url>] [--api-key <key>] [--markdown
-/// [--template <ref>]] [--title <t>] [--no-open]` — publish one page to a hosted
-/// share server and print `{slug, url}`. Config precedence (AI-first §8):
-/// flag > `$GLASSPAD_SERVER`/`$GLASSPAD_API_KEY` > config file.
-///
-/// The API key is never printed to stdout/stderr by this command. Note, however,
-/// that a key passed via `--api-key` is visible in process listings + shell
-/// history on shared machines — prefer `$GLASSPAD_API_KEY` or the config file for
-/// anything but throwaway use.
-#[allow(clippy::too_many_arguments)]
-pub async fn publish(
-    file: PathBuf,
-    server: Option<String>,
-    api_key: Option<String>,
-    markdown: bool,
-    template: Option<String>,
-    title: Option<String>,
-    idempotency_key: Option<String>,
-    json: bool,
-    no_open: bool,
-) {
-    let cfg = load_publish_config(json);
-
-    let server = resolve_setting(server, "GLASSPAD_SERVER", cfg.server).unwrap_or_else(|| {
-        exit_error(
+/// Classify a `<path>` as a directory or a supported single file (strict, AI-first
+/// §1): a missing path, a non-regular file, or an unsupported extension each exit
+/// with an informative envelope rather than a silent fixup. `metadata` follows a
+/// symlink — the caller named this path explicitly (unlike a directory *scan*,
+/// where a symlinked entry can smuggle a file in from outside the space).
+fn classify_publish_path(path: &Path, json: bool) -> PathKind {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => exit_error(
             json,
             1,
-            "missing_server",
-            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
-             to ~/.config/glasspad/config.yaml",
+            "no_such_path",
+            &format!("no such file or directory: {}", path.display()),
+            Some(&path.display().to_string()),
             None,
-            None,
-        )
-    });
-    let api_key = resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
-        exit_error(
-            json,
-            1,
-            "missing_api_key",
-            "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` to \
-             ~/.config/glasspad/config.yaml",
-            None,
-            None,
-        )
-    });
-
-    // Read the source file (bounded, UTF-8) — the same strict checks `create` uses.
-    let noun = if markdown { "markdown" } else { "html" };
-    let content = read_capped_utf8_file(&file, noun, "no_such_path", json);
-
-    // Build the ingest JSON body.
-    let mut body = serde_json::Map::new();
-    if markdown {
-        body.insert("markdown".into(), json!(content));
-        if let Some(t) = &template {
-            // A built-in name is sent as-is; anything else is a template FILE path,
-            // read + sent as an inline template (matches `render`'s resolution).
-            let resolved = resolve_publish_template(t, json);
-            body.insert("template".into(), json!(resolved));
-        }
-    } else {
-        if template.is_some() {
-            exit_error(
-                json,
-                1,
-                "template_without_markdown",
-                "--template only applies with --markdown (raw HTML is published verbatim)",
-                None,
-                None,
-            );
-        }
-        body.insert("html".into(), json!(content));
-    }
-    if let Some(t) = &title {
-        body.insert("title".into(), json!(t));
-    }
-    // An idempotency key is passed through verbatim; the server validates length
-    // and non-emptiness and enforces the exactly-once semantics.
-    if let Some(k) = resolve_setting(idempotency_key, "GLASSPAD_IDEMPOTENCY_KEY", None) {
-        body.insert("idempotency_key".into(), json!(k));
-    }
-
-    // Warn (non-fatal) if the bearer key would cross a plaintext connection to a
-    // non-loopback host — it can be sniffed/replayed on a public network.
-    if server.starts_with("http://") && !server_is_loopback(&server) {
-        eprintln!(
-            "warning: publishing over plaintext http:// to a non-local host sends the API key \
-             in the clear; prefer https://"
-        );
-    }
-
-    let url = format!("{}/api/v1/pages", server.trim_end_matches('/'));
-    // Disable redirects (never replay the bearer to a redirected target) and set
-    // timeouts so a hung/hostile server cannot stall the client indefinitely.
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
-    };
-    let resp = client
-        .post(&url)
-        .bearer_auth(&api_key)
-        .json(&serde_json::Value::Object(body))
-        .send()
-        .await;
-    let resp = match resp {
-        Ok(r) => r,
+        ),
         Err(e) => exit_error(
             json,
             2,
-            "request_failed",
-            // reqwest's Display never includes the bearer token; safe to surface.
-            &format!("cannot reach {url}: {e}"),
+            "io_error",
+            &format!("cannot read {}: {e}", path.display()),
             None,
             None,
         ),
     };
-
-    let status = resp.status();
-    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-    if !status.is_success() {
-        let msg = payload
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("the server rejected the publish");
-        let code = payload
-            .get("error")
-            .and_then(|e| e.get("code"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("publish_rejected");
-        // 4xx is a caller/request error (fixable → 1); 3xx (redirects are disabled,
-        // so a 3xx is an unexpected server contract) and 5xx are system errors (2).
-        let exit = if status.is_client_error() { 1 } else { 2 };
+    if meta.is_dir() {
+        return PathKind::Dir;
+    }
+    if !meta.is_file() {
         exit_error(
             json,
-            exit,
-            code,
-            &format!("{msg} (HTTP {})", status.as_u16()),
-            None,
-            None,
-        );
-    }
-
-    // A 2xx with a missing/empty slug or URL is a broken server contract, not a
-    // success — surface it rather than printing an empty "published '' to".
-    let slug = payload
-        .get("slug")
-        .and_then(|s| s.as_str())
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let page_url = payload
-        .get("url")
-        .and_then(|u| u.as_str())
-        .filter(|u| !u.is_empty())
-        .map(str::to_string);
-    let (slug, page_url) = match (slug, page_url) {
-        (Some(s), Some(u)) => (s, u),
-        _ => exit_error(
-            json,
-            2,
-            "malformed_response",
+            1,
+            "not_a_file",
             &format!(
-                "server returned {} but no slug/url in the body",
-                status.as_u16()
+                "{} is not a regular file or directory (FIFOs, sockets, and devices are not publishable)",
+                path.display()
             ),
             None,
             None,
+        );
+    }
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("md") | Some("markdown") => PathKind::Markdown,
+        Some("html") | Some("htm") => PathKind::Html,
+        _ => exit_error(
+            json,
+            1,
+            "unsupported_input",
+            &format!(
+                "{} is not a publishable file: pass a .md/.markdown/.html file or a directory of them",
+                path.display()
+            ),
+            Some(&path.display().to_string()),
+            Some(vec![
+                "md".into(),
+                "markdown".into(),
+                "html".into(),
+                "htm".into(),
+            ]),
         ),
-    };
-
-    let launched = if no_open {
-        false
-    } else {
-        launch_browser(&page_url)
-    };
-
-    if json {
-        let out = json!({
-            "schema_version": SCHEMA_VERSION,
-            "published": true,
-            "slug": slug,
-            "url": page_url,
-            "browser_launched": launched,
-            "warnings": [],
-        });
-        emit_json_line(&out);
-    } else {
-        // Bare URL on stdout (composable); a human note on stderr.
-        println!("{page_url}");
-        eprintln!("published '{slug}' to {page_url}");
     }
 }
 
-/// `glasspad publish-space <dir> [--server <url>] [--api-key <key>] [--space-key
-/// <key>] [--no-open]` — publish a whole **space** (a directory of linked `.html`
-/// and/or `.md` pages) into one hosted namespace `/p/<slug>/…` with in-space nav +
-/// relative links working across pages. The directory is scanned locally with the
-/// exact same `space::scan_dir` `serve`/`build` use (slug grammar, reserved names,
-/// symlink / traversal rejection, size caps, MIME, `glasspad.yaml` nav/title/template,
-/// and local markdown rendering for `.md` pages — the hosted server receives the
-/// already-rendered HTML, not the markdown), then sent as one bundle to
-/// `POST /api/v1/spaces`. A `--space-key` makes the publish update the space
-/// **in place** at the same slug on re-publish. Config precedence mirrors `publish`.
-pub async fn publish_space(
-    dir: PathBuf,
+/// `glasspad publish <path>` — THE default verb. Resolve the publish target from
+/// config (per-key merge of repo-local `.glasspad.yaml` → home config → the
+/// built-in `loopback` default, with a `--target`/`$GLASSPAD_TARGET` override), then
+/// dispatch: `loopback` serves the space live on 127.0.0.1 (folding
+/// serve/create/render/open), `hosted` uploads it and returns a `/p/<slug>/` URL.
+///
+/// `<path>` is a `.md`/`.markdown`/`.html` file (a one-page space) or a directory
+/// of them (an N-page space); markdown is rendered automatically via the resolved
+/// template (flag > config `template:` > built-in `prose`).
+#[allow(clippy::too_many_arguments)]
+pub async fn publish(
+    path: PathBuf,
+    target: Option<String>,
     server: Option<String>,
     api_key: Option<String>,
+    template: Option<String>,
+    title: Option<String>,
     space_key: Option<String>,
-    json: bool,
+    port: Option<u16>,
     no_open: bool,
+    json: bool,
 ) {
-    use base64::Engine as _;
+    let cfg = resolve_publish_config(json);
+    let resolved_target = resolve_target(target, &cfg, json);
+    // Default template comes from config when no flag was passed (the built-in
+    // `prose` default is applied downstream by `resolve_template`).
+    let template = template.or_else(|| cfg.template.clone());
+    let kind = classify_publish_path(&path, json);
 
-    let cfg = load_publish_config(json);
-    let server = resolve_setting(server, "GLASSPAD_SERVER", cfg.server).unwrap_or_else(|| {
-        exit_error(
-            json,
-            1,
-            "missing_server",
-            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
-             to ~/.config/glasspad/config.yaml",
-            None,
-            None,
-        )
-    });
-    let api_key = resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
-        exit_error(
-            json,
-            1,
-            "missing_api_key",
-            "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` to \
-             ~/.config/glasspad/config.yaml",
-            None,
-            None,
-        )
-    });
+    match resolved_target {
+        Target::Loopback => {
+            let port = resolve_port(port, json);
+            publish_loopback(path, kind, template, port, !no_open, json).await;
+        }
+        Target::Hosted => {
+            publish_hosted(
+                path, kind, server, api_key, template, title, space_key, &cfg, no_open, json,
+            )
+            .await;
+        }
+    }
+}
 
-    // Scan the directory into a validated space with the SAME rules serve/build use.
-    let space = match crate::artifact_host::space::scan_dir(&dir) {
-        Ok(sp) => sp,
-        Err(e) => exit_error(
-            json,
-            1,
-            "invalid_space",
-            &format!("cannot publish {}: {e}", dir.display()),
-            None,
-            None,
-        ),
+/// The loopback branch of `publish`: serve the space live on 127.0.0.1 (blocking,
+/// with live reload) and open the browser. This is the fold of the old
+/// serve/create/render + open into the default path; the loopback↔hosted asymmetry
+/// (live vs. snapshot) is intended (design decision #1).
+async fn publish_loopback(
+    path: PathBuf,
+    kind: PathKind,
+    template: Option<String>,
+    port: u16,
+    open: bool,
+    json: bool,
+) {
+    match kind {
+        PathKind::Dir => serve(Some(path), port, open, json).await,
+        PathKind::Markdown => render(path, template, None, port, open, json).await,
+        PathKind::Html => {
+            if template.is_some() {
+                exit_error(
+                    json,
+                    1,
+                    "template_without_markdown",
+                    "--template only applies to a markdown file (raw HTML is served verbatim)",
+                    None,
+                    None,
+                );
+            }
+            create(path, None, port, open, json).await;
+        }
+    }
+}
+
+/// The hosted branch of `publish`: shape the `<path>` into a space (a directory is
+/// scanned; a single file is a one-page space, markdown rendered locally), then
+/// upload it as one bundle to `POST /api/v1/spaces` and return the `/p/<slug>/` URL.
+/// Idempotent via `space_key` (a re-publish updates the space in place).
+#[allow(clippy::too_many_arguments)]
+async fn publish_hosted(
+    path: PathBuf,
+    kind: PathKind,
+    server: Option<String>,
+    api_key: Option<String>,
+    template: Option<String>,
+    title: Option<String>,
+    space_key: Option<String>,
+    cfg: &config::ResolvedConfig,
+    no_open: bool,
+    json: bool,
+) {
+    let server = resolve_server(server, cfg, json);
+    let api_key = resolve_api_key(api_key, cfg, json);
+    // `space_key`: flag > $GLASSPAD_SPACE_KEY > config `space_key:`.
+    let space_key = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", cfg.space_key.clone());
+
+    let space = match kind {
+        PathKind::Dir => match space::scan_dir(&path) {
+            Ok(sp) => sp,
+            Err(e) => exit_error(
+                json,
+                1,
+                "invalid_space",
+                &format!("cannot publish {}: {e}", path.display()),
+                None,
+                None,
+            ),
+        },
+        PathKind::Markdown => build_single_page_space(&path, template, true, json),
+        PathKind::Html => {
+            if template.is_some() {
+                exit_error(
+                    json,
+                    1,
+                    "template_without_markdown",
+                    "--template only applies to a markdown file (raw HTML is published verbatim)",
+                    None,
+                    None,
+                );
+            }
+            build_single_page_space(&path, None, false, json)
+        }
     };
     if space.artifacts.is_empty() {
         exit_error(
@@ -1982,16 +1974,73 @@ pub async fn publish_space(
             1,
             "empty_space",
             &format!(
-                "{} has no pages to publish (a space is a directory of .html files served \
-                 verbatim and/or .md files rendered into pages)",
-                dir.display()
+                "{} has no pages to publish (a space is a directory of .html and/or .md files)",
+                path.display()
             ),
             None,
             None,
         );
     }
 
-    // Shape the JSON bundle: pages (slug → html), assets (path → base64), nav, title.
+    post_space_bundle(&space, &server, &api_key, space_key, title, no_open, json).await;
+}
+
+/// Build a one-page [`space::Space`] from a single file — the hosted analogue of the
+/// loopback `create`/`render` path. A markdown file is rendered through the resolved
+/// template (flag/default → `resolve_template`) into the artifact body; an HTML file
+/// is taken verbatim. The lone artifact is the space home (`SINGLE_SLUG`); its title
+/// is resolved from the content (falling back to the file stem).
+fn build_single_page_space(
+    file: &Path,
+    template_ref: Option<String>,
+    is_markdown: bool,
+    json: bool,
+) -> space::Space {
+    let html = if is_markdown {
+        let (tmpl, _src, _kind, label) = resolve_template(template_ref.as_deref(), json);
+        match server::build_render_body(file, &tmpl) {
+            Ok(b) => b,
+            Err(msg) => exit_error(
+                json,
+                1,
+                "render_failed",
+                &format!("cannot render {}: {msg}", file.display()),
+                Some(&label),
+                None,
+            ),
+        }
+    } else {
+        read_capped_utf8_file(file, "html", "no_such_path", json)
+    };
+    // The space name only feeds the title fallback here (hosted assigns the slug),
+    // so a non-grammatical stem is fine — default to "page" when there is none.
+    let name = file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("page");
+    let mut snap = server::one_artifact_snapshot(name, html);
+    snap.spaces
+        .remove(name)
+        .expect("one_artifact_snapshot inserts the named space")
+}
+
+/// Upload a scanned/synthesized [`space::Space`] as one bundle to
+/// `POST /api/v1/spaces` and print `{slug, url}`. Shared by the directory and
+/// single-file hosted publish paths (a single file is just a one-page space). A
+/// `space_key` makes the publish idempotent (updates in place at the same slug);
+/// `title_override` wins over the scanned space title. The API key is never printed.
+async fn post_space_bundle(
+    space: &space::Space,
+    server: &str,
+    api_key: &str,
+    space_key: Option<String>,
+    title_override: Option<String>,
+    no_open: bool,
+    json: bool,
+) {
+    use base64::Engine as _;
+
     let pages: Vec<serde_json::Value> = space
         .artifacts
         .iter()
@@ -2001,8 +2050,6 @@ pub async fn publish_space(
         .assets
         .iter()
         .map(|(key, asset)| {
-            // The scanned key is `assets/<rel>`; the bundle wants the path relative to
-            // the assets dir (no prefix).
             let rel = key.strip_prefix("assets/").unwrap_or(key);
             json!({
                 "path": rel,
@@ -2018,14 +2065,15 @@ pub async fn publish_space(
     if !space.nav.is_empty() {
         body.insert("nav".into(), json!(space.nav));
     }
-    if let Some(t) = &space.title {
+    let title = title_override.or_else(|| space.title.clone());
+    if let Some(t) = &title {
         body.insert("title".into(), json!(t));
     }
-    if let Some(k) = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", None) {
+    if let Some(k) = &space_key {
         body.insert("space_key".into(), json!(k));
     }
 
-    if server.starts_with("http://") && !server_is_loopback(&server) {
+    if server.starts_with("http://") && !server_is_loopback(server) {
         eprintln!(
             "warning: publishing over plaintext http:// to a non-local host sends the API key \
              in the clear; prefer https://"
@@ -2044,7 +2092,7 @@ pub async fn publish_space(
     };
     let resp = client
         .post(&url)
-        .bearer_auth(&api_key)
+        .bearer_auth(api_key)
         .json(&serde_json::Value::Object(body))
         .send()
         .await;
@@ -2067,7 +2115,7 @@ pub async fn publish_space(
             .get("error")
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
-            .unwrap_or("the server rejected the space publish");
+            .unwrap_or("the server rejected the publish");
         let code = payload
             .get("error")
             .and_then(|e| e.get("code"))
@@ -2137,6 +2185,116 @@ pub async fn publish_space(
     }
 }
 
+// --- publish config resolution --------------------------------------------
+
+/// Resolve the publish config (per-key merge of repo-local `.glasspad.yaml` → home
+/// config → built-in default), mapping a config error to the shared `--json` error
+/// contract. An unreadable file is a system error (exit 2); a malformed/invalid one
+/// is a user error (exit 1).
+fn resolve_publish_config(json: bool) -> config::ResolvedConfig {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match config::resolve(&cwd, &publish_config_candidates()) {
+        Ok(c) => c,
+        Err(e) => {
+            let exit = if e.code == "unreadable_config" { 2 } else { 1 };
+            exit_error(json, exit, e.code, &e.message, None, None);
+        }
+    }
+}
+
+/// Resolve the publish target: `--target` flag > `$GLASSPAD_TARGET` > config
+/// `target:` > the built-in `loopback` default (so zero-config local just works).
+fn resolve_target(flag: Option<String>, cfg: &config::ResolvedConfig, json: bool) -> Target {
+    if let Some(raw) = resolve_setting(flag, "GLASSPAD_TARGET", None) {
+        return Target::parse(&raw).unwrap_or_else(|m| {
+            exit_error(json, 1, "invalid_target", &m, Some(&raw), None);
+        });
+    }
+    cfg.target.unwrap_or(Target::Loopback)
+}
+
+/// Resolve the hosted server URL: `--server` > `$GLASSPAD_SERVER` > config
+/// `server:`. Absent at every level is an informative error (hosted needs it).
+fn resolve_server(flag: Option<String>, cfg: &config::ResolvedConfig, json: bool) -> String {
+    resolve_setting(flag, "GLASSPAD_SERVER", cfg.server.clone()).unwrap_or_else(|| {
+        exit_error(
+            json,
+            1,
+            "missing_server",
+            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
+             to .glasspad.yaml / ~/.config/glasspad/config.yaml",
+            None,
+            None,
+        );
+    })
+}
+
+/// Resolve the hosted API key: `--api-key` > `$GLASSPAD_API_KEY` > the config
+/// `api_key` source (an inline secret, an `{env: …}` indirection, or an `{file: …}`
+/// / `api_key_file` key file). An unset/empty value at every level is an informative
+/// error; an unreadable key file is a system error (exit 2). The key is never printed.
+fn resolve_api_key(flag: Option<String>, cfg: &config::ResolvedConfig, json: bool) -> String {
+    if let Some(k) = resolve_setting(flag, "GLASSPAD_API_KEY", None) {
+        return k;
+    }
+    match &cfg.api_key {
+        Some(ApiKeySource::Inline(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                missing_api_key(json);
+            }
+            t.to_string()
+        }
+        Some(ApiKeySource::Env(name)) => match std::env::var(name) {
+            Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+            _ => exit_error(
+                json,
+                1,
+                "missing_api_key",
+                &format!(
+                    "config `api_key` points at ${name}, which is unset or empty; set it, or pass \
+                     --api-key / $GLASSPAD_API_KEY"
+                ),
+                None,
+                None,
+            ),
+        },
+        Some(ApiKeySource::File(p)) => match std::fs::read_to_string(p) {
+            Ok(c) if !c.trim().is_empty() => c.trim().to_string(),
+            Ok(_) => exit_error(
+                json,
+                1,
+                "missing_api_key",
+                &format!("config `api_key` file {} is empty", p.display()),
+                None,
+                None,
+            ),
+            Err(e) => exit_error(
+                json,
+                2,
+                "api_key_file_unreadable",
+                &format!("cannot read config `api_key` file {}: {e}", p.display()),
+                None,
+                None,
+            ),
+        },
+        None => missing_api_key(json),
+    }
+}
+
+/// The shared "no API key anywhere" error (exit 1).
+fn missing_api_key(json: bool) -> ! {
+    exit_error(
+        json,
+        1,
+        "missing_api_key",
+        "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` (inline, or \
+         `{env: VAR}` / `{file: PATH}`) to .glasspad.yaml / ~/.config/glasspad/config.yaml",
+        None,
+        None,
+    );
+}
+
 /// `glasspad push-round <slug> <file> [--server <url>] [--api-key <key>] [--markdown
 /// [--template <ref>]]` — the B2 **multi-round** client. Re-render an already-published
 /// hosted page in response to a submission: it POSTs the new body to
@@ -2154,29 +2312,9 @@ pub async fn push_round(
     template: Option<String>,
     json: bool,
 ) {
-    let cfg = load_publish_config(json);
-    let server = resolve_setting(server, "GLASSPAD_SERVER", cfg.server).unwrap_or_else(|| {
-        exit_error(
-            json,
-            1,
-            "missing_server",
-            "no hosted server URL: pass --server <url>, set $GLASSPAD_SERVER, or add `server:` \
-             to ~/.config/glasspad/config.yaml",
-            None,
-            None,
-        )
-    });
-    let api_key = resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
-        exit_error(
-            json,
-            1,
-            "missing_api_key",
-            "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` to \
-             ~/.config/glasspad/config.yaml",
-            None,
-            None,
-        )
-    });
+    let cfg = resolve_publish_config(json);
+    let server = resolve_server(server, &cfg, json);
+    let api_key = resolve_api_key(api_key, &cfg, json);
 
     // Read the new round source (bounded, UTF-8) — the same strict checks `publish` uses.
     let noun = if markdown { "markdown" } else { "html" };
@@ -2377,43 +2515,6 @@ fn publish_config_candidates_from(
     candidates
 }
 
-/// Load the optional publish config file. A candidate that is simply absent
-/// (`NotFound`) is skipped so resolution advances to the next; a candidate that
-/// *exists* but cannot be read (permissions, a directory, non-UTF-8, …) or is
-/// malformed is a user error surfaced informatively — never silently swallowed
-/// into the legacy fallback, which could substitute a different server/api_key.
-/// Returns the config from the first candidate that exists.
-fn load_publish_config(json: bool) -> PublishConfig {
-    for path in publish_config_candidates() {
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            // Genuinely absent → try the next candidate.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            // Exists but unreadable → do not fall through to a different config.
-            Err(e) => exit_error(
-                json,
-                1,
-                "unreadable_config",
-                &format!("cannot read {}: {e}", path.display()),
-                None,
-                None,
-            ),
-        };
-        return match serde_yaml::from_str::<PublishConfig>(&contents) {
-            Ok(c) => c,
-            Err(e) => exit_error(
-                json,
-                1,
-                "invalid_config",
-                &format!("malformed {}: {e}", path.display()),
-                None,
-                None,
-            ),
-        };
-    }
-    PublishConfig::default() // no config at any candidate path
-}
-
 /// Resolve the `--template` reference for `publish`: a built-in name is sent
 /// verbatim; anything else is a path to a template file, read + returned as an
 /// inline template string. Mirrors `resolve_template`'s built-in-vs-path rule.
@@ -2469,7 +2570,7 @@ pub async fn await_submission(
     }
     let timeout = timeout.clamp(1, crate::submissions::MAX_WAIT_SECS);
 
-    let cfg = load_publish_config(json);
+    let cfg = resolve_publish_config(json);
     // Mode selection: an explicit `--server` forces hosted; an explicit `--port`
     // (a loopback-only concept) forces loopback even when a hosted server is
     // configured; otherwise fall back to the configured/env server, else loopback.
@@ -2477,24 +2578,13 @@ pub async fn await_submission(
     let server = match (server_flag, port) {
         (Some(s), _) => Some(s),
         (None, Some(_)) => None,
-        (None, None) => resolve_setting(None, "GLASSPAD_SERVER", cfg.server),
+        (None, None) => resolve_setting(None, "GLASSPAD_SERVER", cfg.server.clone()),
     };
 
     // Build the wait URL + optional bearer per mode.
     let (url, bearer) = match server {
         Some(server) => {
-            let api_key =
-                resolve_setting(api_key, "GLASSPAD_API_KEY", cfg.api_key).unwrap_or_else(|| {
-                    exit_error(
-                        json,
-                        1,
-                        "missing_api_key",
-                        "no API key: pass --api-key <key>, set $GLASSPAD_API_KEY, or add `api_key:` \
-                         to ~/.config/glasspad/config.yaml (a hosted --server requires a key)",
-                        None,
-                        None,
-                    )
-                });
+            let api_key = resolve_api_key(api_key, &cfg, json);
             if server.starts_with("http://") && !server_is_loopback(&server) {
                 eprintln!(
                     "warning: awaiting over plaintext http:// to a non-local host sends the API \

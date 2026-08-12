@@ -7,6 +7,7 @@
 mod artifact_host;
 mod build;
 mod cli;
+mod config;
 mod hosted;
 mod pidfile;
 mod server;
@@ -44,55 +45,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Serve a directory live as a space (scan + watch + SSE). With no directory,
-    /// serves the built-in fixtures. Runs until killed.
-    Serve {
-        /// Directory to serve as a space (`.html` served verbatim; `.md`/`.markdown`
-        /// rendered server-side). Omit to serve only the built-in fixtures.
-        dir: Option<PathBuf>,
-        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
-        /// $GLASSPAD_PORT > the built-in default (3000).
-        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
-        port: Option<u16>,
-    },
-    /// Build a one-artifact space from a single file and serve it live.
-    Create {
-        /// The HTML file to serve (fragment or full document — auto-detected).
-        file: PathBuf,
-        /// Space name (default: the file stem). Must match the space grammar.
-        #[arg(long)]
-        name: Option<String>,
-        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
-        /// $GLASSPAD_PORT > the built-in default (3000).
-        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
-        port: Option<u16>,
-    },
-    /// Render a markdown file through a reusable template and serve it live.
-    ///
-    /// The markdown body is rendered to HTML server-side and spliced into the
-    /// template's single `{{content}}` placeholder; the result is hosted as the
-    /// artifact body (same sandbox/CSP as `create`). The template governs only
-    /// the body — never the trusted shell, CSP, or sandbox.
-    Render {
-        /// The markdown file to render.
-        file: PathBuf,
-        /// Template reference: a built-in name (`prose` [default] / `dashboard`)
-        /// or a path to a template HTML file containing one `{{content}}` slot.
-        #[arg(long)]
-        template: Option<String>,
-        /// Space name (default: the file stem). Must match the space grammar.
-        #[arg(long)]
-        name: Option<String>,
-        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
-        /// $GLASSPAD_PORT > the built-in default (3000).
-        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
-        port: Option<u16>,
-    },
-    /// Statically render a space directory to self-contained HTML files (no
-    /// server, no bind). Reuses the same scanner + wrap seam `serve` uses, writing
-    /// the wrapped pages to `<out>` for an offline docsite / preview transport.
+    /// Advanced: statically render a space directory to self-contained HTML files
+    /// (no server, no bind). Reuses the same scanner + wrap seam the loopback host
+    /// uses, writing the wrapped pages to `<out>` for an offline docsite / preview
+    /// transport, or to inspect the raw wrapped HTML while debugging.
     Build {
-        /// The space directory to render (same scan + validation as `serve`).
+        /// The space directory to render (same scan + validation as `publish`).
         space: PathBuf,
         /// Output directory for the rendered files. Created if absent; must be
         /// empty unless `--force`.
@@ -110,9 +68,10 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Run the hosted share server (public bind, API-key ingest, capability-slug
-    /// public read). A separate run mode from `serve`: it binds the given public
-    /// address and does NOT use the loopback DNS-rebinding guard. Runs until killed.
+    /// Operator: run the hosted share server (public bind, API-key ingest,
+    /// capability-slug public read) that `publish` (hosted target) uploads TO. A
+    /// separate run mode from loopback: it binds the given public address and does
+    /// NOT use the loopback DNS-rebinding guard. Runs until killed.
     HostServe {
         /// Public bind address, e.g. 0.0.0.0:8080. Explicit — never defaulted to a
         /// routable interface.
@@ -133,63 +92,58 @@ enum Commands {
         #[arg(long, default_value_t = 90, value_parser = clap::value_parser!(i64).range(1..))]
         retention_days: i64,
     },
-    /// Publish one page to a hosted share server and print its slug + URL.
+    /// Publish markdown (or HTML) and get back a URL — THE default verb.
     ///
-    /// Config precedence: flag > $GLASSPAD_SERVER / $GLASSPAD_API_KEY > the file
-    /// ~/.config/glasspad/config.yaml. The API key is never printed.
+    /// `<path>` is a `.md`/`.markdown`/`.html` FILE (a one-page space) or a
+    /// DIRECTORY of them (an N-page space). Markdown is the standard input and is
+    /// rendered automatically. Where it lands is resolved from config (not a flag):
+    /// a `target` of `loopback` (serve on 127.0.0.1 with live reload, the zero-config
+    /// default) or `hosted` (upload to a share server, return a /p/<slug>/ URL).
+    ///
+    /// Config precedence is per-key, first that sets a key wins: repo-local
+    /// `.glasspad.yaml` (found by walking up from the CWD) > home
+    /// ~/.config/glasspad/config.yaml > built-in default (loopback). Flags and the
+    /// matching env vars still override the merged config. The API key is never printed.
     Publish {
-        /// The file to publish (HTML by default; markdown with --markdown).
-        file: PathBuf,
-        /// Hosted server base URL, e.g. https://pad.example.com.
+        /// The file (.md/.markdown/.html) or directory to publish.
+        path: PathBuf,
+        /// Override the resolved target for this publish: `loopback` or `hosted`.
+        /// Precedence: this flag > $GLASSPAD_TARGET > config `target:` > loopback.
+        #[arg(long)]
+        target: Option<String>,
+        /// Hosted server base URL, e.g. https://pad.example.com (hosted target).
         #[arg(long)]
         server: Option<String>,
-        /// Bearer API key for ingest auth.
+        /// Bearer API key for hosted ingest auth (hosted target).
         #[arg(long)]
         api_key: Option<String>,
-        /// Treat the file as markdown and render it server-side.
-        #[arg(long)]
-        markdown: bool,
-        /// With --markdown: a built-in template name (prose/dashboard) or a path to
-        /// a template file with one {{content}} slot.
+        /// Template for markdown pages: a built-in name (prose [default] / dashboard)
+        /// or a path to a template file with one {{content}} slot. Defaults to the
+        /// config `template:` value, else `prose`.
         #[arg(long)]
         template: Option<String>,
-        /// Override the resolved display title.
+        /// Override the resolved space/page title (hosted target).
         #[arg(long)]
         title: Option<String>,
-        /// Optional idempotency key: a repeat publish with the same key returns the
-        /// first page (HTTP 200) instead of minting a new one — exactly-once for a
-        /// deterministic caller across a lost receipt.
+        /// Stable space key (hosted target): a re-publish with the same key updates
+        /// the space IN PLACE at the same /p/<slug>/ URL (idempotent). Defaults to
+        /// the config `space_key:` value. Absent → a fresh slug each publish.
         #[arg(long)]
-        idempotency_key: Option<String>,
-        /// Do not open the published URL in a browser.
+        space_key: Option<String>,
+        /// Loopback TCP port (loopback target). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+        /// Do not open the resulting URL in a browser.
         #[arg(long)]
         no_open: bool,
     },
-    /// Publish a whole SPACE (a directory of linked .html and/or .md artifacts) into
-    /// one hosted namespace /p/{slug}/… with in-space nav + relative links across pages.
-    ///
-    /// The directory is scanned locally with the same rules as `serve`/`build`
-    /// (slug grammar, reserved names, symlink/traversal rejection, size caps, MIME,
-    /// glasspad.yaml nav/title/template); `.md` pages are rendered locally, then the
-    /// resulting pages are sent as one bundle (the hosted server receives HTML, not
-    /// markdown). Config precedence mirrors `publish`. The API key is never printed.
-    PublishSpace {
-        /// The directory to publish (a space of .html and/or .md pages).
-        dir: PathBuf,
-        /// Hosted server base URL, e.g. https://pad.example.com.
-        #[arg(long)]
-        server: Option<String>,
-        /// Bearer API key for ingest auth.
-        #[arg(long)]
-        api_key: Option<String>,
-        /// Optional stable space key: a re-publish with the same key updates the
-        /// space IN PLACE at the same slug/URL (idempotent hosting of a docsite that
-        /// changes over time). Absent → a fresh slug each publish.
-        #[arg(long)]
-        space_key: Option<String>,
-        /// Do not open the published space URL in a browser.
-        #[arg(long)]
-        no_open: bool,
+    /// Advanced: manage the loopback live-reload server directly (serve / open /
+    /// stop). The standard flow is `publish`; reach for these only for explicit
+    /// loopback control. See `glasspad loopback --help`.
+    Loopback {
+        #[command(subcommand)]
+        cmd: LoopbackCmd,
     },
     /// Re-render an already-published hosted page in response to a submission (B2
     /// multi-round). POSTs a new body to the page's round endpoint (API-key auth,
@@ -255,26 +209,6 @@ enum Commands {
         #[arg(long, requires = "stream")]
         follow: bool,
     },
-    /// Stop the running loopback server (`serve` / `create` / `render`).
-    ///
-    /// Reads the pid file at ~/.glasspad/server.pid (override with $GLASSPAD_PID_FILE)
-    /// and sends SIGTERM, which the server traps to remove its pid file and exit
-    /// cleanly. A stale pid file (recorded process already dead) is cleaned and
-    /// reported as "no running server" rather than treated as still-running. Targets
-    /// a LOCAL process only — no network call, so the loopback Host guard is untouched.
-    Stop,
-    /// Open a served space's URL in the browser.
-    Open {
-        /// Space name (the `{space}` in `/{space}/`).
-        space: String,
-        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
-        /// $GLASSPAD_PORT > the built-in default (3000).
-        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
-        port: Option<u16>,
-        /// Print the URL without launching a browser (pipe-friendly).
-        #[arg(long)]
-        no_browser: bool,
-    },
     /// Parse a legacy tabular file (CSV / JSON / mbox) to JSON rows on stdout.
     ///
     /// A standalone helper for the old data formats: it parses the file (bounded
@@ -314,6 +248,55 @@ enum Commands {
     },
 }
 
+/// Advanced loopback-server management. Grouped under `glasspad loopback` and
+/// discoverable via `--help` only — the standard flow is `publish` (which, for a
+/// loopback target, folds serve + open into one step).
+#[derive(Subcommand)]
+enum LoopbackCmd {
+    /// Serve a file or directory live on 127.0.0.1 (scan + watch + SSE), blocking
+    /// until killed. With no path, serves the built-in fixtures. `publish` is the
+    /// standard entry point; use this for explicit loopback control.
+    Serve {
+        /// A directory (`.html` served verbatim; `.md`/`.markdown` rendered), a
+        /// single file, or omitted (serve only the built-in fixtures).
+        path: Option<PathBuf>,
+        /// Template for a single markdown file: a built-in name (prose/dashboard)
+        /// or a path to a template file with one {{content}} slot.
+        #[arg(long)]
+        template: Option<String>,
+        /// Space name for a single file (default: the file stem).
+        #[arg(long)]
+        name: Option<String>,
+        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+        /// Open the served URL in a browser after binding.
+        #[arg(long)]
+        open: bool,
+    },
+    /// Open a served space's loopback URL in the browser.
+    Open {
+        /// Space name (the `{space}` in `/{space}/`).
+        space: String,
+        /// TCP port on 127.0.0.1 (1-65535). Precedence (AI-first §8): this flag >
+        /// $GLASSPAD_PORT > the built-in default (3000).
+        #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+        /// Print the URL without launching a browser (pipe-friendly).
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Stop the running loopback server.
+    ///
+    /// Reads the pid file at ~/.glasspad/server.pid (override with $GLASSPAD_PID_FILE)
+    /// and sends SIGTERM, which the server traps to remove its pid file and exit
+    /// cleanly. A stale pid file (recorded process already dead) is cleaned and
+    /// reported as "no running server" rather than treated as still-running. Targets
+    /// a LOCAL process only — no network call, so the loopback Host guard is untouched.
+    Stop,
+}
+
 #[tokio::main]
 async fn main() {
     let args = Cli::parse();
@@ -327,18 +310,6 @@ async fn main() {
     }
 
     match args.command {
-        Some(Commands::Serve { dir, port }) => {
-            cli::serve(dir, cli::resolve_port(port, json), json).await
-        }
-        Some(Commands::Create { file, name, port }) => {
-            cli::create(file, name, cli::resolve_port(port, json), json).await
-        }
-        Some(Commands::Render {
-            file,
-            template,
-            name,
-            port,
-        }) => cli::render(file, template, name, cli::resolve_port(port, json), json).await,
         Some(Commands::Build {
             space,
             out,
@@ -354,35 +325,46 @@ async fn main() {
             retention_days,
         }) => cli::host_serve(bind, public_host, api_key_file, store, retention_days, json).await,
         Some(Commands::Publish {
-            file,
+            path,
+            target,
             server,
             api_key,
-            markdown,
             template,
             title,
-            idempotency_key,
+            space_key,
+            port,
             no_open,
         }) => {
             cli::publish(
-                file,
-                server,
-                api_key,
-                markdown,
-                template,
-                title,
-                idempotency_key,
-                json,
-                no_open,
+                path, target, server, api_key, template, title, space_key, port, no_open, json,
             )
             .await
         }
-        Some(Commands::PublishSpace {
-            dir,
-            server,
-            api_key,
-            space_key,
-            no_open,
-        }) => cli::publish_space(dir, server, api_key, space_key, json, no_open).await,
+        Some(Commands::Loopback { cmd }) => match cmd {
+            LoopbackCmd::Serve {
+                path,
+                template,
+                name,
+                port,
+                open,
+            } => {
+                cli::loopback_serve(
+                    path,
+                    template,
+                    name,
+                    cli::resolve_port(port, json),
+                    open,
+                    json,
+                )
+                .await
+            }
+            LoopbackCmd::Open {
+                space,
+                port,
+                no_browser,
+            } => cli::open(space, cli::resolve_port(port, json), json, no_browser),
+            LoopbackCmd::Stop => cli::stop(json),
+        },
         Some(Commands::PushRound {
             slug,
             file,
@@ -406,12 +388,6 @@ async fn main() {
             )
             .await
         }
-        Some(Commands::Stop) => cli::stop(json),
-        Some(Commands::Open {
-            space,
-            port,
-            no_browser,
-        }) => cli::open(space, cli::resolve_port(port, json), json, no_browser),
         Some(Commands::Data { file, format, meta }) => cli::data(file, format, meta, json),
         Some(Commands::Version) => cli::version(json),
         Some(Commands::Skill {

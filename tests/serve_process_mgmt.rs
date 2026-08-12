@@ -38,7 +38,7 @@ fn temp_pid_path(tag: &str) -> PathBuf {
 /// until it answers (or panic after a timeout). Returns the child handle.
 fn spawn_serve(port: u16, pid_file: &Path) -> Child {
     let child = bin()
-        .args(["serve", "--json", "--port", &port.to_string()])
+        .args(["loopback", "serve", "--json", "--port", &port.to_string()])
         .env("GLASSPAD_PID_FILE", pid_file)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -67,7 +67,7 @@ fn wait_until(max: Duration, mut cond: impl FnMut() -> bool) {
 /// error envelope to stderr, so we parse whichever is non-empty.
 fn run_stop(pid_file: &Path) -> (std::process::ExitStatus, serde_json::Value) {
     let out = bin()
-        .args(["stop", "--json"])
+        .args(["loopback", "stop", "--json"])
         .env("GLASSPAD_PID_FILE", pid_file)
         .output()
         .expect("run stop");
@@ -146,7 +146,7 @@ fn glasspad_port_sets_port_and_flag_wins() {
     // `open` resolves the same port precedence as `serve`, without binding — a fast,
     // side-effect-free way to assert the resolution.
     let env_only = bin()
-        .args(["open", "demo", "--no-browser", "--json"])
+        .args(["loopback", "open", "demo", "--no-browser", "--json"])
         .env("GLASSPAD_PORT", "4242")
         .output()
         .unwrap();
@@ -154,7 +154,15 @@ fn glasspad_port_sets_port_and_flag_wins() {
     assert_eq!(v["port"], 4242, "$GLASSPAD_PORT sets the port");
 
     let flag_wins = bin()
-        .args(["open", "demo", "--no-browser", "--json", "--port", "5555"])
+        .args([
+            "loopback",
+            "open",
+            "demo",
+            "--no-browser",
+            "--json",
+            "--port",
+            "5555",
+        ])
         .env("GLASSPAD_PORT", "4242")
         .output()
         .unwrap();
@@ -165,7 +173,7 @@ fn glasspad_port_sets_port_and_flag_wins() {
 #[test]
 fn invalid_glasspad_port_is_a_hard_error() {
     let out = bin()
-        .args(["open", "demo", "--no-browser", "--json"])
+        .args(["loopback", "open", "demo", "--no-browser", "--json"])
         .env("GLASSPAD_PORT", "notaport")
         .output()
         .unwrap();
