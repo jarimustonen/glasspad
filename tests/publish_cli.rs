@@ -150,6 +150,62 @@ fn publish_invalid_target_is_rejected() {
 }
 
 #[test]
+fn explicit_template_on_html_is_rejected() {
+    // `--template` is only valid for a single markdown file (not silently ignored).
+    let dir = tmp_dir("tmpl-html");
+    let home = tmp_dir("tmpl-html-home");
+    let f = write(&dir, "page.html", "<h1>hi</h1>");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&f)
+        .args(["--template", "prose"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = parse(&out.stderr);
+    assert_eq!(v["error"]["code"], "template_not_applicable");
+}
+
+#[test]
+fn config_default_template_does_not_break_html_publish() {
+    // A config `template:` default must NOT make publishing raw .html fail: it is a
+    // fallback for markdown only. Publish .html hosted → the run reaches server
+    // resolution (missing_server), never a template error.
+    let dir = tmp_dir("tmpl-cfg");
+    let home = tmp_dir("tmpl-cfg-home");
+    write(&dir, ".glasspad.yaml", "target: hosted\ntemplate: prose\n");
+    let f = write(&dir, "page.html", "<h1>hi</h1>");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&f)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = parse(&out.stderr);
+    assert_eq!(
+        v["error"]["code"], "missing_server",
+        "a config template default must not turn into a template error for .html"
+    );
+}
+
+#[test]
+fn hosted_only_flag_on_loopback_target_is_rejected() {
+    // `--server` on a loopback-resolved publish is a usage error, not a silent no-op.
+    let dir = tmp_dir("opt");
+    let home = tmp_dir("opt-home");
+    let md = write(&dir, "page.md", "# Hi\n");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&md)
+        .args(["--server", "https://pad.example"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = parse(&out.stderr);
+    assert_eq!(v["error"]["code"], "option_not_applicable");
+}
+
+#[test]
 fn publish_zero_config_defaults_to_loopback_serve() {
     // Done-criteria #1: with NO config at all, `publish <dir>` serves loopback.
     // Spawn it (blocking, live-reload) on an isolated pid file + port, confirm it

@@ -1869,22 +1869,95 @@ pub async fn publish(
 ) {
     let cfg = resolve_publish_config(json);
     let resolved_target = resolve_target(target, &cfg, json);
-    // Default template comes from config when no flag was passed (the built-in
-    // `prose` default is applied downstream by `resolve_template`).
-    let template = template.or_else(|| cfg.template.clone());
     let kind = classify_publish_path(&path, json);
+
+    // An explicit `--template` applies ONLY to a single markdown file (never silently
+    // ignored): a directory's markdown pages take their template from the space's
+    // `glasspad.yaml`, and `.html` is published verbatim.
+    if template.is_some() && kind != PathKind::Markdown {
+        exit_error(
+            json,
+            1,
+            "template_not_applicable",
+            "--template only applies to a single markdown file: a directory's markdown pages take \
+             their template from the space's glasspad.yaml, and .html is published verbatim",
+            None,
+            None,
+        );
+    }
+    // The template default is a fallback for a single markdown file only, so a
+    // repo-wide default never breaks publishing `.html` or a directory. Precedence
+    // mirrors the other settings — flag > $GLASSPAD_TEMPLATE > config `template:` —
+    // and the built-in `prose` default is applied downstream by `resolve_template`.
+    let md_template = if kind == PathKind::Markdown {
+        resolve_setting(template, "GLASSPAD_TEMPLATE", cfg.template.clone())
+    } else {
+        None
+    };
 
     match resolved_target {
         Target::Loopback => {
+            // Hosted-only options on a loopback target are a usage error, not a
+            // silent no-op (AI-first strict validation).
+            reject_hosted_flags_on_loopback(&server, &api_key, &title, &space_key, json);
             let port = resolve_port(port, json);
-            publish_loopback(path, kind, template, port, !no_open, json).await;
+            publish_loopback(path, kind, md_template, port, !no_open, json).await;
         }
         Target::Hosted => {
             publish_hosted(
-                path, kind, server, api_key, template, title, space_key, &cfg, no_open, json,
+                path,
+                kind,
+                server,
+                api_key,
+                md_template,
+                title,
+                space_key,
+                &cfg,
+                no_open,
+                json,
             )
             .await;
         }
+    }
+}
+
+/// Reject hosted-only options passed with a resolved loopback target, naming the
+/// offending flag(s) rather than silently ignoring them.
+fn reject_hosted_flags_on_loopback(
+    server: &Option<String>,
+    api_key: &Option<String>,
+    title: &Option<String>,
+    space_key: &Option<String>,
+    json: bool,
+) {
+    let mut offenders = Vec::new();
+    if server.is_some() {
+        offenders.push("--server");
+    }
+    if api_key.is_some() {
+        offenders.push("--api-key");
+    }
+    if title.is_some() {
+        offenders.push("--title");
+    }
+    if space_key.is_some() {
+        offenders.push("--space-key");
+    }
+    if !offenders.is_empty() {
+        exit_error(
+            json,
+            1,
+            "option_not_applicable",
+            &format!(
+                "{} {} hosted-only, but the resolved target is loopback; drop {} or set `target: \
+                 hosted` (config / --target hosted)",
+                offenders.join(", "),
+                if offenders.len() == 1 { "is" } else { "are" },
+                if offenders.len() == 1 { "it" } else { "them" },
+            ),
+            None,
+            None,
+        );
     }
 }
 
@@ -1900,22 +1973,12 @@ async fn publish_loopback(
     open: bool,
     json: bool,
 ) {
+    // `template` is `None` for a non-markdown path (validated + narrowed upstream in
+    // `publish`), so the Html/Dir arms carry no template.
     match kind {
         PathKind::Dir => serve(Some(path), port, open, json).await,
         PathKind::Markdown => render(path, template, None, port, open, json).await,
-        PathKind::Html => {
-            if template.is_some() {
-                exit_error(
-                    json,
-                    1,
-                    "template_without_markdown",
-                    "--template only applies to a markdown file (raw HTML is served verbatim)",
-                    None,
-                    None,
-                );
-            }
-            create(path, None, port, open, json).await;
-        }
+        PathKind::Html => create(path, None, port, open, json).await,
     }
 }
 
@@ -1936,10 +1999,55 @@ async fn publish_hosted(
     no_open: bool,
     json: bool,
 ) {
+    // Capture credential provenance BEFORE resolving (which consumes the flags): a
+    // server/key that comes from an explicit flag or env var is user-directed and
+    // safe; one that comes from config is subject to the cross-trust check below.
+    let env_present = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty())
+    };
+    let server_from_flag_or_env = server
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty())
+        || env_present("GLASSPAD_SERVER");
+    let api_key_from_flag_or_env = api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty())
+        || env_present("GLASSPAD_API_KEY");
+
     let server = resolve_server(server, cfg, json);
     let api_key = resolve_api_key(api_key, cfg, json);
     // `space_key`: flag > $GLASSPAD_SPACE_KEY > config `space_key:`.
     let space_key = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", cfg.space_key.clone());
+
+    // Cross-trust credential guard (defense-in-depth): warn loudly when a hosted
+    // publish would send an API key that came from the home config / environment to a
+    // server whose URL came from the repo-local `.glasspad.yaml`. A cloned/untrusted
+    // repository could otherwise redirect your credential to an attacker's host. The
+    // safe cases stay silent: an explicit `--server`/`$GLASSPAD_SERVER`, or a key that
+    // also comes from the same repo config, does not trip it. (The deeper fix — binding
+    // server+key into one trusted profile — is deferred to `hosted-multiworker-credentials`.)
+    let server_from_repo =
+        !server_from_flag_or_env && cfg.server_origin == Some(config::Origin::Repo);
+    let key_from_repo =
+        !api_key_from_flag_or_env && cfg.api_key_origin == Some(config::Origin::Repo);
+    if server_from_repo && !key_from_repo {
+        let key_src = if api_key_from_flag_or_env {
+            "the command line / environment"
+        } else {
+            "your home config"
+        };
+        eprintln!(
+            "warning: publishing to {server}, whose URL comes from this repository's \
+             .glasspad.yaml, using an API key from {key_src}. A cloned or untrusted repository \
+             can redirect your credential to an arbitrary server this way. Pass --server / \
+             --api-key explicitly, or move `server` into your home config, to confirm this is \
+             intended."
+        );
+    }
 
     let space = match kind {
         PathKind::Dir => match space::scan_dir(&path) {
@@ -1953,20 +2061,9 @@ async fn publish_hosted(
                 None,
             ),
         },
+        // `template` is `None` for a non-markdown path (validated upstream).
         PathKind::Markdown => build_single_page_space(&path, template, true, json),
-        PathKind::Html => {
-            if template.is_some() {
-                exit_error(
-                    json,
-                    1,
-                    "template_without_markdown",
-                    "--template only applies to a markdown file (raw HTML is published verbatim)",
-                    None,
-                    None,
-                );
-            }
-            build_single_page_space(&path, None, false, json)
-        }
+        PathKind::Html => build_single_page_space(&path, None, false, json),
     };
     if space.artifacts.is_empty() {
         exit_error(
@@ -2019,10 +2116,13 @@ fn build_single_page_space(
         .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty())
         .unwrap_or("page");
-    let mut snap = server::one_artifact_snapshot(name, html);
-    snap.spaces
-        .remove(name)
-        .expect("one_artifact_snapshot inserts the named space")
+    // Take the single space `one_artifact_snapshot` builds without depending on `name`
+    // being a valid/normalized map key (the snapshot always contains exactly one space).
+    server::one_artifact_snapshot(name, html)
+        .spaces
+        .into_values()
+        .next()
+        .expect("one_artifact_snapshot builds exactly one space")
 }
 
 /// Upload a scanned/synthesized [`space::Space`] as one bundle to
@@ -2192,7 +2292,19 @@ async fn post_space_bundle(
 /// contract. An unreadable file is a system error (exit 2); a malformed/invalid one
 /// is a user error (exit 1).
 fn resolve_publish_config(json: bool) -> config::ResolvedConfig {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // A failure here (a deleted/inaccessible working directory) is a system error,
+    // not a silent fall-back to a CWD-relative "." that would resolve config from an
+    // unintended place.
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
+        exit_error(
+            json,
+            2,
+            "cwd_unavailable",
+            &format!("cannot determine the current directory (needed to find .glasspad.yaml): {e}"),
+            None,
+            None,
+        );
+    });
     match config::resolve(&cwd, &publish_config_candidates()) {
         Ok(c) => c,
         Err(e) => {
@@ -2259,27 +2371,94 @@ fn resolve_api_key(flag: Option<String>, cfg: &config::ResolvedConfig, json: boo
                 None,
             ),
         },
-        Some(ApiKeySource::File(p)) => match std::fs::read_to_string(p) {
-            Ok(c) if !c.trim().is_empty() => c.trim().to_string(),
-            Ok(_) => exit_error(
-                json,
-                1,
-                "missing_api_key",
-                &format!("config `api_key` file {} is empty", p.display()),
-                None,
-                None,
-            ),
-            Err(e) => exit_error(
-                json,
-                2,
-                "api_key_file_unreadable",
-                &format!("cannot read config `api_key` file {}: {e}", p.display()),
-                None,
-                None,
-            ),
-        },
+        Some(ApiKeySource::File(p)) => read_api_key_file(p, json),
         None => missing_api_key(json),
     }
+}
+
+/// Upper bound on an `api_key` file — a bearer token is short; a larger file is a
+/// misconfiguration, not a key.
+const MAX_API_KEY_FILE_BYTES: u64 = 64 * 1024;
+
+/// Read the trimmed contents of a config `api_key` file, bounded and fail-closed.
+/// Since the path can come from repo-local config, this refuses a non-regular file
+/// (a FIFO/device would block a naive read forever) and caps the read so a huge file
+/// cannot exhaust memory. An empty file is a user error; an I/O failure is a system
+/// error. The key value is never included in any message.
+fn read_api_key_file(p: &Path, json: bool) -> String {
+    let meta = match std::fs::metadata(p) {
+        Ok(m) => m,
+        Err(e) => exit_error(
+            json,
+            2,
+            "api_key_file_unreadable",
+            &format!("cannot read config `api_key` file {}: {e}", p.display()),
+            None,
+            None,
+        ),
+    };
+    if !meta.is_file() {
+        exit_error(
+            json,
+            1,
+            "api_key_file_unreadable",
+            &format!(
+                "config `api_key` file {} is not a regular file (FIFOs, sockets, and devices are not read as keys)",
+                p.display()
+            ),
+            None,
+            None,
+        );
+    }
+    if meta.len() > MAX_API_KEY_FILE_BYTES {
+        exit_error(
+            json,
+            1,
+            "api_key_file_unreadable",
+            &format!(
+                "config `api_key` file {} is {} bytes, over the {}-byte cap (that is not a key)",
+                p.display(),
+                meta.len(),
+                MAX_API_KEY_FILE_BYTES
+            ),
+            None,
+            None,
+        );
+    }
+    let bytes = match read_capped(p, MAX_API_KEY_FILE_BYTES) {
+        Ok(b) => b,
+        Err(e) => exit_error(
+            json,
+            2,
+            "api_key_file_unreadable",
+            &format!("cannot read config `api_key` file {}: {e}", p.display()),
+            None,
+            None,
+        ),
+    };
+    let text = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => exit_error(
+            json,
+            1,
+            "api_key_file_unreadable",
+            &format!("config `api_key` file {} is not valid UTF-8", p.display()),
+            None,
+            None,
+        ),
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        exit_error(
+            json,
+            1,
+            "missing_api_key",
+            &format!("config `api_key` file {} is empty", p.display()),
+            None,
+            None,
+        );
+    }
+    trimmed.to_string()
 }
 
 /// The shared "no API key anywhere" error (exit 1).

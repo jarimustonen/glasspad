@@ -4,6 +4,9 @@ updated: 2026-08-12
 type: feature
 status: in-progress
 priority: high
+commits:
+- hash: 7d6d60e
+  summary: publish-first CLI reshape — config-driven publish default, loopback group, skill rewrite
 ---
 
 # Publish-first CLI: collapse the surface, config-driven target (loopback|hosted)

@@ -49,6 +49,17 @@ impl Target {
     }
 }
 
+/// Which config file a resolved value came from — used only to warn when a
+/// home/env credential would be sent to a server chosen by the (less-trusted)
+/// repo-local `.glasspad.yaml`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// The repo-local `.glasspad.yaml`.
+    Repo,
+    /// The home `~/.config/glasspad/config.yaml`.
+    Home,
+}
+
 /// Where the hosted `api_key` comes from. An inline secret still works; the
 /// indirection forms keep the plaintext out of the config file and let a future
 /// credential model source a scoped/rotatable token without a schema break.
@@ -70,7 +81,11 @@ pub enum ApiKeySource {
 pub struct ResolvedConfig {
     pub target: Option<Target>,
     pub server: Option<String>,
+    /// Which file supplied `server` (for the cross-trust credential warning).
+    pub server_origin: Option<Origin>,
     pub api_key: Option<ApiKeySource>,
+    /// Which file supplied `api_key` (for the cross-trust credential warning).
+    pub api_key_origin: Option<Origin>,
     pub template: Option<String>,
     pub space_key: Option<String>,
     /// Emoji favicon — reserved for the `emoji-favicon` feature. Parsed and carried
@@ -135,36 +150,62 @@ impl ConfigFile {
     fn api_key_source(&self, origin: &Path) -> Result<Option<ApiKeySource>, ConfigError> {
         if let Some(field) = &self.api_key {
             let src = match field {
-                ApiKeyField::Inline(s) => ApiKeySource::Inline(s.clone()),
-                ApiKeyField::Indirect(i) => match (&i.env, &i.file) {
-                    (Some(e), None) => ApiKeySource::Env(e.clone()),
-                    (None, Some(f)) => ApiKeySource::File(PathBuf::from(f)),
-                    (Some(_), Some(_)) => {
-                        return Err(ConfigError::new(
-                            "invalid_config",
-                            format!(
-                                "malformed {}: api_key sets both `env` and `file`; set exactly one",
-                                origin.display()
-                            ),
-                        ));
+                // An empty/whitespace inline value is treated as unset (falls through
+                // to `api_key_file`, then to the lower-priority file).
+                ApiKeyField::Inline(s) if s.trim().is_empty() => {
+                    return self.api_key_file_source(origin);
+                }
+                ApiKeyField::Inline(s) => ApiKeySource::Inline(s.trim().to_string()),
+                // Empty/whitespace `env`/`file` are treated as unset before matching,
+                // so `{env: ""}` (or a blank `file`) falls through rather than
+                // shadowing a lower-priority key with a source that resolves to nothing.
+                ApiKeyField::Indirect(i) => {
+                    let env = i.env.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                    let file = i.file.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                    match (env, file) {
+                        (Some(e), None) => ApiKeySource::Env(e.to_string()),
+                        (None, Some(f)) => ApiKeySource::File(anchor(origin, f)),
+                        (Some(_), Some(_)) => {
+                            return Err(ConfigError::new(
+                                "invalid_config",
+                                format!(
+                                    "malformed {}: api_key sets both `env` and `file`; set exactly one",
+                                    origin.display()
+                                ),
+                            ));
+                        }
+                        // Both empty/absent → unset; fall through to `api_key_file`.
+                        (None, None) => return self.api_key_file_source(origin),
                     }
-                    (None, None) => {
-                        return Err(ConfigError::new(
-                            "invalid_config",
-                            format!(
-                                "malformed {}: api_key mapping must set `env` or `file`",
-                                origin.display()
-                            ),
-                        ));
-                    }
-                },
+                }
             };
             return Ok(Some(src));
         }
-        if let Some(f) = &self.api_key_file {
-            return Ok(Some(ApiKeySource::File(PathBuf::from(f))));
-        }
-        Ok(None)
+        self.api_key_file_source(origin)
+    }
+
+    /// The `api_key_file` convenience key as a `File` source, if set (empty/whitespace
+    /// treated as unset). A relative path is anchored to the config file's directory.
+    fn api_key_file_source(&self, origin: &Path) -> Result<Option<ApiKeySource>, ConfigError> {
+        Ok(self
+            .api_key_file
+            .as_ref()
+            .map(|f| f.trim())
+            .filter(|f| !f.is_empty())
+            .map(|f| ApiKeySource::File(anchor(origin, f))))
+    }
+}
+
+/// Anchor a config-declared path to the directory of the config file it came from
+/// (not the process CWD): a relative `api_key` file / key path is resolved against
+/// `origin`'s parent so it means the same thing no matter where `glasspad` is run.
+/// An absolute path is taken verbatim.
+fn anchor(origin: &Path, value: &str) -> PathBuf {
+    let p = PathBuf::from(value);
+    if p.is_absolute() {
+        p
+    } else {
+        origin.parent().unwrap_or(Path::new(".")).join(p)
     }
 }
 
@@ -181,7 +222,23 @@ struct Loaded {
 /// substitute a different server/key). The `home_candidates` are tried in order;
 /// the first that exists is the home config.
 pub fn resolve(cwd: &Path, home_candidates: &[PathBuf]) -> Result<ResolvedConfig, ConfigError> {
-    let repo = match find_repo_config(cwd) {
+    // Never ascend above the user's home directory when looking for `.glasspad.yaml`:
+    // a `.glasspad.yaml` planted in a shared ancestor (e.g. `/tmp`, or another user's
+    // dir on a multi-user host) must not become "this repo's config" and redirect a
+    // credential. (When the CWD is outside HOME the walk still reaches the root — you
+    // opted into working outside your home tree.)
+    resolve_within(cwd, dirs::home_dir().as_deref(), home_candidates)
+}
+
+/// [`resolve`] with an explicit walk-up ceiling (the highest directory whose
+/// `.glasspad.yaml` is honored, inclusive). Split out so tests can bound the walk to
+/// a temp dir and stay hermetic rather than ascending to the real filesystem root.
+pub fn resolve_within(
+    cwd: &Path,
+    ceiling: Option<&Path>,
+    home_candidates: &[PathBuf],
+) -> Result<ResolvedConfig, ConfigError> {
+    let repo = match find_repo_config(cwd, ceiling)? {
         Some(path) => load_file(&path)?,
         None => None,
     };
@@ -195,50 +252,65 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
     let repo_file = repo.as_ref().map(|l| &l.file);
     let home_file = home.as_ref().map(|l| &l.file);
 
+    // Each key resolves per-file with an empty/whitespace value treated as *unset*
+    // (`nonempty` applied per file, before the merge) so a blank value in the
+    // higher-priority file does not shadow a real value in the lower one — "first
+    // file that SETS a key wins" means sets a non-empty value.
+    let pick = |get: fn(&ConfigFile) -> Option<String>| {
+        repo_file
+            .and_then(|f| nonempty(get(f)))
+            .or_else(|| home_file.and_then(|f| nonempty(get(f))))
+    };
+    // Like `pick`, but also reports which file won (for the credential-trust warning).
+    let pick_with_origin = |get: fn(&ConfigFile) -> Option<String>| {
+        if let Some(v) = repo_file.and_then(|f| nonempty(get(f))) {
+            (Some(v), Some(Origin::Repo))
+        } else if let Some(v) = home_file.and_then(|f| nonempty(get(f))) {
+            (Some(v), Some(Origin::Home))
+        } else {
+            (None, None)
+        }
+    };
+
     // `target` is validated the moment it is chosen so a bad value in the *winning*
     // file is reported (a bad value in an overridden file is irrelevant).
-    let target_raw = repo_file
-        .and_then(|f| f.target.clone())
-        .or_else(|| home_file.and_then(|f| f.target.clone()));
-    let target = match target_raw {
+    let target = match pick(|f| f.target.clone()) {
         Some(raw) => Some(Target::parse(&raw).map_err(|m| ConfigError::new("invalid_target", m))?),
         None => None,
     };
 
-    let server = repo_file
-        .and_then(|f| f.server.clone())
-        .or_else(|| home_file.and_then(|f| f.server.clone()));
-    let template = repo_file
-        .and_then(|f| f.template.clone())
-        .or_else(|| home_file.and_then(|f| f.template.clone()));
-    let space_key = repo_file
-        .and_then(|f| f.space_key.clone())
-        .or_else(|| home_file.and_then(|f| f.space_key.clone()));
-    let favicon = repo_file
-        .and_then(|f| f.favicon.clone())
-        .or_else(|| home_file.and_then(|f| f.favicon.clone()));
+    let (server, server_origin) = pick_with_origin(|f| f.server.clone());
+    let template = pick(|f| f.template.clone());
+    let space_key = pick(|f| f.space_key.clone());
+    let favicon = pick(|f| f.favicon.clone());
 
     // `api_key` resolves per-file (each file's `api_key`/`api_key_file` is a unit),
-    // repo winning over home.
+    // repo winning over home; an empty inline value is treated as unset inside
+    // `api_key_source`, so a blank repo key likewise falls through to home.
     let repo_key = match &repo {
         Some(l) => l.file.api_key_source(&l.path)?,
         None => None,
     };
-    let api_key = match repo_key {
-        Some(k) => Some(k),
+    let (api_key, api_key_origin) = match repo_key {
+        Some(k) => (Some(k), Some(Origin::Repo)),
         None => match &home {
-            Some(l) => l.file.api_key_source(&l.path)?,
-            None => None,
+            Some(l) => match l.file.api_key_source(&l.path)? {
+                Some(k) => (Some(k), Some(Origin::Home)),
+                None => (None, None),
+            },
+            None => (None, None),
         },
     };
 
     Ok(ResolvedConfig {
         target,
-        server: nonempty(server),
+        server,
+        server_origin,
         api_key,
-        template: nonempty(template),
-        space_key: nonempty(space_key),
-        favicon: nonempty(favicon),
+        api_key_origin,
+        template,
+        space_key,
+        favicon,
     })
 }
 
@@ -249,19 +321,32 @@ fn nonempty(v: Option<String>) -> Option<String> {
 }
 
 /// Walk up from `start` to the filesystem root looking for a `.glasspad.yaml`,
-/// returning the first one found (the repo-local config). Bounded so a symlink loop
-/// or pathological depth can't spin forever.
-fn find_repo_config(start: &Path) -> Option<PathBuf> {
-    let mut dir = Some(start);
-    for _ in 0..64 {
-        let cur = dir?;
-        let candidate = cur.join(".glasspad.yaml");
-        if candidate.is_file() {
-            return Some(candidate);
+/// returning the first one found (the repo-local config). `ancestors()` is finite
+/// and does not recurse through directory symlinks. A path that *exists but cannot
+/// be stat-ed* (a permission error) is surfaced as a hard error rather than silently
+/// skipped — silently walking past it could load a *different* (home) config, the
+/// exact credential-substitution this module is careful to avoid.
+fn find_repo_config(start: &Path, ceiling: Option<&Path>) -> Result<Option<PathBuf>, ConfigError> {
+    for dir in start.ancestors() {
+        let candidate = dir.join(".glasspad.yaml");
+        match candidate.try_exists() {
+            // Present (as a file, dir, or symlink) → return it; `load_file` reports a
+            // non-regular / unreadable one informatively rather than skipping it.
+            Ok(true) => return Ok(Some(candidate)),
+            Ok(false) => {}
+            Err(e) => {
+                return Err(ConfigError::new(
+                    "unreadable_config",
+                    format!("cannot inspect {}: {e}", candidate.display()),
+                ));
+            }
         }
-        dir = cur.parent();
+        // Stop after checking the ceiling directory itself; never ascend above it.
+        if ceiling == Some(dir) {
+            break;
+        }
     }
-    None
+    Ok(None)
 }
 
 /// Load a single config file. `NotFound` → `Ok(None)` (skip). An existing but
@@ -336,7 +421,7 @@ mod tests {
     #[test]
     fn no_config_resolves_to_all_none() {
         let dir = tmp();
-        let cfg = resolve(&dir, &[]).unwrap();
+        let cfg = resolve_within(&dir, Some(&dir), &[]).unwrap();
         assert_eq!(cfg.target, None);
         assert_eq!(cfg.server, None);
         assert!(cfg.api_key.is_none());
@@ -353,7 +438,7 @@ mod tests {
             "server: https://h.example\napi_key: sekret\ntarget: loopback\n",
         );
 
-        let cfg = resolve(&dir, &[home]).unwrap();
+        let cfg = resolve_within(&dir, Some(&dir), &[home]).unwrap();
         // target: repo wins over home.
         assert_eq!(cfg.target, Some(Target::Hosted));
         assert_eq!(cfg.favicon.as_deref(), Some("🌟"));
@@ -366,7 +451,7 @@ mod tests {
     fn api_key_env_indirection() {
         let dir = tmp();
         let home = write(&dir, "config.yaml", "api_key:\n  env: GLASSPAD_API_KEY\n");
-        let cfg = resolve(&dir, &[home]).unwrap();
+        let cfg = resolve_within(&dir, Some(&dir), &[home]).unwrap();
         assert_eq!(
             cfg.api_key,
             Some(ApiKeySource::Env("GLASSPAD_API_KEY".into()))
@@ -381,7 +466,7 @@ mod tests {
             "map/config.yaml",
             "api_key:\n  file: /run/secrets/gp\n",
         );
-        let cfg = resolve(&dir, std::slice::from_ref(&home)).unwrap();
+        let cfg = resolve_within(&dir, Some(&dir), std::slice::from_ref(&home)).unwrap();
         assert_eq!(
             cfg.api_key,
             Some(ApiKeySource::File("/run/secrets/gp".into()))
@@ -393,7 +478,7 @@ mod tests {
             "conv/config.yaml",
             "api_key_file: /run/secrets/gp2\n",
         );
-        let cfg2 = resolve(&dir2, std::slice::from_ref(&home2)).unwrap();
+        let cfg2 = resolve_within(&dir2, Some(&dir2), std::slice::from_ref(&home2)).unwrap();
         assert_eq!(
             cfg2.api_key,
             Some(ApiKeySource::File("/run/secrets/gp2".into()))
@@ -404,15 +489,67 @@ mod tests {
     fn api_key_mapping_with_both_env_and_file_is_rejected() {
         let dir = tmp();
         let home = write(&dir, "config.yaml", "api_key:\n  env: X\n  file: /y\n");
-        let err = resolve(&dir, &[home]).unwrap_err();
+        let err = resolve_within(&dir, Some(&dir), &[home]).unwrap_err();
         assert_eq!(err.code, "invalid_config");
+    }
+
+    #[test]
+    fn empty_value_in_higher_file_falls_through_to_lower() {
+        // An explicit blank in the repo file must not shadow a real home value:
+        // "first file that SETS a key wins" means sets a NON-empty value.
+        let dir = tmp();
+        write(&dir, ".glasspad.yaml", "server: \"  \"\napi_key: \"\"\n");
+        let home = write(
+            &dir,
+            "home/config.yaml",
+            "server: https://h.example\napi_key: realkey\n",
+        );
+        let cfg = resolve_within(&dir, Some(&dir), std::slice::from_ref(&home)).unwrap();
+        assert_eq!(cfg.server.as_deref(), Some("https://h.example"));
+        assert_eq!(cfg.api_key, Some(ApiKeySource::Inline("realkey".into())));
+    }
+
+    #[test]
+    fn origin_reflects_the_winning_file() {
+        let dir = tmp();
+        write(&dir, ".glasspad.yaml", "server: https://repo.example\n");
+        let home = write(&dir, "home/config.yaml", "api_key: homekey\n");
+        let cfg = resolve_within(&dir, Some(&dir), std::slice::from_ref(&home)).unwrap();
+        // server came from the repo file; api_key from home — the cross-trust shape.
+        assert_eq!(cfg.server_origin, Some(Origin::Repo));
+        assert_eq!(cfg.api_key_origin, Some(Origin::Home));
+    }
+
+    #[test]
+    fn relative_api_key_file_is_anchored_to_the_config_directory() {
+        let dir = tmp();
+        let home = write(&dir, "cfgdir/config.yaml", "api_key:\n  file: key.txt\n");
+        let cfg = resolve_within(&dir, Some(&dir), std::slice::from_ref(&home)).unwrap();
+        // Resolved against the config file's directory, NOT the process CWD.
+        assert_eq!(
+            cfg.api_key,
+            Some(ApiKeySource::File(dir.join("cfgdir").join("key.txt")))
+        );
+    }
+
+    #[test]
+    fn walk_up_stops_at_the_ceiling() {
+        // A `.glasspad.yaml` ABOVE the ceiling is not honored (the shared-ancestor
+        // credential-substitution guard).
+        let dir = tmp();
+        write(&dir, ".glasspad.yaml", "target: hosted\n");
+        let project = dir.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        // Ceiling = project, so the walk never reaches dir/.glasspad.yaml.
+        let cfg = resolve_within(&project, Some(&project), &[]).unwrap();
+        assert_eq!(cfg.target, None, "config above the ceiling must be ignored");
     }
 
     #[test]
     fn bad_target_is_rejected() {
         let dir = tmp();
         write(&dir, ".glasspad.yaml", "target: nowhere\n");
-        let err = resolve(&dir, &[]).unwrap_err();
+        let err = resolve_within(&dir, Some(&dir), &[]).unwrap_err();
         assert_eq!(err.code, "invalid_target");
     }
 
@@ -422,7 +559,7 @@ mod tests {
         write(&dir, ".glasspad.yaml", "target: hosted\n");
         let nested = dir.join("a/b/c");
         std::fs::create_dir_all(&nested).unwrap();
-        let cfg = resolve(&nested, &[]).unwrap();
+        let cfg = resolve_within(&nested, Some(&dir), &[]).unwrap();
         assert_eq!(cfg.target, Some(Target::Hosted));
     }
 
@@ -430,7 +567,7 @@ mod tests {
     fn malformed_config_is_a_hard_error() {
         let dir = tmp();
         write(&dir, ".glasspad.yaml", "target: hosted\n  : : bad\n");
-        let err = resolve(&dir, &[]).unwrap_err();
+        let err = resolve_within(&dir, Some(&dir), &[]).unwrap_err();
         assert_eq!(err.code, "invalid_config");
     }
 }

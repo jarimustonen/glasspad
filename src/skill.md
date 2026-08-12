@@ -66,6 +66,12 @@ api_key: { env: GLASSPAD_API_KEY }     # read from the environment at publish ti
 api_key: { file: /run/secrets/gp-key } # read from a file (or: api_key_file: <path>)
 ```
 
+A relative `file:` path resolves against the **config file's** directory, not the
+working directory. Keep credentials in your **home** config: if a repo's
+`.glasspad.yaml` sets `server:` while the key comes from your home config,
+`publish` warns loudly (a cloned/untrusted repo could redirect your key) — pass
+`--server`/`--api-key` explicitly to confirm.
+
 - **`target: loopback`** → serves the space live on `127.0.0.1` (keeps the
   DNS-rebinding Host guard), opens the browser, and **live-reloads** on file edits.
   Runs until killed — start it backgrounded. The private "show me while I work" view.
