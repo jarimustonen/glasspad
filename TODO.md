@@ -107,43 +107,26 @@ then tag-push → both CI workflows (Release/cargo-dist + Publish-to-crates), ma
 - **0.6.0** (`aa4005f`, tag `v0.6.0`) — **multi-page hosted docsite**: Gap 1
   `publish-space` (space ingest → `/{space}/…`, nav + relative links, idempotent slug,
   cross-tenant 404) + Gap 2 markdown-native spaces (serve/build/publish-space render a
-  dir of `.md`, slug = stem). 389 tests + 143 security PASS. **CI in progress at handoff —
-  verify all three channels landed** (mac build on hauis).
+  dir of `.md`, slug = stem). 389 tests + 143 security PASS. **CI green — verified live on
+  all three channels** (crates.io `0.6.0` yanked=false, GitHub Release `v0.6.0` 12 assets,
+  Homebrew `version "0.6.0"`); mac build ran clean on hauis (2nd clean tag-release of the day).
 
 ## ▶ Start here (on return)
 
-**Issue tracker EMPTY; DAG empty; nothing in flight.** `main == origin` (`aa4005f`),
-clean tree, 0.6.0 in `Cargo.toml`.
-1. **Confirm 0.6.0 CI finished green** on all three channels (crates.io / GitHub Release
-   / Homebrew). If the mac build failed on hauis, `gh run rerun <id> --failed` (do NOT
-   re-add `GIT_CONFIG_GLOBAL`); the tag is already published.
-2. **Next work is unfiled** — file new work then re-populate lanes, or pick from the
-   candidates below. The whole tilictl-docsite use case (space ingest + markdown spaces)
-   is now shipped, so **downstream tilictl consolidation** is unblocked (tracked there).
+**Issue tracker EMPTY; DAG empty; nothing in flight.** `main == origin` (`fdb63ee`),
+clean tree, **0.6.0 released and verified on all three channels**. Both 0.5.0 and 0.6.0
+were cut autonomously this session per reaffirmed release autonomy (no permission asked;
+AGENTS.md operating policy was strengthened 2026-08-11 to forbid the "shall I cut?" prompt).
 
-**Candidate next work (no hard gate):**
-- **tilictl docsite migration** — retire tilictl's bespoke HTML generator onto glasspad
-  `publish-space` + markdown spaces (tracked in tilictl).
-- **Return-channel** further increments if a concrete need appears (A2/B2 shipped).
-- **Optional polish** (below): version-commit-stamp provenance, close `release-oss` epic.
-
-**Candidate next work (no hard gate, pick or defer):**
-- **Return-channel A2/B2 increment** — A2 (SSE transport) / B2 (multi-round); the
-  versioned submission record already leaves room (`issues/artifact-return-channel/models-comparison.md`).
-- **Agent-facing skill doc** — document the `gp.submit` → `await-submission` round-trip
-  in the skill guidance if not already covered.
-- **Optional polish** (below): cosmetic LICENSE/contact confirms, close `release-oss`
-  epic, `version-commit-stamp` provenance follow-up.
-- **Downstream** homebase + tilictl consolidation, gated on the shipped glasspad (tracked
-  in those repos).
-
-_Released this round (2026-08-10):_ **0.4.0** — cut end-to-end with standing release
-autonomy on a green gate (fmt + clippy -D warnings + test + `cargo publish --dry-run` +
-`./test-security.sh` 48 + Wave 2a). CHANGELOG `[Unreleased]` had been left empty when the
-feature landed; this round wrote the return-channel entry as `[0.4.0]`. The generic
-`ossctl release cut` engine was deliberately **not** used — its `publish-all` phase does a
-*local* `cargo publish`, which CLAUDE.md forbids (CI-side token only); the repo's
-tag-push→CI recipe was used instead (as for 0.3.0/0.3.1).
+Next work is **unfiled** — file new work then re-populate lanes, or pick a candidate:
+- **tilictl docsite migration** (the natural next step) — retire tilictl's bespoke HTML
+  generator onto glasspad `publish-space` + markdown spaces, now that the whole
+  space-ingest + markdown-native use case is shipped. Tracked in the **tilictl** repo.
+- **Return-channel** further increments only if a concrete need appears (A2 SSE + B2
+  multi-round both shipped in 0.5.0).
+- **Optional polish** (below): `version-commit-stamp` provenance follow-up, close the
+  effectively-complete `release-oss` epic, cosmetic LICENSE/contact confirms (already
+  correct — no-op unless changed).
 
 ### Optional polish (no hard gate)
 
@@ -154,7 +137,7 @@ tag-push→CI recipe was used instead (as for 0.3.0/0.3.1).
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-11)
+## Execution DAG (2026-08-12)
 
 Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
 (never copied here). Merge each round (drop landed, add active, keep existing order).
