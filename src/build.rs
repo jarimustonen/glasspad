@@ -80,12 +80,46 @@ pub struct OutFile {
 /// [`LibMode::SelfContained`] the two refs `wrap` injects into a **fragment** are
 /// localized to a relative `_gp/v1/…` path (see [`localize_base_libs`]); a full
 /// document is never rewritten (no injected refs to rewrite — the author owns it).
-pub fn wrapped_page(artifact_html: &str, mode: LibMode) -> String {
+///
+/// `favicon` is the validated repo emoji (`.glasspad.yaml` `favicon:`; `None` → the
+/// built-in default). Because a static build has **no trusted shell**, each built
+/// page IS its own outer document, so the favicon `<link>` is injected into the
+/// first-party `<head>` of a **fragment-wrapped** page (the head glasspad emits). A
+/// full document is emitted verbatim — its author owns the whole page, including its
+/// `<head>`, so it is never rewritten (mirrors the base-lib localization policy).
+pub fn wrapped_page(artifact_html: &str, mode: LibMode, favicon: Option<&str>) -> String {
     let out = wrap::render_artifact(artifact_html, Theme::Auto);
-    if mode == LibMode::SelfContained && wrap::is_fragment(artifact_html) {
-        localize_base_libs(out)
+    if wrap::is_fragment(artifact_html) {
+        let out = inject_favicon(out, favicon);
+        if mode == LibMode::SelfContained {
+            localize_base_libs(out)
+        } else {
+            out
+        }
     } else {
         out
+    }
+}
+
+/// Inject the emoji favicon `<link>` into a fragment-wrapped page's first-party
+/// `<head>` (right before `</head>`). Scoped to the head `wrap::wrap_fragment`
+/// emits, so the untrusted fragment body (after `</head>`) is never touched. Only
+/// called for fragments — a full document is emitted verbatim. `link_tag`
+/// base64-encodes the whole SVG, so the injected attribute carries no markup.
+fn inject_favicon(wrapped: String, favicon: Option<&str>) -> String {
+    let link = crate::favicon::link_tag(favicon);
+    match wrapped.find("</head>") {
+        Some(i) => {
+            let mut out = String::with_capacity(wrapped.len() + link.len() + 1);
+            out.push_str(&wrapped[..i]);
+            out.push_str(&link);
+            out.push('\n');
+            out.push_str(&wrapped[i..]);
+            out
+        }
+        // wrap_fragment always emits a </head>; if that ever changes, fail loud in
+        // tests rather than silently dropping the favicon.
+        None => wrapped,
     }
 }
 
@@ -135,19 +169,27 @@ fn index_redirect(home: &str) -> String {
 /// allocates the output bytes but touches no filesystem, so it is exhaustively
 /// unit-testable. The caller ([`write_files`]) is the only thing that does I/O.
 ///
+/// `favicon` is the validated repo emoji threaded into each fragment page's outer
+/// `<head>` (see [`wrapped_page`]); `None` uses the built-in default.
+///
 /// Emits, in order: one `<slug>.html` per artifact (wrapped through
 /// [`wrapped_page`]); an `index.html` **redirect** to the home artifact when the
 /// home slug is not itself `index` (when it is, its own `index.html` is the entry
 /// point); every static asset under its space-relative `assets/…` key; and — in
 /// [`LibMode::SelfContained`] — the pinned base libs under `_gp/v1/…`.
-pub fn plan(space: &Space, home: Option<&str>, mode: LibMode) -> Vec<OutFile> {
+pub fn plan(
+    space: &Space,
+    home: Option<&str>,
+    mode: LibMode,
+    favicon: Option<&str>,
+) -> Vec<OutFile> {
     let mut files = Vec::new();
 
     // One wrapped page per artifact (BTreeMap → deterministic slug order).
     for (slug, artifact) in &space.artifacts {
         files.push(OutFile {
             rel_path: format!("{slug}.html"),
-            bytes: wrapped_page(&artifact.html, mode).into_bytes(),
+            bytes: wrapped_page(&artifact.html, mode, favicon).into_bytes(),
         });
     }
 
@@ -259,7 +301,7 @@ mod tests {
     fn fragment_page_is_wrapped_and_bridged() {
         // A fragment flows through the same wrap seam the server uses: doctype +
         // base.css + bridge.js, body preserved.
-        let page = wrapped_page("<h1>Hi</h1>", LibMode::SelfContained);
+        let page = wrapped_page("<h1>Hi</h1>", LibMode::SelfContained, None);
         assert!(page.starts_with("<!doctype html>"));
         assert!(page.contains("<h1>Hi</h1>"));
         assert!(page.contains("bridge.js"));
@@ -273,13 +315,53 @@ mod tests {
         let full = "<!doctype html><html><head>\
                     <link rel=\"stylesheet\" href=\"/_gp/v1/base.css\"></head>\
                     <body><h1>x</h1></body></html>";
-        assert_eq!(wrapped_page(full, LibMode::SelfContained), full);
-        assert_eq!(wrapped_page(full, LibMode::SharedLibs), full);
+        assert_eq!(wrapped_page(full, LibMode::SelfContained, None), full);
+        assert_eq!(wrapped_page(full, LibMode::SharedLibs, None), full);
+    }
+
+    #[test]
+    fn fragment_build_page_carries_emoji_favicon_in_head() {
+        // The built page IS its own outer document (no shell), so the favicon <link>
+        // is injected into the fragment's first-party <head>, before </head> and
+        // before the body — with the configured emoji base64'd into the SVG.
+        let page = wrapped_page("<h1>Hi</h1>", LibMode::SelfContained, Some("🚀"));
+        let link = page
+            .find(r#"<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,"#)
+            .expect("favicon link injected");
+        assert!(link < page.find("</head>").unwrap());
+        assert!(link < page.find("<h1>Hi</h1>").unwrap());
+        use base64::Engine as _;
+        let b64 = page[link..]
+            .split("base64,")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let svg = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(svg.contains('🚀'));
+        // No configured emoji → the default favicon is still present on every page.
+        let dflt = wrapped_page("<h1>Hi</h1>", LibMode::SelfContained, None);
+        assert!(dflt.contains(r#"<link rel="icon" type="image/svg+xml""#));
+    }
+
+    #[test]
+    fn full_document_build_page_gets_no_injected_favicon() {
+        // A full document is the author's own outer document — verbatim, so build must
+        // NOT inject a favicon into it (byte-for-byte unchanged even with one configured).
+        let full = "<!doctype html><html><head><title>x</title></head><body>x</body></html>";
+        assert_eq!(wrapped_page(full, LibMode::SelfContained, Some("🚀")), full);
+        assert_eq!(wrapped_page(full, LibMode::SharedLibs, Some("🚀")), full);
     }
 
     #[test]
     fn self_contained_localizes_fragment_base_libs_to_relative() {
-        let page = wrapped_page("<h1>Hi</h1>", LibMode::SelfContained);
+        let page = wrapped_page("<h1>Hi</h1>", LibMode::SelfContained, None);
         // The wrap-injected refs are rewritten to a relative path…
         assert!(page.contains(r#"href="_gp/v1/base.css""#));
         assert!(page.contains(r#"src="_gp/v1/bridge.js""#));
@@ -295,7 +377,7 @@ mod tests {
         // proves the "can never touch an author's absolute ref" claim.
         let fragment = "<h1>Docs</h1><p>Load it with <code>href=\"/_gp/v1/base.css\"</code></p>\
              <script src=\"/_gp/v1/bridge.js\"></script>";
-        let page = wrapped_page(fragment, LibMode::SelfContained);
+        let page = wrapped_page(fragment, LibMode::SelfContained, None);
         // The head's injected refs are localized…
         let head = &page[..page.find("</head>").unwrap()];
         assert!(head.contains(r#"href="_gp/v1/base.css""#));
@@ -324,13 +406,13 @@ mod tests {
 
     #[test]
     fn shared_libs_keeps_absolute_refs_and_omits_libs() {
-        let page = wrapped_page("<h1>Hi</h1>", LibMode::SharedLibs);
+        let page = wrapped_page("<h1>Hi</h1>", LibMode::SharedLibs, None);
         // Absolute server path is kept (resolved by whatever serves the root).
         assert!(page.contains(r#"href="/_gp/v1/base.css""#));
         assert!(page.contains(r#"src="/_gp/v1/bridge.js""#));
 
         let sp = space_with(&[("index", "<h1>Hi</h1>")]);
-        let files = plan(&sp, sp.home.as_deref(), LibMode::SharedLibs);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SharedLibs, None);
         // No base libs are bundled in shared-libs mode.
         assert!(!files.iter().any(|f| f.rel_path.starts_with("_gp/v1/")));
     }
@@ -341,7 +423,7 @@ mod tests {
         // page references `_gp/v1/base.css` + `_gp/v1/bridge.js`, and both of those
         // exact relative paths are present as real, non-empty files in the plan.
         let sp = space_with(&[("index", "<h1>Hi</h1>")]);
-        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained, None);
         let page = text(&files, "index.html");
         for referenced in ["_gp/v1/base.css", "_gp/v1/bridge.js"] {
             assert!(
@@ -365,7 +447,7 @@ mod tests {
         // When an artifact is literally `index`, its own wrapped page is index.html
         // and there is exactly one such file (no extra redirect clobbering it).
         let sp = space_with(&[("index", "<h1>Home</h1>"), ("sales", "<h1>Sales</h1>")]);
-        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained, None);
         assert_eq!(
             files.iter().filter(|f| f.rel_path == "index.html").count(),
             1
@@ -378,7 +460,7 @@ mod tests {
     fn non_index_home_gets_a_redirect_index() {
         // Home is `report`, no `index` artifact → an index.html redirect to it.
         let sp = space_with(&[("report", "<h1>Report</h1>"), ("appendix", "<h1>A</h1>")]);
-        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained, None);
         let idx = text(&files, "index.html");
         assert!(idx.contains(r#"url=report.html"#));
         assert!(idx.contains(r#"href="report.html""#));
@@ -396,7 +478,7 @@ mod tests {
                 bytes: b"{\"ok\":true}".to_vec(),
             },
         );
-        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained, None);
         assert_eq!(
             find(&files, "assets/data.json").unwrap().bytes,
             b"{\"ok\":true}"
@@ -422,7 +504,7 @@ mod tests {
                 bytes: b"hello".to_vec(),
             },
         );
-        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained);
+        let files = plan(&sp, sp.home.as_deref(), LibMode::SelfContained, None);
         write_files(&out, &files).unwrap();
 
         // The referenced base lib actually exists at the path the page names,

@@ -34,6 +34,7 @@ use crate::artifact_host::space::{self, ScanError};
 use crate::artifact_host::{self, ArtifactHost, render, wrap};
 use crate::build::{self, LibMode};
 use crate::config::{self, ApiKeySource, Target};
+use crate::favicon;
 use crate::hosted::auth::{KeyFileError, KeyTable};
 use crate::hosted::{self, HostedConfig};
 use crate::pidfile::{self, PidError};
@@ -474,8 +475,8 @@ pub fn version(json: bool) {
 /// a **warning**, not fatal: serving pages must not depend on the return channel,
 /// so the host comes up with no submission store (submit endpoints then answer
 /// `503 return_channel_unavailable`).
-fn loopback_host(port: u16) -> Arc<ArtifactHost> {
-    let mut host = ArtifactHost::new(port);
+fn loopback_host(port: u16, favicon: Option<String>) -> Arc<ArtifactHost> {
+    let mut host = ArtifactHost::new(port).with_favicon(favicon);
     if let Some(store) = loopback_submissions(port) {
         host = host.with_submissions(store);
     }
@@ -547,7 +548,7 @@ pub async fn loopback_serve(
 /// `loopback serve` defaults it off). Reached via `glasspad loopback serve` and the
 /// loopback `publish` dispatch.
 pub async fn serve(dir: Option<PathBuf>, port: u16, open: bool, json: bool) {
-    let host = loopback_host(port);
+    let host = loopback_host(port, resolve_favicon(json));
 
     // (name, nav slugs, home) when a live directory is served; None = fixtures.
     let live: Option<(String, Vec<String>, Option<String>)> = match &dir {
@@ -696,7 +697,7 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, open: bool, 
         "full-document"
     };
 
-    let host = loopback_host(port);
+    let host = loopback_host(port, resolve_favicon(json));
     host.swap(server::one_artifact_snapshot(&space_name, html));
 
     let listener = match server::bind_loopback(port).await {
@@ -1006,7 +1007,7 @@ pub async fn render(
         );
     }
 
-    let host = loopback_host(port);
+    let host = loopback_host(port, resolve_favicon(json));
     host.swap(server::one_artifact_snapshot(&space_name, body));
 
     let listener = match server::bind_loopback(port).await {
@@ -1286,8 +1287,12 @@ pub fn build(
     // it surfaces in --dry-run too (a read-only, non-mutating validation, §11).
     guard_out_not_in_space(&space_dir, &out, json);
 
+    // Resolve the repo favicon (`.glasspad.yaml`) for the built pages' outer <head>;
+    // an invalid emoji is a hard error here, before any output is written (§1).
+    let favicon = resolve_favicon(json);
+
     // Plan every output file (pure — no filesystem writes yet).
-    let files = build::plan(space, home.as_deref(), mode);
+    let files = build::plan(space, home.as_deref(), mode, favicon.as_deref());
     let index = files
         .iter()
         .any(|f| f.rel_path == "index.html")
@@ -2049,7 +2054,7 @@ async fn publish_hosted(
         );
     }
 
-    let space = match kind {
+    let mut space = match kind {
         PathKind::Dir => match space::scan_dir(&path) {
             Ok(sp) => sp,
             Err(e) => exit_error(
@@ -2065,6 +2070,11 @@ async fn publish_hosted(
         PathKind::Markdown => build_single_page_space(&path, template, true, json),
         PathKind::Html => build_single_page_space(&path, None, false, json),
     };
+    // Attach the validated repo favicon (`.glasspad.yaml`) so it travels in the
+    // upload bundle and the hosted server renders it into the space's outer shell
+    // (per-space — one hosted server carries many repos' favicons). The server
+    // re-validates it at ingest; this early check surfaces a bad emoji before upload.
+    space.favicon = validate_favicon(cfg.favicon.as_deref(), json);
     if space.artifacts.is_empty() {
         exit_error(
             json,
@@ -2168,6 +2178,9 @@ async fn post_space_bundle(
     let title = title_override.or_else(|| space.title.clone());
     if let Some(t) = &title {
         body.insert("title".into(), json!(t));
+    }
+    if let Some(f) = &space.favicon {
+        body.insert("favicon".into(), json!(f));
     }
     if let Some(k) = &space_key {
         body.insert("space_key".into(), json!(k));
@@ -2311,6 +2324,29 @@ fn resolve_publish_config(json: bool) -> config::ResolvedConfig {
             let exit = if e.code == "unreadable_config" { 2 } else { 1 };
             exit_error(json, exit, e.code, &e.message, None, None);
         }
+    }
+}
+
+/// Resolve + validate the configured favicon emoji from the publish config
+/// (`.glasspad.yaml` → home config). Returns the validated emoji, or `None` when
+/// unset (the built-in default is rendered downstream). An invalid emoji is a hard,
+/// informative error (AI-first §1) — never silently dropped. Used by the loopback
+/// serve/create/render paths (the favicon becomes the host default) and by `build`.
+fn resolve_favicon(json: bool) -> Option<String> {
+    let cfg = resolve_publish_config(json);
+    validate_favicon(cfg.favicon.as_deref(), json)
+}
+
+/// Validate an optional configured favicon, exiting with an informative error on a
+/// non-emoji / injection value. Shared by every path a favicon enters (loopback host
+/// default, `build`, and the hosted per-space publish) so one rule applies uniformly.
+fn validate_favicon(raw: Option<&str>, json: bool) -> Option<String> {
+    match raw {
+        None => None,
+        Some(v) => match favicon::validate(v) {
+            Ok(ok) => Some(ok),
+            Err(msg) => exit_error(json, 1, "invalid_favicon", &msg, Some(v), None),
+        },
     }
 }
 

@@ -80,6 +80,11 @@ pub struct Space {
     pub home: Option<String>,
     /// Optional space title from the manifest (structure, never content).
     pub title: Option<String>,
+    /// Optional emoji favicon for this space's OUTER document (`.glasspad.yaml`
+    /// `favicon:`). Already validated ([`crate::favicon::validate`]) wherever it is
+    /// set; `None` → the built-in default is rendered. Never derived from artifact
+    /// files — it is repo/producer metadata, so the scanner leaves it `None`.
+    pub favicon: Option<String>,
 }
 
 impl Space {

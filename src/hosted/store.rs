@@ -91,6 +91,12 @@ pub struct SpaceMeta {
     pub title: Option<String>,
     pub nav: Vec<String>,
     pub home: Option<String>,
+    /// Optional emoji favicon for the space's outer shell document. `#[serde(default)]`
+    /// keeps the schema backward-compatible: a `meta.json` written before this field
+    /// existed deserializes with `favicon: None` (the built-in default renders). Always
+    /// a value already validated at ingest ([`crate::favicon::validate`]).
+    #[serde(default)]
+    pub favicon: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1124,6 +1130,7 @@ impl Store {
             title: space.title.clone(),
             nav: space.nav.clone(),
             home: space.home.clone(),
+            favicon: space.favicon.clone(),
             created_at,
             updated_at: now,
         };
@@ -1276,9 +1283,18 @@ impl Store {
             None => return Ok(None),
         };
 
-        // Re-validate through the SAME builder the ingest surface uses.
+        // Re-validate through the SAME builder the ingest surface uses. The favicon
+        // is producer/repo metadata (not derived from the artifact files), so it is
+        // reattached from the meta after the builder — re-validated defensively so a
+        // hand-tampered `meta.json` can never smuggle a non-emoji favicon into a shell.
         match build_space_bundle(pages, assets, meta.nav.clone(), meta.title.clone()) {
-            Ok(sp) => Ok(Some((meta, sp))),
+            Ok(mut sp) => {
+                sp.favicon = meta
+                    .favicon
+                    .as_deref()
+                    .and_then(|f| crate::favicon::validate(f).ok());
+                Ok(Some((meta, sp)))
+            }
             Err(e) => {
                 eprintln!(
                     "glasspad host: space {} failed revalidation: {e}; skipping",

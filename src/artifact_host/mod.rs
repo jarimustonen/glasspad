@@ -105,6 +105,12 @@ pub struct ArtifactHost {
     mount: String,
     snapshot: RwLock<Arc<Snapshot>>,
     reload_tx: broadcast::Sender<ReloadEvent>,
+    /// Host-level default emoji favicon for the OUTER shell document. Loopback sets
+    /// it once from the repo `.glasspad.yaml` (one config per served repo); the
+    /// hosted (multi-tenant) mode leaves it `None` and carries the favicon per-space
+    /// on [`Space`] instead. Resolved per-space-wins in [`render_shell`]. Already
+    /// validated ([`crate::favicon::validate`]); `None` → the built-in default.
+    favicon: Option<String>,
     /// The return-channel submission store, for the loopback run mode. `None` when
     /// no return channel is wired (fixture-only test hosts, or a store that failed
     /// to open). The hosted run mode carries its own store on `HostedState` instead.
@@ -132,6 +138,7 @@ impl ArtifactHost {
             snapshot: RwLock::new(Arc::new(Snapshot::empty())),
             reload_tx,
             submissions: None,
+            favicon: None,
         }
     }
 
@@ -139,6 +146,19 @@ impl ArtifactHost {
     pub fn with_submissions(mut self, subs: Arc<crate::submissions::SubmissionStore>) -> Self {
         self.submissions = Some(subs);
         self
+    }
+
+    /// Set the host-level default emoji favicon (builder; loopback run mode). The
+    /// value must already be validated ([`crate::favicon::validate`]); `None` keeps
+    /// the built-in default.
+    pub fn with_favicon(mut self, favicon: Option<String>) -> Self {
+        self.favicon = favicon;
+        self
+    }
+
+    /// The host-level default favicon emoji, if one is configured.
+    pub fn favicon(&self) -> Option<&str> {
+        self.favicon.as_deref()
     }
 
     /// The attached submission store, if a return channel is wired.
@@ -433,7 +453,14 @@ async fn shell_page(
     let Some(hit) = find_artifact(&snap, &space, &slug) else {
         return not_found();
     };
-    render_shell(&snap, host.mount(), &space, &slug, hit.title.as_deref())
+    render_shell(
+        &snap,
+        host.mount(),
+        &space,
+        &slug,
+        hit.title.as_deref(),
+        host.favicon(),
+    )
 }
 
 /// Space entry — the shell for the home artifact (`index`, else first slug).
@@ -446,20 +473,45 @@ async fn space_entry(State(host): State<Arc<ArtifactHost>>, Path(space): Path<St
         return not_found();
     };
     let title = find_artifact(&snap, &space, &home).and_then(|h| h.title);
-    render_shell(&snap, host.mount(), &space, &home, title.as_deref())
+    render_shell(
+        &snap,
+        host.mount(),
+        &space,
+        &home,
+        title.as_deref(),
+        host.favicon(),
+    )
 }
 
+/// Render the trusted shell. The outer document's favicon resolves **per-space
+/// first** (`snap.space(space).favicon`, the hosted per-tenant emoji), then the
+/// host-level default (`host_favicon`, loopback's repo `.glasspad.yaml`), then the
+/// built-in default inside [`crate::favicon::link_tag`]. The favicon lives on this
+/// outer document only — the sandboxed artifact iframe / content route is untouched.
 fn render_shell(
     snap: &Snapshot,
     mount: &str,
     space: &str,
     slug: &str,
     title: Option<&str>,
+    host_favicon: Option<&str>,
 ) -> Response {
     let nonce = token::generate_token();
     let nav = space_nav(snap, space);
     let nav_refs: Vec<(&str, &str)> = nav.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect();
-    let body = shell::render(mount, space, slug, title.unwrap_or(""), &nav_refs, &nonce);
+    let favicon = snap
+        .space(space)
+        .and_then(|s| s.favicon.as_deref())
+        .or(host_favicon);
+    let body = shell::render(
+        mount,
+        space,
+        slug,
+        title.unwrap_or(""),
+        &nav_refs,
+        &nonce,
+        favicon,
+    );
     let csp = headers::shell_csp(&nonce);
 
     let mut hmap = base_html_headers();

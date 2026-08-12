@@ -8,6 +8,7 @@ mod artifact_host;
 mod build;
 mod cli;
 mod config;
+mod favicon;
 mod hosted;
 mod pidfile;
 mod server;

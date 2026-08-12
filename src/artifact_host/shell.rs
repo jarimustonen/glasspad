@@ -48,6 +48,7 @@ pub fn render(
     title: &str,
     nav: &[(&str, &str)],
     nonce: &str,
+    favicon: Option<&str>,
 ) -> String {
     // All dynamic values are serialized as JSON, so they land in the script as
     // data literals — never as HTML that could break out of context. `json` also
@@ -97,11 +98,18 @@ pub fn render(
     let esc_src = html_attr_escape(&content_src);
     let esc_title = html_text_escape(&display_title);
 
+    // Emoji SVG favicon for THIS outer document only (never the sandboxed artifact).
+    // `link_tag` base64-encodes the whole SVG, so the emitted attribute carries only
+    // `[A-Za-z0-9+/=]` — the emoji cannot break out of the tag even if it reached here
+    // unvalidated (it is validated at every ingress; this is defense-in-depth).
+    let favicon_link = crate::favicon::link_tag(favicon);
+
     format!(
         r#"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{favicon_link}
 <title>{esc_title}</title>
 <style>
   html,body {{ margin:0; height:100%; }}
@@ -463,7 +471,7 @@ mod tests {
 
     #[test]
     fn shell_has_null_origin_sandbox() {
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n0nce");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n0nce", None);
         assert!(
             html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
         );
@@ -472,31 +480,111 @@ mod tests {
 
     #[test]
     fn shell_frames_content_route() {
-        let html = render("", "demo", "eval", "", &nav_of(&["eval"]), "n0nce");
+        let html = render("", "demo", "eval", "", &nav_of(&["eval"]), "n0nce", None);
         assert!(html.contains(r#"data-src="/demo/_c/eval""#));
     }
 
     #[test]
+    fn shell_emits_emoji_favicon_link_on_outer_document() {
+        // A configured emoji lands as a `<link rel="icon">` (base64 SVG data URI) in
+        // the OUTER shell <head> — before </head>, and before the framed iframe.
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "",
+            &nav_of(&["index"]),
+            "n",
+            Some("🚀"),
+        );
+        let link_pos = html
+            .find(r#"<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,"#)
+            .expect("favicon link present on the outer document");
+        assert!(
+            link_pos < html.find("</head>").unwrap(),
+            "favicon is in <head>"
+        );
+        assert!(
+            link_pos < html.find("<iframe").unwrap(),
+            "favicon is on the outer doc, above the sandboxed iframe"
+        );
+        // The configured emoji round-trips through the base64 SVG.
+        let b64 = html[link_pos..]
+            .split("base64,")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        use base64::Engine as _;
+        let svg = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(svg.contains('🚀'));
+        // With no configured emoji the default is still emitted (every page gets one).
+        let html_default = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
+        assert!(html_default.contains(r#"<link rel="icon" type="image/svg+xml""#));
+    }
+
+    #[test]
+    fn shell_favicon_does_not_touch_the_sandbox_tokens() {
+        // Adding a favicon must not perturb the frozen sandbox contract: the iframe
+        // sandbox tokens are byte-for-byte unchanged and no allow-same-origin appears,
+        // whether or not a favicon is configured.
+        let with = render(
+            "",
+            "demo",
+            "index",
+            "",
+            &nav_of(&["index"]),
+            "n",
+            Some("🦀"),
+        );
+        let without = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
+        for html in [&with, &without] {
+            assert!(
+                html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
+            );
+            assert!(!html.contains("allow-same-origin"));
+        }
+        // The only difference between the two renders is the favicon's base64 payload —
+        // the framed content route (the sandbox src) is identical.
+        assert!(with.contains(r#"data-src="/demo/_c/index""#));
+        assert!(without.contains(r#"data-src="/demo/_c/index""#));
+    }
+
+    #[test]
     fn shell_validates_event_source() {
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n0nce");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n0nce", None);
         assert!(html.contains("event.source !== frame.contentWindow"));
     }
 
     #[test]
     fn shell_script_is_nonce_gated() {
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "abc123");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "abc123", None);
         assert!(html.contains(r#"<script nonce="abc123">"#));
     }
 
     #[test]
     fn shell_embeds_slugs_as_json_data() {
-        let html = render("", "demo", "index", "", &nav_of(&["index", "eval"]), "n");
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "",
+            &nav_of(&["index", "eval"]),
+            "n",
+            None,
+        );
         assert!(html.contains(r#"["index","eval"]"#));
     }
 
     #[test]
     fn shell_opens_reload_event_source() {
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         // The reload stream is opened space-scoped (`?space=`) so B2 round events are
         // delivered server-side only to this page's own shell (no cross-page slug leak).
         assert!(
@@ -508,7 +596,15 @@ mod tests {
     fn shell_uses_resolved_title_as_text() {
         // A provided title lands in the chrome as a JSON string literal + escaped
         // <title>, never as live markup.
-        let html = render("", "demo", "index", "Sales & Q3", &nav_of(&["index"]), "n");
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "Sales & Q3",
+            &nav_of(&["index"]),
+            "n",
+            None,
+        );
         assert!(html.contains("Sales &amp; Q3")); // server-side <title>, escaped
         // client textContent literal: `&` is JSON-for-script-encoded so it can't
         // close the <script> element — assert the encoded form is present and the
@@ -520,13 +616,13 @@ mod tests {
         assert!(!title_line.contains('&'));
         assert!(!title_line.contains("Sales & Q3"));
         // Empty title falls back to "space / slug".
-        let fallback = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let fallback = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         assert!(fallback.contains("demo / index"));
     }
 
     #[test]
     fn shell_has_theme_toggle_and_messaging() {
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         // A toggle control exists in the trusted chrome…
         assert!(html.contains(r#"id="gp-theme-toggle""#));
         // …and the shell sends a low-authority theme message to the framed artifact.
@@ -539,7 +635,7 @@ mod tests {
     fn shell_navigation_carries_theme_query() {
         // A swapped iframe src inlines the current theme so the new fragment wraps
         // FOUC-free; `auto` omits the query.
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         assert!(html.contains(r#"MOUNT + "/" + SPACE + "/_c/" + slug + themeQuery()"#));
         assert!(html.contains("gp_theme="));
     }
@@ -547,7 +643,7 @@ mod tests {
     #[test]
     fn shell_escapes_injection_in_title_context() {
         // A hostile slug must not break out of the HTML title/attr context.
-        let html = render("", "demo", "a\"><script>x", "", &nav_of(&["a"]), "n");
+        let html = render("", "demo", "a\"><script>x", "", &nav_of(&["a"]), "n", None);
         assert!(!html.contains("<script>x"));
         // A hostile *title* likewise cannot break out (escaped + JSON-encoded).
         let html2 = render(
@@ -557,6 +653,7 @@ mod tests {
             "</title><script>evil()</script>",
             &nav_of(&["index"]),
             "n",
+            None,
         );
         assert!(!html2.contains("<script>evil()"));
     }
@@ -572,6 +669,7 @@ mod tests {
             "Home",
             &nav_of(&["index", "sales"]),
             "n",
+            None,
         );
         // The nav container exists and is built client-side (no server-rendered
         // artifact-title markup — the list is populated via createElement/textContent).
@@ -598,6 +696,7 @@ mod tests {
             "Home",
             &[("index", "Home"), ("evil", hostile)],
             "n",
+            None,
         );
         // Raw, executable markup for the title is absent everywhere in the document.
         assert!(!html.contains("<img src=x onerror"));
@@ -612,7 +711,15 @@ mod tests {
     fn shell_nav_navigate_is_allowlist_bounded() {
         // navigateTo only ever swaps to a KNOWN slug via the content route; the
         // grammar + KNOWN_SET checks are present.
-        let html = render("", "demo", "index", "", &nav_of(&["index", "sales"]), "n");
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "",
+            &nav_of(&["index", "sales"]),
+            "n",
+            None,
+        );
         assert!(html.contains("!KNOWN_SET.has(slug)"));
         assert!(html.contains(r#"MOUNT + "/" + SPACE + "/_c/" + slug"#));
     }
@@ -631,6 +738,7 @@ mod tests {
             "Home",
             &[("index", "Home"), ("evil", hostile)],
             "n",
+            None,
         );
         // No raw `</script>` (any case) survives to close the shell's own script.
         assert!(!html.to_ascii_lowercase().contains("</script><b>"));
@@ -648,7 +756,7 @@ mod tests {
     fn shell_renders_with_empty_nav_without_panicking() {
         // A space with no artifacts (empty nav table) must render a valid shell —
         // the nav loop is a no-op and paintActive iterates nothing.
-        let html = render("", "demo", "index", "", &[], "n");
+        let html = render("", "demo", "index", "", &[], "n", None);
         assert!(html.contains(r#"<nav class="gp-nav" id="gp-nav""#));
         assert!(
             html.contains(r#"var NAV = [];"#)
@@ -663,7 +771,7 @@ mod tests {
     fn shell_loopback_submit_endpoint_and_handler() {
         // Loopback (empty mount): the submit target is the space-scoped `_gp` path,
         // the handler dispatches the `submit` type, and it POSTs to that path.
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         assert!(html.contains(r#"var SUBMIT_PATH = "/demo/_gp/submit""#));
         assert!(html.contains(r#"if (data.type === "submit")"#));
         assert!(html.contains("function handleSubmit(data)"));
@@ -677,7 +785,7 @@ mod tests {
     fn shell_hosted_submit_endpoint_is_api_route() {
         // Hosted (mount `/p`): the submit target is the root `/api/v1/pages/<slug>`
         // route (the page's space name IS its capability slug), not a `_gp` path.
-        let html = render("/p", "abcslug", "index", "", &nav_of(&["index"]), "n");
+        let html = render("/p", "abcslug", "index", "", &nav_of(&["index"]), "n", None);
         assert!(html.contains(r#"var SUBMIT_PATH = "/api/v1/pages/abcslug/submit""#));
         assert!(!html.contains("/_gp/submit"));
     }
@@ -686,7 +794,7 @@ mod tests {
     fn shell_submit_handler_bounds_size_and_rejects_extra_keys() {
         // The submit envelope is size-capped before any POST, and only the
         // {type,data,contentVersion} keys are accepted (extra keys rejected).
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         assert!(html.contains("MAX_SUBMIT_BYTES"));
         assert!(html.contains(r#"k !== "type" && k !== "data" && k !== "contentVersion""#));
     }
@@ -697,7 +805,7 @@ mod tests {
         // framed artifact in place (a content-route re-fetch) rather than a full
         // reload — and only for the shell's OWN space (per-page isolation). The event
         // carries no URL, so the swap targets our own `current` slug's content route.
-        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n");
+        let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         assert!(html.contains(r#"es.addEventListener("round""#));
         // Round events are SERVER-SIDE scoped to this space (`?space=`) — the shell
         // never receives another page's round event (with its slug) to leak.
@@ -724,7 +832,15 @@ mod tests {
         // A same-slug navigate must be a validated no-op (return true, no frame
         // reassignment) so a hostile child can't loop the iframe by re-posting the
         // current slug on every load.
-        let html = render("", "demo", "index", "", &nav_of(&["index", "sales"]), "n");
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "",
+            &nav_of(&["index", "sales"]),
+            "n",
+            None,
+        );
         assert!(html.contains("if (slug === current) return true;"));
     }
 }

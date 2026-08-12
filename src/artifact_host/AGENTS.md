@@ -19,8 +19,11 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   reject transferred `ports` → exact `{type:"navigate", slug:<known>}` schema on
   small typed fields (no `JSON.stringify` of the payload). Inserts artifact text
   as `textContent` (never `innerHTML`). The shell's `frame-src 'self'` also
-  contains a framed artifact's own navigations (see design.md §4). It also owns
-  the **theme toggle** (Wave 3b): on toggle it `postMessage`s the framed artifact
+  contains a framed artifact's own navigations (see design.md §4). It also emits
+  the **emoji SVG favicon** on the OUTER shell `<head>` only (a base64 `data:` SVG
+  `<link rel="icon">` built by the top-level `crate::favicon` module; per-space emoji
+  wins over the loopback host default, else a built-in default) — the sandboxed
+  artifact / content route is untouched. It also owns the **theme toggle** (Wave 3b): on toggle it `postMessage`s the framed artifact
   `{type:"theme", theme}` and, on the next iframe swap, inlines the theme via
   `?gp_theme=` so the wrap is FOUC-free. **Wave 4 — nav chrome:** renders a
   `<nav>` listing the space's artifacts from the server-resolved `(slug, title)`

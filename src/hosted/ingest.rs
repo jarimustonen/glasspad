@@ -311,6 +311,11 @@ pub struct SpacePublishRequest {
     #[serde(default)]
     nav: Vec<String>,
     title: Option<String>,
+    /// Optional emoji favicon for the space's OUTER shell document. `#[serde(default)]`
+    /// so an older producer that omits it still parses. Validated server-side (the
+    /// untrusted API boundary) before it is stored / rendered.
+    #[serde(default)]
+    favicon: Option<String>,
     /// Stable space key: a re-publish with the same key updates the space **in
     /// place** at the same slug/URL (owner-scoped). Absent → a fresh slug.
     space_key: Option<String>,
@@ -402,11 +407,23 @@ pub async fn publish_space(
         });
     }
 
+    // Validate the optional favicon at the untrusted API boundary — a non-emoji /
+    // injection value is rejected here (never stored / rendered), the authoritative
+    // check on top of the producer's own CLI-side validation (AI-first §1).
+    let favicon = match &req.favicon {
+        None => None,
+        Some(raw) => match crate::favicon::validate(raw) {
+            Ok(v) => Some(v),
+            Err(msg) => return err(StatusCode::BAD_REQUEST, "invalid_favicon", &msg),
+        },
+    };
+
     // Build + validate the space with the SAME rules the filesystem scanner applies.
-    let space = match build_space_bundle(pages, assets, req.nav, req.title) {
+    let mut space = match build_space_bundle(pages, assets, req.nav, req.title) {
         Ok(sp) => sp,
         Err(e) => return err(StatusCode::BAD_REQUEST, "invalid_space", &e.to_string()),
     };
+    space.favicon = favicon;
 
     // Blocking filesystem I/O + store mutation lock → off the async worker.
     let store = state.store.clone();

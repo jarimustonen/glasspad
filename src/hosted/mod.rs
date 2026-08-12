@@ -855,6 +855,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn space_publish_carries_emoji_favicon_on_shell_only_not_the_sandbox() {
+        let root = tmp_root("space-favicon");
+        let (app, _, _) = app_with(&root);
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({
+                    "pages": [ { "slug": "index", "html": "<h1>Home</h1>" } ],
+                    "favicon": "🚀"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+
+        // The OUTER shell carries the emoji favicon link (base64 SVG data URI).
+        let r = send(&app, get_req(format!("/p/{slug}/"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let shell = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        let link = shell
+            .find(r#"<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,"#)
+            .expect("favicon link on the hosted shell");
+        assert!(link < shell.find("</head>").unwrap());
+        use base64::Engine as _;
+        let b64 = shell[link..]
+            .split("base64,")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let svg = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            svg.contains('🚀'),
+            "configured emoji round-trips to the shell"
+        );
+
+        // The sandboxed artifact content route is UNAFFECTED — no favicon leaks into
+        // it, and the frozen CSP/sandbox is intact.
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let csp = r
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+        assert!(csp.contains("connect-src 'none'"));
+        let content = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(
+            !content.contains(r#"rel="icon""#),
+            "the sandboxed artifact must carry no favicon"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn space_publish_rejects_non_emoji_favicon() {
+        let root = tmp_root("space-favicon-bad");
+        let (app, _, _) = app_with(&root);
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({
+                    "pages": [ { "slug": "index", "html": "<h1>Home</h1>" } ],
+                    "favicon": "\"></text><script>alert(1)</script>"
+                }),
+            ),
+        )
+        .await;
+        // A markup/injection favicon is rejected at the untrusted API boundary.
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let j = body_json(r).await;
+        assert_eq!(j["error"]["code"].as_str().unwrap(), "invalid_favicon");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
     async fn space_key_updates_in_place_201_then_200() {
         let root = tmp_root("space-idem-http");
         let (app, _, _) = app_with(&root);
