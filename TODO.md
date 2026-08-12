@@ -146,7 +146,12 @@ Scheduling PLAN — source of truth for lane + order; issuectl is authoritative 
 second lane's hot file (spawn-time exclusion).
 
 Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A);
-`src/cli.rs` + `src/server.rs` + render modules (Lane B). `src/skill.md` is docs-only.
+**Lane B (server/CLI/hosted core)** = `src/cli.rs` + `src/main.rs` + `src/server.rs` +
+`src/submissions.rs` + `src/hosted/*` + `src/artifact_host/space.rs` +
+`src/artifact_host/render.rs`. `src/skill.md` is docs-only. (Lane B widened after the
+2026-08-11/12 stint: return-channel A2/B2 and the space-ingest/markdown-space work all
+collided across this whole family — treat any two units touching it as sequenced, not
+parallel.)
 
 <!-- execution-dag:begin -->
 ```
