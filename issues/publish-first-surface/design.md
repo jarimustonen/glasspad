@@ -79,6 +79,16 @@ Remaining verbs:
   (e.g. `loopback serve`, `loopback open`, `loopback stop`, port control).
   Discoverable via `--help` only, not in the skill's main flow. *(Decided
   2026-08-12.)*
+  - *Design note (observed this session):* today a second loopback `serve`/`render`
+    prints `another glasspad loopback server (pid N) is already recorded in the pid
+    file; taking it over (last-writer-wins)` and rebinds `glasspad stop` to the new
+    pid — so the earlier server is orphaned (can no longer be stopped by `stop`). The
+    single-pid-file model does not support more than one concurrent loopback server.
+    When designing `glasspad loopback`, decide whether to support **multiple named /
+    per-port loopback servers** (`loopback stop --port N` / by name) rather than one
+    global pid file, or to explicitly reject a second `loopback serve` instead of
+    silently taking over. Low priority (loopback is now the rare/advanced path), but
+    the command group is the place to fix it.
 
 ### Skill rewrite
 
