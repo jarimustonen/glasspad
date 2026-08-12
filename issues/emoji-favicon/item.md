@@ -2,11 +2,14 @@
 created: 2026-08-12
 updated: 2026-08-12
 type: feature
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 344764e
   summary: emoji SVG favicon on the outer shell/build document
+- hash: 9c18c78
+  summary: apply /llm-review findings (validation hardening, non-fatal serve, tests)
+closed: 2026-08-12
 ---
 
 # Emoji SVG favicon for published spaces (repo emoji via .glasspad.yaml)
