@@ -2,11 +2,14 @@
 created: 2026-08-12
 updated: 2026-08-12
 type: feature
-status: in-progress
+status: done
 priority: high
 commits:
 - hash: 7d6d60e
   summary: publish-first CLI reshape — config-driven publish default, loopback group, skill rewrite
+- hash: 6ac5307
+  summary: apply /llm-review findings — config safety (empty-shadow, config-relative secrets, HOME ceiling, cross-trust warning), strict flag/template validation
+closed: 2026-08-12
 ---
 
 # Publish-first CLI: collapse the surface, config-driven target (loopback|hosted)
