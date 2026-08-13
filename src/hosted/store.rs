@@ -90,6 +90,13 @@ pub struct SpaceMeta {
     pub tenant: String,
     pub title: Option<String>,
     pub nav: Vec<String>,
+    /// Optional grouped, one-level-nestable nav (`glasspad.yaml`'s `groups:`),
+    /// persisted so a reload reconstructs the grouped sidebar + landing. `#[serde(
+    /// default)]` keeps the schema backward-compatible: a `meta.json` written before
+    /// this field existed deserializes with an empty vec (the flat-nav fallback).
+    /// Re-validated on reload through [`space::build_space_bundle`].
+    #[serde(default)]
+    pub nav_groups: Vec<space::NavGroup>,
     pub home: Option<String>,
     /// Optional emoji favicon for the space's outer shell document. `#[serde(default)]`
     /// keeps the schema backward-compatible: a `meta.json` written before this field
@@ -1129,6 +1136,7 @@ impl Store {
             tenant: tenant.to_string(),
             title: space.title.clone(),
             nav: space.nav.clone(),
+            nav_groups: space.nav_groups.clone(),
             home: space.home.clone(),
             favicon: space.favicon.clone(),
             created_at,
@@ -1287,7 +1295,13 @@ impl Store {
         // is producer/repo metadata (not derived from the artifact files), so it is
         // reattached from the meta after the builder — re-validated defensively so a
         // hand-tampered `meta.json` can never smuggle a non-emoji favicon into a shell.
-        match build_space_bundle(pages, assets, meta.nav.clone(), meta.title.clone()) {
+        match build_space_bundle(
+            pages,
+            assets,
+            meta.nav.clone(),
+            meta.nav_groups.clone(),
+            meta.title.clone(),
+        ) {
             Ok(mut sp) => {
                 // The favicon is decorative, so a corrupt/tampered value must not skip
                 // the whole space — but it is logged (not silently dropped) and the page
@@ -2418,6 +2432,7 @@ mod tests {
                 bytes: b"<svg></svg>".to_vec(),
             }],
             vec!["index".into(), "guide".into()],
+            vec![],
             Some("Docs".into()),
         )
         .unwrap()

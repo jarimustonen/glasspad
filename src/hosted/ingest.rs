@@ -310,6 +310,14 @@ pub struct SpacePublishRequest {
     assets: Vec<SpaceAssetInput>,
     #[serde(default)]
     nav: Vec<String>,
+    /// Optional grouped, one-level-nestable nav (`glasspad.yaml`'s `groups:`),
+    /// carried so a published docsite renders its grouped sidebar + landing on the
+    /// hosted server. `#[serde(default)]` so an older producer that omits it still
+    /// parses. Reconciled + sanitized server-side by [`build_space_bundle`] (labels
+    /// are producer text; bad/dangling slugs are dropped), exactly as the loopback
+    /// scanner does — the untrusted API boundary never trusts the client shape.
+    #[serde(default)]
+    groups: Vec<space::NavGroup>,
     title: Option<String>,
     /// Optional emoji favicon for the space's OUTER shell document. `#[serde(default)]`
     /// so an older producer that omits it still parses. Validated server-side (the
@@ -419,7 +427,7 @@ pub async fn publish_space(
     };
 
     // Build + validate the space with the SAME rules the filesystem scanner applies.
-    let mut space = match build_space_bundle(pages, assets, req.nav, req.title) {
+    let mut space = match build_space_bundle(pages, assets, req.nav, req.groups, req.title) {
         Ok(sp) => sp,
         Err(e) => return err(StatusCode::BAD_REQUEST, "invalid_space", &e.to_string()),
     };

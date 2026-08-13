@@ -35,18 +35,61 @@
 
 use serde_json::json;
 
-/// Render the shell document for `space`/`slug`. `nav` is the ordered artifact
-/// table `(slug, title)` the chrome lists and the bridge resolves navigation
-/// against — its slugs are the low-authority allowlist, its titles are inserted
-/// as **text** (client `textContent`, server-side escaped). `title` is the current
-/// artifact's resolved display title (empty → fall back to `space / slug`).
-/// `nonce` matches the CSP.
+/// One member of the grouped-nav sidebar: an artifact slug + its display title +
+/// up to one level of nested companion children. The `slug` is validated against
+/// `nav`'s allowlist upstream; the `title` is artifact/producer-derived and is
+/// inserted client-side via `textContent` (never an HTML sink), exactly like the
+/// flat nav.
+pub struct NavItemView<'a> {
+    pub slug: &'a str,
+    pub title: &'a str,
+    pub children: Vec<NavItemView<'a>>,
+}
+
+/// A named, ordered group of the grouped-nav sidebar (e.g. "ADR:t"). `label` is
+/// producer text, inserted as `textContent`.
+pub struct NavGroupView<'a> {
+    pub label: &'a str,
+    pub members: Vec<NavItemView<'a>>,
+}
+
+/// Render the shell document for `space`/`slug` with the **flat** nav bar only
+/// (today's byte-compatible chrome). Thin shim over [`render_with_groups`] with no
+/// groups — the grouped sidebar is inactive and the horizontal `nav` bar renders
+/// exactly as before. Test-only: the production caller ([`super::render_shell`])
+/// always calls [`render_with_groups`] (passing the space's reconciled groups, which
+/// may be empty), so this shim exists purely to keep the many flat-nav unit tests
+/// concise and to document/exercise the byte-compatible fallback.
+#[cfg(test)]
 pub fn render(
     mount: &str,
     space: &str,
     slug: &str,
     title: &str,
     nav: &[(&str, &str)],
+    nonce: &str,
+    favicon: Option<&str>,
+) -> String {
+    render_with_groups(mount, space, slug, title, nav, &[], nonce, favicon)
+}
+
+/// Render the shell document for `space`/`slug`. `nav` is the ordered artifact
+/// table `(slug, title)` — the complete low-authority allowlist the bridge resolves
+/// navigation against (its titles are inserted as **text**). `groups`, when
+/// non-empty, drives a **grouped vertical sidebar** (named groups with ordered
+/// members and one level of nested companions) instead of the flat horizontal bar;
+/// every group member's slug is still in `nav` (the allowlist), and its label/title
+/// are inserted client-side via `textContent` only. Empty `groups` → the flat bar
+/// (byte-compatible fallback). `title` is the current artifact's resolved display
+/// title (empty → `space / slug`); `nonce` matches the CSP.
+#[allow(clippy::too_many_arguments)]
+pub fn render_with_groups(
+    mount: &str,
+    space: &str,
+    slug: &str,
+    title: &str,
+    nav: &[(&str, &str)],
+    groups: &[NavGroupView<'_>],
     nonce: &str,
     favicon: Option<&str>,
 ) -> String {
@@ -69,11 +112,34 @@ pub fn render(
     );
     let known: Vec<&str> = nav.iter().map(|(s, _)| *s).collect();
 
+    // Grouped nav as nested {label, members:[{slug, title, children:[…]}]} objects.
+    // Labels + titles are producer/artifact-derived; the json_for_script encoding
+    // below neutralizes any markup (so a hostile label can't close the <script>),
+    // and the client inserts each one via textContent (never innerHTML). Empty →
+    // the flat nav bar renders instead (byte-compatible fallback).
+    fn item_json(item: &NavItemView<'_>) -> serde_json::Value {
+        json!({
+            "slug": item.slug,
+            "title": item.title,
+            "children": item.children.iter().map(item_json).collect::<Vec<_>>(),
+        })
+    }
+    let groups_json_value = json!(
+        groups
+            .iter()
+            .map(|g| json!({
+                "label": g.label,
+                "members": g.members.iter().map(item_json).collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>()
+    );
+
     let space_json = json_for_script(&json!(space));
     let slug_json = json_for_script(&json!(slug));
     let slugs_json = json_for_script(&json!(known));
     let title_json = json_for_script(&json!(display_title));
     let nav_json = json_for_script(&nav_json_value);
+    let groups_json = json_for_script(&groups_json_value);
     // The URL mount prefix (`""` loopback, `/p` hosted) prepended to every
     // `/{space}/…` content + nav link — NOT to `/_gp/*` (base libs + reload stay
     // at root in both run modes). It is a fixed server constant, never client
@@ -128,6 +194,25 @@ pub fn render(
   nav.gp-nav a:hover {{ background:rgba(127,127,127,0.14); }}
   nav.gp-nav a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
   nav.gp-nav:empty {{ display:none; }}
+  /* Body area below the header: a row so the grouped sidebar can sit beside the
+     iframe. With no sidebar (flat nav) the empty aside is hidden and the iframe
+     fills the row exactly as before. */
+  .gp-body {{ flex:1 1 auto; display:flex; min-height:0; }}
+  aside.gp-sidebar {{ flex:0 0 auto; width:240px; max-width:42vw; overflow-y:auto;
+                      font:14px system-ui,sans-serif; border-right:1px solid #ccc;
+                      padding:10px 6px; box-sizing:border-box; }}
+  aside.gp-sidebar:empty {{ display:none; }}
+  aside.gp-sidebar .sb-group {{ margin-bottom:16px; }}
+  aside.gp-sidebar .sb-group-h {{ font-weight:600; opacity:0.72; padding:2px 8px;
+                      text-transform:uppercase; letter-spacing:0.03em; font-size:11px; }}
+  aside.gp-sidebar ul {{ list-style:none; margin:2px 0; padding:0; }}
+  aside.gp-sidebar li {{ margin:0; }}
+  aside.gp-sidebar a {{ display:block; font:inherit; color:inherit; text-decoration:none;
+                      padding:3px 8px; border-radius:6px; cursor:pointer;
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+  aside.gp-sidebar a:hover {{ background:rgba(127,127,127,0.14); }}
+  aside.gp-sidebar a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
+  aside.gp-sidebar ul ul {{ margin-left:12px; border-left:1px solid rgba(127,127,127,0.25); }}
   iframe#gp-artifact {{ display:block; border:0; flex:1 1 auto; width:100%; min-height:0; }}
 </style>
 </head><body>
@@ -135,9 +220,12 @@ pub fn render(
   <div class="gp-bar"><span id="gp-title"></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
   <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
 </header>
+<div class="gp-body">
+<aside class="gp-sidebar" id="gp-sidebar" aria-label="Documents in this space"></aside>
 <iframe id="gp-artifact" title="{esc_title}"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
         data-src="{esc_src}"></iframe>
+</div>
 <script nonce="{nonce}">
 (function () {{
   "use strict";
@@ -147,6 +235,7 @@ pub fn render(
   var KNOWN = {slugs_json};
   var TITLE = {title_json};
   var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
+  var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat nav bar
   var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
   var MAX_SLUG = 64;       // matches the server-side slug grammar
   var MAX_SUBMIT_BYTES = 80 * 1024;  // reject an oversize submission before POSTing
@@ -173,20 +262,74 @@ pub fn render(
   // primary click is intercepted and swaps the iframe in place. Built into a
   // DocumentFragment and attached once (a single layout pass, not one per entry).
   var navEl = document.getElementById("gp-nav");
+  var sidebarEl = document.getElementById("gp-sidebar");
   var linkBySlug = Object.create(null);
-  var navFrag = document.createDocumentFragment();
-  for (var k = 0; k < NAV.length; k++) {{
-    var item = NAV[k];
-    if (!item || typeof item.slug !== "string") continue;
+
+  // One anchor for a slug, built with createElement + textContent so an artifact-
+  // derived title can NEVER become live markup (no innerHTML sink; the shell CSP's
+  // Trusted Types would throw on one anyway). The href is the real shell URL — a
+  // meaningful open-in-new-tab / modified-click target; a primary click is
+  // intercepted (below) and swaps the iframe in place. Registered in `linkBySlug`
+  // so paintActive() can mark the active entry across both nav surfaces.
+  function makeNavLink(slug, title) {{
     var a = document.createElement("a");
-    a.setAttribute("href", MOUNT + "/" + SPACE + "/" + item.slug);
-    a.setAttribute("data-slug", item.slug);
+    a.setAttribute("href", MOUNT + "/" + SPACE + "/" + slug);
+    a.setAttribute("data-slug", slug);
     a.setAttribute("rel", "noopener");
-    a.textContent = (typeof item.title === "string" && item.title !== "") ? item.title : item.slug;
-    navFrag.appendChild(a);
-    linkBySlug[item.slug] = a;   // last wins if the server ever sent a dup slug
+    a.textContent = (typeof title === "string" && title !== "") ? title : slug;
+    linkBySlug[slug] = a;   // last wins if the server ever sent a dup slug
+    return a;
   }}
-  navEl.appendChild(navFrag);
+
+  // --- Grouped sidebar takes precedence when the space declares groups; otherwise
+  // the flat horizontal nav bar renders (byte-compatible fallback). Exactly one of
+  // the two surfaces is populated; the other stays :empty and is hidden by CSS.
+  if (GROUPS.length) {{
+    document.body.classList.add("gp-grouped");
+    var sbFrag = document.createDocumentFragment();
+    for (var gi = 0; gi < GROUPS.length; gi++) {{
+      var group = GROUPS[gi];
+      if (!group || !group.members || !group.members.length) continue;
+      var section = document.createElement("div");
+      section.className = "sb-group";
+      if (typeof group.label === "string" && group.label !== "") {{
+        var h = document.createElement("div");
+        h.className = "sb-group-h";
+        h.textContent = group.label;   // textContent — never innerHTML
+        section.appendChild(h);
+      }}
+      var ul = document.createElement("ul");
+      for (var mi = 0; mi < group.members.length; mi++) {{
+        var m = group.members[mi];
+        if (!m || typeof m.slug !== "string") continue;
+        var li = document.createElement("li");
+        li.appendChild(makeNavLink(m.slug, m.title));
+        if (m.children && m.children.length) {{
+          var subUl = document.createElement("ul");
+          for (var ci = 0; ci < m.children.length; ci++) {{
+            var c = m.children[ci];
+            if (!c || typeof c.slug !== "string") continue;
+            var subLi = document.createElement("li");
+            subLi.appendChild(makeNavLink(c.slug, c.title));
+            subUl.appendChild(subLi);
+          }}
+          if (subUl.childNodes.length) li.appendChild(subUl);
+        }}
+        ul.appendChild(li);
+      }}
+      section.appendChild(ul);
+      sbFrag.appendChild(section);
+    }}
+    sidebarEl.appendChild(sbFrag);
+  }} else {{
+    var navFrag = document.createDocumentFragment();
+    for (var k = 0; k < NAV.length; k++) {{
+      var item = NAV[k];
+      if (!item || typeof item.slug !== "string") continue;
+      navFrag.appendChild(makeNavLink(item.slug, item.title));
+    }}
+    navEl.appendChild(navFrag);
+  }}
   function paintActive() {{
     for (var s in linkBySlug) {{
       if (s === current) linkBySlug[s].setAttribute("aria-current", "page");
@@ -254,15 +397,18 @@ pub fn render(
   // Nav-chrome clicks: a primary, unmodified click on a known entry swaps the
   // iframe in place. Modified / non-primary clicks keep native behavior (the href
   // opens the shell for that artifact in a new tab), and any unknown slug is left
-  // to the browser too.
-  navEl.addEventListener("click", function (event) {{
+  // to the browser too. Attached to BOTH the flat nav bar and the grouped sidebar,
+  // so every swap goes through the same validated navigateTo path.
+  function onNavClick(event) {{
     if (event.defaultPrevented) return;
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     var a = event.target && event.target.closest ? event.target.closest("a[data-slug]") : null;
     if (!a) return;
     var slug = a.getAttribute("data-slug");
     if (navigateTo(slug)) event.preventDefault();
-  }}, false);
+  }}
+  navEl.addEventListener("click", onNavClick, false);
+  sidebarEl.addEventListener("click", onNavClick, false);
 
   // Re-apply the theme once the (possibly just-swapped) artifact has loaded — a
   // belt-and-braces follow-up to the inlined `?gp_theme` below.
@@ -825,6 +971,100 @@ mod tests {
         );
         // A stale-submit 409 re-fetches the current round (conversational recovery).
         assert!(html.contains("if (r && r.status === 409) swapCurrentArtifact"));
+    }
+
+    // --- grouped nav sidebar (space-docsite-nav) ----------------------------
+
+    fn item<'a>(slug: &'a str, title: &'a str, children: Vec<NavItemView<'a>>) -> NavItemView<'a> {
+        NavItemView {
+            slug,
+            title,
+            children,
+        }
+    }
+
+    #[test]
+    fn shell_renders_grouped_sidebar_with_nested_children() {
+        let groups = vec![
+            NavGroupView {
+                label: "Perusarkkitehtuuri",
+                members: vec![item("intent", "Intent", vec![])],
+            },
+            NavGroupView {
+                label: "Suunnitteludokumentit",
+                members: vec![item(
+                    "backtest",
+                    "Backtest",
+                    vec![
+                        item("backtest-arkkitehdille", "Arkkitehdille", vec![]),
+                        item("backtest-kirjanpitajalle", "Kirjanpitäjälle", vec![]),
+                    ],
+                )],
+            },
+        ];
+        let nav = nav_of(&[
+            "index",
+            "intent",
+            "backtest",
+            "backtest-arkkitehdille",
+            "backtest-kirjanpitajalle",
+        ]);
+        let html = render_with_groups("", "docs", "index", "Home", &nav, &groups, "n", None);
+        // The grouped sidebar container exists and is built client-side (no server-
+        // rendered artifact/label markup — createElement/textContent only).
+        assert!(html.contains(r#"<aside class="gp-sidebar" id="gp-sidebar""#));
+        assert!(html.contains("document.body.classList.add(\"gp-grouped\")"));
+        // GROUPS is emitted as a JSON data literal carrying labels + nested children.
+        let groups_line = html.lines().find(|l| l.contains("var GROUPS =")).unwrap();
+        assert!(groups_line.contains("Perusarkkitehtuuri"));
+        assert!(groups_line.contains("backtest-arkkitehdille"));
+        assert!(groups_line.contains("\"children\""));
+        // The shared validated navigate path is reused for BOTH surfaces.
+        assert!(html.contains("sidebarEl.addEventListener(\"click\", onNavClick"));
+        assert!(html.contains("navEl.addEventListener(\"click\", onNavClick"));
+        // The full slug allowlist (NAV) still gates navigation.
+        assert!(html.contains("!KNOWN_SET.has(slug)"));
+    }
+
+    #[test]
+    fn shell_grouped_label_and_title_encoded_not_markup() {
+        // A hostile group label / member title must be JSON-for-script encoded (so it
+        // can't close the <script>) and never appear as raw markup — the client
+        // inserts each via textContent.
+        let hostile = r#"</script><img src=x onerror=alert(1)>"#;
+        let groups = vec![NavGroupView {
+            label: hostile,
+            members: vec![item("evil", hostile, vec![])],
+        }];
+        let nav = nav_of(&["index", "evil"]);
+        let html = render_with_groups("", "docs", "index", "Home", &nav, &groups, "n", None);
+        assert!(!html.contains("<img src=x onerror"));
+        assert!(!html.to_ascii_lowercase().contains("</script><img"));
+        let groups_line = html.lines().find(|l| l.contains("var GROUPS =")).unwrap();
+        assert!(!groups_line.contains('<'));
+        assert!(!groups_line.contains('>'));
+        assert!(groups_line.contains("\\u003c/script"));
+    }
+
+    #[test]
+    fn shell_flat_fallback_when_no_groups_is_byte_identical() {
+        // Empty groups → the thin `render` shim and `render_with_groups(&[])` produce
+        // the identical document, and the flat nav bar (not the sidebar) is populated.
+        let nav = nav_of(&["index", "sales"]);
+        let shim = render("", "demo", "index", "Home", &nav, "n", None);
+        let full = render_with_groups("", "demo", "index", "Home", &nav, &[], "n", None);
+        assert_eq!(shim, full);
+        // GROUPS is empty, so the client takes the flat-nav branch (the
+        // classList.add("gp-grouped") call is present in the script but never runs).
+        assert!(
+            shim.contains("var GROUPS = [];")
+                || shim.contains("var GROUPS = []")
+                || shim.contains("var GROUPS = [ ]")
+        );
+        // The flat nav bar is populated (createElement path present) and the sidebar
+        // aside stays empty (hidden by `aside.gp-sidebar:empty`).
+        assert!(shim.contains(r#"<nav class="gp-nav" id="gp-nav""#));
+        assert!(shim.contains(r#"<aside class="gp-sidebar" id="gp-sidebar""#));
     }
 
     #[test]

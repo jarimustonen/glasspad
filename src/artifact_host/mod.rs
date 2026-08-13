@@ -358,6 +358,23 @@ fn space_nav(snap: &Snapshot, space: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Build one grouped-nav view item (and its nested children) borrowing from the
+/// live space. Display title precedence: manifest override → artifact resolved title
+/// → slug. Recurses one level (children carry no further children after scan-time
+/// reconciliation, so this bottoms out).
+fn nav_item_view<'a>(sp: &'a space::Space, m: &'a space::NavMember) -> shell::NavItemView<'a> {
+    let title = m
+        .title
+        .as_deref()
+        .or_else(|| sp.artifact(&m.slug).map(|a| a.title.as_str()))
+        .unwrap_or(&m.slug);
+    shell::NavItemView {
+        slug: &m.slug,
+        title,
+        children: m.children.iter().map(|c| nav_item_view(sp, c)).collect(),
+    }
+}
+
 /// Public artifact-body resolution (live snapshot first, else the demo fixtures) —
 /// the **same seam** the content route uses. The return channel binds a submission's
 /// content-version to this exact body, so a submit resolves an artifact wherever the
@@ -499,6 +516,22 @@ fn render_shell(
     let nonce = token::generate_token();
     let nav = space_nav(snap, space);
     let nav_refs: Vec<(&str, &str)> = nav.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect();
+    // Grouped sidebar (when the space's manifest declared `groups:`). Views borrow
+    // straight from the live snapshot; a member's display title is its manifest
+    // override, else the artifact's resolved title, else the slug. Fixtures spaces
+    // (not in the snapshot) have no groups → empty → the flat nav bar renders.
+    let groups: Vec<shell::NavGroupView> = snap
+        .space(space)
+        .map(|sp| {
+            sp.nav_groups
+                .iter()
+                .map(|g| shell::NavGroupView {
+                    label: &g.label,
+                    members: g.members.iter().map(|m| nav_item_view(sp, m)).collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     // Per-space wins over the host default over the built-in default. An empty
     // per-space value is treated as unset (it would render a blank glyph) — all
     // ingress paths already reject empty, so this is defense-in-depth.
@@ -507,12 +540,13 @@ fn render_shell(
         .and_then(|s| s.favicon.as_deref())
         .filter(|f| !f.is_empty())
         .or(host_favicon);
-    let body = shell::render(
+    let body = shell::render_with_groups(
         mount,
         space,
         slug,
         title.unwrap_or(""),
         &nav_refs,
+        &groups,
         &nonce,
         favicon,
     );

@@ -26,6 +26,8 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use super::render::{self, BUILTIN_NAMES};
 use super::{RESERVED, valid_name};
 
@@ -45,6 +47,16 @@ pub const MAX_ENTRIES: usize = 10_000;
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024; // 64 KiB
 /// Upper bound on the resolved title length (in chars) inserted into the chrome.
 pub const MAX_TITLE_CHARS: usize = 200;
+/// Upper bound on a nav member's short description (in chars) shown on the
+/// generated landing page — from the manifest, or extracted from a doc's first
+/// paragraph. Longer than a title (it is a one-line kicker, not a label) but still
+/// bounded so a runaway paragraph can't dominate the landing.
+pub const MAX_DESC_CHARS: usize = 300;
+/// Maximum nav groups a manifest may declare, and the maximum members (incl.
+/// nested children) per group. Bounds the grouped-nav structure the shell renders
+/// and the landing lists — a manifest is structure-only and small.
+pub const MAX_NAV_GROUPS: usize = 64;
+pub const MAX_GROUP_MEMBERS: usize = 512;
 /// The reserved subdirectory that holds a space's static assets. It is also a
 /// reserved *slug* name (see `RESERVED`), so no artifact can collide with it.
 pub const ASSETS_DIR: &str = "assets";
@@ -67,6 +79,40 @@ pub struct Asset {
     pub bytes: Vec<u8>,
 }
 
+/// One member of a nav group — an artifact slug, with an optional manifest display
+/// title override, an optional short description (for the generated landing page),
+/// and up to one level of nested companion `children` (e.g. `x-arkkitehdille`
+/// nested under `x`). This is **structure only**: `slug` addresses a real artifact,
+/// `title`/`desc` are producer metadata (never authored content), and `children`
+/// is one level deep — a child's own `children` is dropped at reconciliation.
+///
+/// **Companion nesting is a manifest-level mapping (the documented choice).**
+/// glasspad does NOT accept/normalize the dotted `x.arkkitehdille.md` stems (those
+/// stay slug-invalid, and the file-naming *convention* is the producer's
+/// preprocessor — explicitly out of scope). Instead the producer ships slug-safe
+/// pages (`x`, `x-arkkitehdille`) and declares the parent/child relationship here.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NavMember {
+    pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desc: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<NavMember>,
+}
+
+/// A named, ordered nav group (e.g. "ADR:t", "Suunnitteludokumentit") declared in
+/// the manifest. Rendered as a labelled section in the grouped sidebar and on the
+/// generated landing page. Structure only — `label` is producer metadata, `members`
+/// address real artifact slugs (reconciled against the scanned set in [`finalize`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NavGroup {
+    pub label: String,
+    #[serde(default)]
+    pub members: Vec<NavMember>,
+}
+
 /// One fully-scanned space. Immutable once built; shared behind an `Arc`.
 #[derive(Clone, Debug, Default)]
 pub struct Space {
@@ -75,7 +121,15 @@ pub struct Space {
     /// space-relative path → asset (e.g. `assets/data.json`).
     pub assets: BTreeMap<String, Asset>,
     /// Ordered slugs for navigation (manifest `nav:` order, else lexicographic).
+    /// Always the complete slug set — the shell's low-authority allowlist — even
+    /// when [`nav_groups`](Self::nav_groups) curates a grouped subset for display.
     pub nav: Vec<String>,
+    /// Optional grouped, one-level-nestable nav declared via the manifest `groups:`
+    /// key, reconciled against the real artifact set. **Empty → today's flat nav**
+    /// (byte-compatible fallback): the shell renders the horizontal `nav` bar and no
+    /// grouped sidebar. Non-empty → the shell renders a grouped sidebar and the
+    /// generated landing lists these groups.
+    pub nav_groups: Vec<NavGroup>,
     /// Resolved home slug (`index` > `home` > first in nav order).
     pub home: Option<String>,
     /// Optional space title from the manifest (structure, never content).
@@ -340,6 +394,7 @@ pub fn build_space_bundle(
     pages: Vec<BundlePage>,
     assets: Vec<BundleAsset>,
     nav: Vec<String>,
+    nav_groups: Vec<NavGroup>,
     title: Option<String>,
 ) -> Result<Space, BundleError> {
     if pages.is_empty() {
@@ -409,10 +464,12 @@ pub fn build_space_bundle(
             space.title = Some(bound_chars(t, MAX_TITLE_CHARS));
         }
     }
-    // Record the requested nav order; `finalize` reconciles it against reality
-    // (keeps only existing slugs, dedups, appends the rest lexicographically) and
+    // Record the requested nav order + grouped nav; `finalize` reconciles both
+    // against reality (keeps only existing slugs, dedups, appends the rest
+    // lexicographically), generates the landing when there is no home page, and
     // resolves the home slug (`index` > `home` > first in nav order).
     space.nav = nav;
+    space.nav_groups = nav_groups;
     finalize(&mut space);
     Ok(space)
 }
@@ -775,8 +832,15 @@ fn read_file_capped(path: &Path, total: &mut u64) -> Result<Vec<u8>, ScanError> 
     Ok(buf)
 }
 
-/// After all files are read, compute nav order (manifest, else lexicographic)
-/// and the home slug (`index` > `home` > first in nav order).
+/// After all files are read, compute nav order (manifest, else lexicographic),
+/// reconcile any grouped nav against the real artifact set, generate the landing
+/// index when the space has no home page, and resolve the home slug (`index` >
+/// `home` > first in nav order).
+///
+/// Order matters: the flat `nav` (the shell's complete allowlist) and the grouped
+/// nav are both finalized against the artifact set *before* the landing is
+/// generated, so the landing lists a reconciled structure; the generated `index`
+/// is then inserted and becomes the home.
 fn finalize(space: &mut Space) {
     // Manifest nav may have listed slugs; keep only ones that exist, **deduped**
     // (a manifest `nav: [a, a]` must not double the entry), then append any
@@ -796,6 +860,41 @@ fn finalize(space: &mut Space) {
     }
     space.nav = nav;
 
+    // Reconcile grouped nav against reality (keep only existing slugs, one level of
+    // nesting, dedupe, drop empty groups). Empty afterwards → the flat-nav fallback.
+    reconcile_nav_groups(space);
+
+    // Generate a landing page when the space declares no home page (`index`/`home`).
+    // It replaces the old first-artifact redirect stub with a real grouped/flat
+    // index — structure only (a table of contents), never authored content.
+    //
+    // Gated so it only fires where it adds value: a home page must be absent AND the
+    // space must either declare grouped nav or hold **at least two** pages. A single
+    // ungrouped page keeps the old behavior (home = that page; a static `build`
+    // redirects index.html → it) — a one-link landing would be worse UX than just
+    // showing the page.
+    let has_home_page =
+        space.artifacts.contains_key("index") || space.artifacts.contains_key("home");
+    let worth_a_landing = !space.nav_groups.is_empty() || space.nav.len() >= 2;
+    if !has_home_page && worth_a_landing {
+        let title = space
+            .title
+            .clone()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "Index".to_string());
+        let html = generate_landing_body(space, &title);
+        // `index` is guaranteed free here (no `index`/`home` artifact exists).
+        space.artifacts.insert(
+            "index".to_string(),
+            Artifact {
+                html,
+                title: title.clone(),
+            },
+        );
+        // Surface the generated landing first in the flat allowlist.
+        space.nav.insert(0, "index".to_string());
+    }
+
     space.home = if space.artifacts.contains_key("index") {
         Some("index".to_string())
     } else if space.artifacts.contains_key("home") {
@@ -803,6 +902,169 @@ fn finalize(space: &mut Space) {
     } else {
         space.nav.first().cloned()
     };
+}
+
+/// Reconcile `space.nav_groups` against the scanned artifact set: drop members (and
+/// nested children) whose slug is not a real artifact, dedupe slugs across the whole
+/// grouped structure (first mention wins, so a slug never appears twice in the
+/// sidebar), enforce one level of nesting (defensively re-clear grandchildren),
+/// drop groups left with no members, and bound the group/member counts. An empty
+/// result restores the flat-nav fallback. The flat `space.nav` is untouched — it
+/// stays the complete allowlist even when groups curate a display subset.
+fn reconcile_nav_groups(space: &mut Space) {
+    if space.nav_groups.is_empty() {
+        return;
+    }
+    let groups = std::mem::take(&mut space.nav_groups);
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<NavGroup> = Vec::new();
+    for group in groups {
+        if out.len() >= MAX_NAV_GROUPS {
+            break;
+        }
+        let mut members: Vec<NavMember> = Vec::new();
+        for member in group.members {
+            if members.len() >= MAX_GROUP_MEMBERS {
+                break;
+            }
+            if !space.artifacts.contains_key(&member.slug) || !seen.insert(member.slug.clone()) {
+                continue;
+            }
+            let children: Vec<NavMember> = member
+                .children
+                .into_iter()
+                .filter(|c| space.artifacts.contains_key(&c.slug) && seen.insert(c.slug.clone()))
+                .map(|c| NavMember {
+                    slug: c.slug,
+                    title: sanitize_label(c.title.as_deref(), MAX_TITLE_CHARS),
+                    desc: sanitize_label(c.desc.as_deref(), MAX_DESC_CHARS),
+                    children: Vec::new(), // one level only — grandchildren discarded
+                })
+                .collect();
+            members.push(NavMember {
+                slug: member.slug,
+                title: sanitize_label(member.title.as_deref(), MAX_TITLE_CHARS),
+                desc: sanitize_label(member.desc.as_deref(), MAX_DESC_CHARS),
+                children,
+            });
+        }
+        if !members.is_empty() {
+            out.push(NavGroup {
+                label: sanitize_label(Some(&group.label), MAX_TITLE_CHARS).unwrap_or_default(),
+                members,
+            });
+        }
+    }
+    space.nav_groups = out;
+}
+
+/// Build the generated landing page body — a `gp-prose` fragment listing the space's
+/// docs grouped as the manifest declares (each with an optional short description),
+/// or a flat list of all pages when no groups are declared. Structure only: every
+/// link targets a real slug (`<slug>.html`, which the bridge intercepts in-frame and
+/// a static build resolves natively), and every producer/artifact-derived string is
+/// HTML-escaped. The `<h1>` is the space title so [`resolve_title`] recovers it.
+fn generate_landing_body(space: &Space, heading: &str) -> String {
+    let mut out = String::from("<article class=\"gp-prose\">\n");
+    out.push_str(&format!("<h1>{}</h1>\n", html_escape(heading)));
+    if space.nav_groups.is_empty() {
+        // Flat fallback: list every page in nav order (the generated `index` is not
+        // inserted yet, so it never lists itself).
+        out.push_str("<ul class=\"gp-index-list\">\n");
+        for slug in &space.nav {
+            out.push_str("<li>");
+            append_item_inner(&mut out, space, slug, None, None);
+            out.push_str("</li>\n");
+        }
+        out.push_str("</ul>\n");
+    } else {
+        for group in &space.nav_groups {
+            out.push_str("<section class=\"gp-index-group\">\n");
+            out.push_str(&format!("<h2>{}</h2>\n", html_escape(&group.label)));
+            out.push_str("<ul class=\"gp-index-list\">\n");
+            for member in &group.members {
+                append_landing_member(&mut out, space, member);
+            }
+            out.push_str("</ul>\n");
+            out.push_str("</section>\n");
+        }
+    }
+    out.push_str("</article>\n");
+    out
+}
+
+/// Append one grouped landing member as a `<li>` containing its link + description
+/// and, when it has companion children, a nested `<ul>` of child `<li>`s (one level).
+fn append_landing_member(out: &mut String, space: &Space, member: &NavMember) {
+    out.push_str("<li>");
+    append_item_inner(
+        out,
+        space,
+        &member.slug,
+        member.title.as_deref(),
+        member.desc.as_deref(),
+    );
+    if !member.children.is_empty() {
+        out.push_str("<ul class=\"gp-index-children\">\n");
+        for child in &member.children {
+            out.push_str("<li>");
+            append_item_inner(
+                out,
+                space,
+                &child.slug,
+                child.title.as_deref(),
+                child.desc.as_deref(),
+            );
+            out.push_str("</li>\n");
+        }
+        out.push_str("</ul>\n");
+    }
+    out.push_str("</li>\n");
+}
+
+/// Append the inner content of a landing item (the `<a>` link plus an optional
+/// description) — no surrounding `<li>`, so the caller controls nesting. Title
+/// precedence: manifest override → artifact title → slug. Description precedence:
+/// manifest `desc` → the doc's first paragraph → none. All inserted as escaped text;
+/// the href is `<slug>.html` (the slug grammar excludes every URL/HTML
+/// metacharacter, and it is escaped regardless).
+fn append_item_inner(
+    out: &mut String,
+    space: &Space,
+    slug: &str,
+    title_override: Option<&str>,
+    desc_override: Option<&str>,
+) {
+    let title = title_override
+        .map(|s| s.to_string())
+        .or_else(|| space.artifact(slug).map(|a| a.title.clone()))
+        .unwrap_or_else(|| slug.to_string());
+    let desc = desc_override.map(|s| s.to_string()).or_else(|| {
+        space
+            .artifact(slug)
+            .and_then(|a| extract_description(&a.html))
+    });
+    out.push_str(&format!(
+        "<a href=\"{}.html\">{}</a>",
+        html_escape(slug),
+        html_escape(&title)
+    ));
+    if let Some(d) = desc.filter(|d| !d.is_empty()) {
+        out.push_str(&format!(
+            " — <span class=\"gp-index-desc\">{}</span>",
+            html_escape(&d)
+        ));
+    }
+}
+
+/// Escape text for insertion into the generated landing HTML (a server-generated
+/// document). Covers the text and double-quoted-attribute contexts used there.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// Parse the optional `glasspad.yaml` — **structure only** (title, nav order, and —
@@ -816,6 +1078,29 @@ fn apply_manifest(
     space: &mut Space,
     template_ref: &mut Option<String>,
 ) -> Result<(), ScanError> {
+    // A group member is either a bare slug string (`- intent`) or a map with an
+    // optional display `title`, a landing `desc`, and one level of companion
+    // `children`. `#[serde(untagged)]` accepts both spellings in the same list.
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum ManifestMember {
+        Slug(String),
+        Full {
+            slug: String,
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            desc: Option<String>,
+            #[serde(default)]
+            children: Vec<ManifestMember>,
+        },
+    }
+    #[derive(serde::Deserialize)]
+    struct ManifestGroup {
+        label: String,
+        #[serde(default)]
+        members: Vec<ManifestMember>,
+    }
     #[derive(serde::Deserialize, Default)]
     struct Manifest {
         #[serde(default)]
@@ -824,6 +1109,8 @@ fn apply_manifest(
         nav: Vec<String>,
         #[serde(default)]
         template: Option<String>,
+        #[serde(default)]
+        groups: Vec<ManifestGroup>,
     }
     let m: Manifest = serde_yaml::from_str(text)
         .map_err(|e| ScanError::Manifest(path.to_path_buf(), e.to_string()))?;
@@ -842,7 +1129,69 @@ fn apply_manifest(
     }
     // Record the requested nav order; `finalize` reconciles it against reality.
     space.nav = m.nav;
+    // Convert manifest groups into the canonical structure-only shape. Labels /
+    // titles / descriptions are carried through RAW here; they are sanitized once,
+    // centrally, in [`reconcile_nav_groups`] (which `finalize` runs) so the hosted
+    // wire path gets the identical treatment. `children` is flattened to ONE level
+    // here (a grandchild's own `children` is discarded — the nav is one-level-
+    // nestable by contract, the space-docsite-nav issue).
+    fn convert_member(m: ManifestMember, depth: u8) -> NavMember {
+        match m {
+            ManifestMember::Slug(slug) => NavMember {
+                slug,
+                ..Default::default()
+            },
+            ManifestMember::Full {
+                slug,
+                title,
+                desc,
+                children,
+            } => NavMember {
+                slug,
+                title,
+                desc,
+                // One level only: a child never carries its own children.
+                children: if depth == 0 {
+                    children
+                        .into_iter()
+                        .map(|c| convert_member(c, depth + 1))
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            },
+        }
+    }
+    space.nav_groups = m
+        .groups
+        .into_iter()
+        .map(|g| NavGroup {
+            label: g.label,
+            members: g
+                .members
+                .into_iter()
+                .map(|mem| convert_member(mem, 0))
+                .collect(),
+        })
+        .collect();
     Ok(())
+}
+
+/// Sanitize a producer-supplied display label (a group label, member title, or
+/// member description): entity-decode, strip invisible/bidi spoof chars, collapse
+/// whitespace, trim, and length-bound. Returns `None` for an absent or
+/// (post-sanitize) empty value. Identical treatment to a resolved artifact title,
+/// so a manifest/wire label can never smuggle a spoof/zero-width run into the chrome
+/// or landing — both of which insert it as text (shell `textContent`, landing escaped).
+fn sanitize_label(raw: Option<&str>, max: usize) -> Option<String> {
+    let raw = raw?;
+    let cleaned = strip_unsafe_display_chars(&collapse_ws(decode_entities(raw.trim())));
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(bound_chars(cleaned, max))
+    }
 }
 
 /// The `.html` filename stem, or `None` for non-HTML files.
@@ -948,10 +1297,18 @@ pub fn mime_for(path: &Path) -> &'static str {
 /// decoded, whitespace-collapsed, and length-bounded. Returned `None` when
 /// neither is present. The value is inserted downstream as **text**, never HTML.
 pub fn resolve_title(html: &str) -> Option<String> {
-    if let Some(t) = extract_element_text(html, "title") {
+    if let Some(t) = extract_element_text(html, "title", MAX_TITLE_CHARS) {
         return Some(t);
     }
-    extract_element_text(html, "h1")
+    extract_element_text(html, "h1", MAX_TITLE_CHARS)
+}
+
+/// Extract a short description for the generated landing page: the text of the
+/// first `<p>` in the (already-rendered) artifact body, sanitized + length-bounded
+/// exactly like a title. `None` when there is no paragraph (a manifest `desc:`
+/// then wins, else no kicker). Inserted into the landing as escaped text.
+pub fn extract_description(html: &str) -> Option<String> {
+    extract_element_text(html, "p", MAX_DESC_CHARS)
 }
 
 /// Extract the text content of the first `<tag>…</tag>`. Not a regex: it walks the
@@ -960,7 +1317,7 @@ pub fn resolve_title(html: &str) -> Option<String> {
 /// (`</titlebar>`) don't fool it. (It does not yet skip `<script>`/`<style>`
 /// raw-text bodies or distinguish SVG/MathML `<title>` — see the module notes;
 /// the value is inserted as text, so those are correctness-only gaps.)
-fn extract_element_text(html: &str, tag: &str) -> Option<String> {
+fn extract_element_text(html: &str, tag: &str, max: usize) -> Option<String> {
     let lower = html.to_ascii_lowercase();
     let bytes = lower.as_bytes();
     let mut i = 0;
@@ -1006,7 +1363,7 @@ fn extract_element_text(html: &str, tag: &str) -> Option<String> {
                 if text.is_empty() {
                     return None;
                 }
-                return Some(bound_chars(&text, MAX_TITLE_CHARS));
+                return Some(bound_chars(&text, max));
             }
         }
         i = after;
@@ -1431,6 +1788,7 @@ mod tests {
                 bytes: b"<svg></svg>".to_vec(),
             }],
             vec!["guide".into(), "index".into()],
+            vec![],
             Some("My Docs".into()),
         )
         .unwrap();
@@ -1450,15 +1808,21 @@ mod tests {
     #[test]
     fn bundle_rejects_reserved_bad_and_duplicate_slugs() {
         assert!(matches!(
-            build_space_bundle(vec![page("api", "x")], vec![], vec![], None),
+            build_space_bundle(vec![page("api", "x")], vec![], vec![], vec![], None),
             Err(BundleError::ReservedSlug(_))
         ));
         assert!(matches!(
-            build_space_bundle(vec![page("Bad Name", "x")], vec![], vec![], None),
+            build_space_bundle(vec![page("Bad Name", "x")], vec![], vec![], vec![], None),
             Err(BundleError::BadSlug(_))
         ));
         assert!(matches!(
-            build_space_bundle(vec![page("a", "x"), page("a", "y")], vec![], vec![], None),
+            build_space_bundle(
+                vec![page("a", "x"), page("a", "y")],
+                vec![],
+                vec![],
+                vec![],
+                None
+            ),
             Err(BundleError::DuplicateSlug(_))
         ));
     }
@@ -1466,7 +1830,7 @@ mod tests {
     #[test]
     fn bundle_rejects_empty_and_bad_asset_paths() {
         assert!(matches!(
-            build_space_bundle(vec![], vec![], vec![], None),
+            build_space_bundle(vec![], vec![], vec![], vec![], None),
             Err(BundleError::Empty)
         ));
         for bad in [
@@ -1484,6 +1848,7 @@ mod tests {
                     bytes: b"x".to_vec(),
                 }],
                 vec![],
+                vec![],
                 None,
             );
             assert!(
@@ -1497,7 +1862,7 @@ mod tests {
     fn bundle_enforces_per_file_and_per_space_caps() {
         let big = "a".repeat((MAX_FILE_BYTES + 1) as usize);
         assert!(matches!(
-            build_space_bundle(vec![page("index", &big)], vec![], vec![], None),
+            build_space_bundle(vec![page("index", &big)], vec![], vec![], vec![], None),
             Err(BundleError::FileTooLarge(_, _))
         ));
     }
@@ -1653,9 +2018,19 @@ mod fs_tests {
         d.write("glasspad.yaml", b"title: My Space\nnav: [b, a]\n");
         let space = scan_dir(d.path()).unwrap();
         assert_eq!(space.title.as_deref(), Some("My Space"));
-        assert_eq!(space.nav, vec!["b".to_string(), "a".to_string()]);
-        // Home falls back to first-in-nav when there's no index/home.
-        assert_eq!(space.home.as_deref(), Some("b"));
+        // With no index/home page, a landing `index` is generated and becomes the
+        // home; the manifest nav order (b, a) follows it in the flat allowlist.
+        assert_eq!(
+            space.nav,
+            vec!["index".to_string(), "b".to_string(), "a".to_string()]
+        );
+        assert_eq!(space.home.as_deref(), Some("index"));
+        // The generated landing carries the space title and links both pages.
+        let landing = &space.artifact("index").unwrap().html;
+        assert!(landing.contains(r#"<article class="gp-prose">"#));
+        assert!(landing.contains("<h1>My Space</h1>"));
+        assert!(landing.contains(r#"<a href="a.html">"#));
+        assert!(landing.contains(r#"<a href="b.html">"#));
     }
 
     #[test]
@@ -1690,7 +2065,184 @@ mod fs_tests {
         d.write("b.html", b"<h1>B</h1>");
         d.write("glasspad.yaml", b"nav: [a, a, b, a]\n");
         let space = scan_dir(d.path()).unwrap();
-        assert_eq!(space.nav, vec!["a".to_string(), "b".to_string()]);
+        // Deduped manifest order (a, b), preceded by the generated landing `index`.
+        assert_eq!(
+            space.nav,
+            vec!["index".to_string(), "a".to_string(), "b".to_string()]
+        );
+    }
+
+    // --- grouped nav + generated landing (space-docsite-nav) ---------------
+
+    #[test]
+    fn manifest_groups_reconcile_and_nest_companions() {
+        // A design-v2-shaped space: grouped nav with a member carrying two companion
+        // children, declared via the manifest (the documented companion-mapping
+        // choice — glasspad does NOT parse dotted `x.arkkitehdille.md` stems; the
+        // producer ships slug-safe pages + this mapping).
+        let d = TempDir::new();
+        d.write("intent.md", b"# Intent\n\nWhy we build it.\n");
+        d.write("backtest.md", b"# Backtest\n\nThe analysis.\n");
+        d.write("backtest-arkkitehdille.md", b"# For the architect\n");
+        d.write("backtest-kirjanpitajalle.md", b"# For the accountant\n");
+        d.write(
+            "glasspad.yaml",
+            b"title: Design v2\n\
+              groups:\n\
+              \x20 - label: Perusarkkitehtuuri\n\
+              \x20   members:\n\
+              \x20     - intent\n\
+              \x20 - label: Suunnitteludokumentit\n\
+              \x20   members:\n\
+              \x20     - slug: backtest\n\
+              \x20       title: Backtest-analyysi\n\
+              \x20       children:\n\
+              \x20         - backtest-arkkitehdille\n\
+              \x20         - backtest-kirjanpitajalle\n",
+        );
+        let space = scan_dir(d.path()).unwrap();
+
+        // Two groups survive reconciliation, in manifest order.
+        assert_eq!(space.nav_groups.len(), 2);
+        assert_eq!(space.nav_groups[0].label, "Perusarkkitehtuuri");
+        assert_eq!(space.nav_groups[0].members[0].slug, "intent");
+        let design = &space.nav_groups[1];
+        assert_eq!(design.label, "Suunnitteludokumentit");
+        assert_eq!(design.members[0].slug, "backtest");
+        assert_eq!(
+            design.members[0].title.as_deref(),
+            Some("Backtest-analyysi")
+        );
+        // The two companions are nested ONE level under `backtest`.
+        assert_eq!(design.members[0].children.len(), 2);
+        assert_eq!(design.members[0].children[0].slug, "backtest-arkkitehdille");
+        assert_eq!(
+            design.members[0].children[1].slug,
+            "backtest-kirjanpitajalle"
+        );
+
+        // No index/home → a landing index was generated and is the home.
+        assert_eq!(space.home.as_deref(), Some("index"));
+        let landing = &space.artifact("index").unwrap().html;
+        assert!(landing.contains("<h1>Design v2</h1>"));
+        // Grouped landing: section headings + links, companions nested in a child list.
+        assert!(landing.contains("<h2>Perusarkkitehtuuri</h2>"));
+        assert!(landing.contains(r#"<a href="backtest.html">Backtest-analyysi</a>"#));
+        assert!(landing.contains("gp-index-children"));
+        assert!(landing.contains(r#"<a href="backtest-arkkitehdille.html">"#));
+        // The flat nav still contains the full allowlist (all pages + the landing).
+        assert!(space.nav.contains(&"index".to_string()));
+        assert!(space.nav.contains(&"backtest-kirjanpitajalle".to_string()));
+    }
+
+    #[test]
+    fn manifest_groups_drop_dangling_slugs_and_empty_groups() {
+        // A member slug with no matching artifact is dropped; a group left with no
+        // members is dropped entirely; a duplicate slug appears only once.
+        let d = TempDir::new();
+        d.write("index.md", b"# Home\n");
+        d.write("a.md", b"# A\n");
+        d.write(
+            "glasspad.yaml",
+            b"groups:\n\
+              \x20 - label: Real\n\
+              \x20   members: [a, ghost, a]\n\
+              \x20 - label: Empty\n\
+              \x20   members: [nope]\n",
+        );
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.nav_groups.len(), 1);
+        assert_eq!(space.nav_groups[0].label, "Real");
+        assert_eq!(space.nav_groups[0].members.len(), 1);
+        assert_eq!(space.nav_groups[0].members[0].slug, "a");
+        // An index page exists here, so NO landing is generated (precedence kept).
+        assert_eq!(space.home.as_deref(), Some("index"));
+    }
+
+    #[test]
+    fn landing_description_prefers_manifest_then_first_paragraph() {
+        let d = TempDir::new();
+        d.write("a.md", b"# A\n\nFirst paragraph of A.\n");
+        d.write("b.md", b"# B\n\nFirst paragraph of B.\n");
+        d.write(
+            "glasspad.yaml",
+            b"groups:\n\
+              \x20 - label: G\n\
+              \x20   members:\n\
+              \x20     - slug: a\n\
+              \x20       desc: Manifest description\n\
+              \x20     - b\n",
+        );
+        let space = scan_dir(d.path()).unwrap();
+        let landing = &space.artifact("index").unwrap().html;
+        // `a` uses the manifest desc; `b` falls back to its first paragraph.
+        assert!(landing.contains("Manifest description"));
+        assert!(!landing.contains("First paragraph of A."));
+        assert!(landing.contains("First paragraph of B."));
+    }
+
+    #[test]
+    fn generated_landing_is_flat_list_without_groups() {
+        // No groups declared + no index → a flat landing listing every page.
+        let d = TempDir::new();
+        d.write("alpha.md", b"# Alpha\n");
+        d.write("beta.md", b"# Beta\n");
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.home.as_deref(), Some("index"));
+        let landing = &space.artifact("index").unwrap().html;
+        assert!(landing.contains(r#"<article class="gp-prose">"#));
+        assert!(landing.contains(r#"<a href="alpha.html">Alpha</a>"#));
+        assert!(landing.contains(r#"<a href="beta.html">Beta</a>"#));
+        // The generated index never lists itself.
+        assert!(!landing.contains(r#"href="index.html""#));
+    }
+
+    #[test]
+    fn manifest_groups_never_widen_the_nav_allowlist() {
+        // Grouped nav is DISPLAY curation only — an ungrouped page is still reachable
+        // (in the flat `nav` allowlist), just not listed in the sidebar/landing.
+        let d = TempDir::new();
+        d.write("index.md", b"# Home\n");
+        d.write("shown.md", b"# Shown\n");
+        d.write("hidden.md", b"# Hidden\n");
+        d.write(
+            "glasspad.yaml",
+            b"groups:\n - label: G\n   members: [shown]\n",
+        );
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.nav_groups[0].members.len(), 1);
+        // `hidden` is not in any group but remains in the flat allowlist.
+        assert!(space.nav.contains(&"hidden".to_string()));
+    }
+
+    #[test]
+    fn no_groups_declared_keeps_flat_nav_fallback() {
+        // Byte-compatible fallback: with no `groups:` the space carries an empty
+        // nav_groups (the shell renders the flat bar unchanged).
+        let d = TempDir::new();
+        d.write("index.html", b"<title>Home</title><h1>hi</h1>");
+        d.write("a.html", b"<h1>A</h1>");
+        let space = scan_dir(d.path()).unwrap();
+        assert!(space.nav_groups.is_empty());
+        assert_eq!(space.home.as_deref(), Some("index"));
+    }
+
+    #[test]
+    fn manifest_group_label_and_title_are_sanitized() {
+        // A bidi/zero-width spoof in a group label or member title is stripped at
+        // reconciliation (identical treatment to a resolved artifact title).
+        let d = TempDir::new();
+        d.write("a.md", b"# A\n");
+        d.write(
+            "glasspad.yaml",
+            "groups:\n - label: \"G\u{202e}spoof\"\n   members:\n     - slug: a\n       title: \"T\u{200b}itle\"\n".as_bytes(),
+        );
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.nav_groups[0].label, "Gspoof");
+        assert_eq!(
+            space.nav_groups[0].members[0].title.as_deref(),
+            Some("Title")
+        );
     }
 
     // --- markdown-native spaces (Gap 2) ------------------------------------
@@ -1949,8 +2501,14 @@ mod fs_tests {
                 html: art.html.clone(),
             })
             .collect();
-        let bundle =
-            build_space_bundle(pages, vec![], space.nav.clone(), space.title.clone()).unwrap();
+        let bundle = build_space_bundle(
+            pages,
+            vec![],
+            space.nav.clone(),
+            space.nav_groups.clone(),
+            space.title.clone(),
+        )
+        .unwrap();
         assert_eq!(bundle.artifacts.len(), 2);
         assert!(
             bundle

@@ -109,6 +109,24 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   an unknown `template:` name is a hard error (built-in only — fully custom
   templates are the single-file `render` seam). All of `serve`/`build`/
   `publish-space` inherit this for free (they consume the produced `Space`).
+  **Grouped nav + generated landing (space-docsite-nav):** the manifest gains an
+  optional `groups:` key (named groups → ordered `members`; a member is a bare slug
+  or a map with `title`/`desc`/one level of companion `children`). `finalize`
+  reconciles it against the artifact set into `Space.nav_groups` (drops dangling
+  slugs, dedups, discards grandchildren, drops empty groups, sanitizes labels/titles
+  like a resolved title). The flat `Space.nav` stays the **complete allowlist** — no
+  groups → empty `nav_groups` → today's flat nav is byte-compatible. **Companion
+  nesting is a manifest-level mapping** — glasspad never parses dotted
+  `x.arkkitehdille.md` stems (out of scope; the producer ships slug-safe pages +
+  declares `children:`). When a space has no `index`/`home` page AND (declares groups
+  OR has ≥2 pages), `finalize` **generates an `index` landing artifact** (a `gp-prose`
+  table of contents, grouped or flat, with per-doc descriptions from the manifest or
+  the doc's first paragraph) instead of the old redirect stub; it is a normal artifact
+  so serve/build/hosted inherit it and it is idempotent. The shell renders the grouped
+  vertical sidebar via `render_with_groups` (client `createElement`+`textContent`,
+  reusing the one validated `navigateTo` allowlist — the security model is unchanged);
+  wire/store carry `nav_groups` (`#[serde(default)]`, re-reconciled on the untrusted
+  ingest boundary).
 - `mod.rs` — routes (`/{space}/`, `/{space}/{slug}`, `/{space}/_c/{slug}`,
   `/{space}/assets/{*path}`, `/_gp/reload`, `/_gp/v1/*`), slug/space grammar +
   reserved-name rejection, header wiring, the live-snapshot + fixtures resolution,

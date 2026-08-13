@@ -2175,6 +2175,12 @@ async fn post_space_bundle(
     if !space.nav.is_empty() {
         body.insert("nav".into(), json!(space.nav));
     }
+    // Carry the grouped nav (glasspad.yaml `groups:`) so a published docsite renders
+    // its grouped sidebar + landing on the hosted server. Reconciled + sanitized
+    // server-side at ingest, exactly like the loopback scanner does.
+    if !space.nav_groups.is_empty() {
+        body.insert("groups".into(), json!(space.nav_groups));
+    }
     let title = title_override.or_else(|| space.title.clone());
     if let Some(t) = &title {
         body.insert("title".into(), json!(t));

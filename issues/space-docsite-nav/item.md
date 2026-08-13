@@ -2,7 +2,7 @@
 created: 2026-08-13
 updated: 2026-08-13
 type: improvement
-status: open
+status: in-progress
 priority: normal
 ---
 
@@ -74,6 +74,66 @@ landing structure** first-class so those preprocessor outputs slot into a real g
   publishes/serves with its structure intact, driven only by a manifest + slug-safe md — no
   build_docs.py index/sidebar.
 - `/llm-review` before merge; `./test-security.sh` (48 + Wave 2a) green (should be untouched).
+
+## Design decisions (implemented 2026-08-13)
+
+### 1. Grouped, one-level-nestable nav — manifest `groups:`
+`glasspad.yaml` gains an optional `groups:` list. Each group has a `label` and
+ordered `members`; a member is either a bare slug string or a map with an optional
+`title` (display override), `desc` (landing kicker), and one level of `children`:
+
+```yaml
+title: aggountant · design v2
+groups:
+  - label: Perusarkkitehtuuri
+    members: [intent, candidate]
+  - label: Suunnitteludokumentit
+    members:
+      - slug: backtest
+        title: Backtest-analyysi
+        children: [backtest-arkkitehdille, backtest-kirjanpitajalle]
+```
+
+`Space.nav_groups` holds the reconciled structure (dangling slugs dropped, dedup,
+grandchildren discarded, empty groups dropped, labels/titles/descs sanitized like a
+resolved title). **The flat `Space.nav` stays the complete slug allowlist** — groups
+are *display curation only*, so an ungrouped page is still reachable, just not listed.
+**No `groups:` → empty `nav_groups` → the flat lexicographic nav is byte-compatible**
+(the shell renders the existing horizontal bar; the sidebar `<aside>` stays empty and
+CSS-hidden). The shell renders a grouped vertical sidebar via `render_with_groups`
+(client `createElement` + `textContent`, reusing the one validated `navigateTo`
+allowlist path — the security-critical nav model is unchanged).
+
+### 2. Generated landing/index
+When a space has **no `index`/`home` page** AND (it declares groups OR has ≥2 pages),
+`finalize` synthesizes an `index` artifact — a `gp-prose` fragment listing the docs
+grouped (or flat), each with a description (manifest `desc:` → the doc's first
+paragraph → none) — and makes it the home. This replaces the old first-artifact
+**redirect stub**. Because it is a normal artifact it flows through serve, static
+`build` (emitted as `index.html`, no redirect), and hosted publish for free; it is
+idempotent (a stored/regenerated space already has `index`, so it is never doubled).
+A **single** ungrouped page keeps the old redirect/frame-it behavior (a one-link
+landing is worse UX). Existing `index`/`home` precedence is untouched.
+
+### 3. Companion stems — **manifest-level mapping (the chosen approach)**
+glasspad does **NOT** accept or normalize the dotted `x.arkkitehdille.md` stems — they
+stay slug-invalid (the dot is not in the slug grammar), and the file-naming
+*convention* remains the producer's thin preprocessor (explicitly out of scope). The
+producer ships **slug-safe** pages (`backtest`, `backtest-arkkitehdille`) and declares
+the parent/child relationship via a group member's `children:` mapping. This keeps
+glasspad structure-only, respects the OUT-of-scope boundary (companion *discovery*
+stays producer-side), and avoids the collision ambiguity that normalizing
+`x.arkkitehdille` → `x-arkkitehdille` would create. The nesting is enforced to **one
+level** (a child carries no further children).
+
+### Security contract — untouched
+Each page stays a null-origin sandboxed iframe; `./test-security.sh` (48 + Wave 2a)
+stays green with no edits. The grouped sidebar reuses the exact `navigateTo` grammar +
+`KNOWN_SET` allowlist; labels/titles are inserted as `textContent` (never an HTML
+sink) and JSON-for-script encoded in the `GROUPS` data literal; the generated landing
+HTML-escapes every producer/artifact-derived string. Wire/store carry `nav_groups`
+with `#[serde(default)]` (backward-compatible) and re-reconcile on the untrusted
+ingest boundary.
 
 ## Related
 - aggountant `docsite-to-glasspad` (retire build_docs.py) and `docsite-glasspad-maalla-hosted`
