@@ -172,7 +172,7 @@ by 0.6.0); optional polish (below).
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-12)
+## Execution DAG (2026-08-13)
 
 Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
 (never copied here). Merge each round (drop landed, add active, keep existing order).
@@ -190,11 +190,11 @@ parallel.)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: publish-first-surface   ← design done; start with its config unit (a)
+GLOBAL HEAD-OF-LINE: space-docsite-nav   ← only active scheduled unit; design-first
 
-LANE B — cli.rs + main.rs + config (+ hosted core) — the whole publish-first reshape
-  ▶ publish-first-surface   (high, design-first; decompose (a)config→(b)publish→(c)verb-removal→(d)skill)
-    emoji-favicon            after publish-first-surface (needs its .glasspad.yaml config unit)
+LANE B — hosted/space core (space.rs + manifest + bridge.js + render/serve/build seam)
+  ▶ space-docsite-nav   (normal, design-first; grouped/nested nav + generated landing index
+                         so a structured docsite ports off aggountant's build_docs.py)
 ```
 <!-- execution-dag:end -->
 
