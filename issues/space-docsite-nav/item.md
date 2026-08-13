@@ -2,11 +2,14 @@
 created: 2026-08-13
 updated: 2026-08-13
 type: improvement
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 43d2c1e
   summary: grouped/nested nav + generated landing + companion mapping; gate green (48+Wave2a)
+- hash: f9ea1d7
+  summary: apply /llm-review findings — iframe title-attr sandbox-escape fix (+test), reconcile raw-input budgets, landing cap fail-safe, sanitize idempotency, empty-h2
+closed: 2026-08-13
 ---
 
 # Grouped/nested space nav + generated landing index (port a structured docsite off build_docs.py)
