@@ -4,6 +4,9 @@ updated: 2026-08-13
 type: improvement
 status: in-progress
 priority: normal
+commits:
+- hash: 43d2c1e
+  summary: grouped/nested nav + generated landing + companion mapping; gate green (48+Wave2a)
 ---
 
 # Grouped/nested space nav + generated landing index (port a structured docsite off build_docs.py)

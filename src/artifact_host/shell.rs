@@ -162,7 +162,16 @@ pub fn render_with_groups(
     // `mount` is a trusted server constant.
     let content_src = format!("{mount}/{space}/_c/{slug}");
     let esc_src = html_attr_escape(&content_src);
-    let esc_title = html_text_escape(&display_title);
+    // Two escapings of the same title: text context for `<title>…</title>`, and the
+    // stricter **attribute** context for `title="…"` on the iframe. A resolved
+    // artifact title keeps straight quotes (`resolve_title` strips only `<`/`>` and
+    // spoof chars), so a text-only escape in the double-quoted iframe `title`
+    // attribute would let a hostile title break out and inject a *duplicate*
+    // `sandbox="…allow-same-origin"` attribute (HTML keeps the FIRST duplicate) —
+    // a null-origin sandbox escape in the trusted shell. `html_attr_escape` also
+    // encodes `"`/`'`, closing that hole.
+    let esc_title_text = html_text_escape(&display_title);
+    let esc_title_attr = html_attr_escape(&display_title);
 
     // Emoji SVG favicon for THIS outer document only (never the sandboxed artifact).
     // `link_tag` base64-encodes the whole SVG, so the emitted attribute carries only
@@ -176,7 +185,7 @@ pub fn render_with_groups(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {favicon_link}
-<title>{esc_title}</title>
+<title>{esc_title_text}</title>
 <style>
   html,body {{ margin:0; height:100%; }}
   body {{ display:flex; flex-direction:column; }}
@@ -222,7 +231,7 @@ pub fn render_with_groups(
 </header>
 <div class="gp-body">
 <aside class="gp-sidebar" id="gp-sidebar" aria-label="Documents in this space"></aside>
-<iframe id="gp-artifact" title="{esc_title}"
+<iframe id="gp-artifact" title="{esc_title_attr}"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
         data-src="{esc_src}"></iframe>
 </div>
@@ -802,6 +811,27 @@ mod tests {
             None,
         );
         assert!(!html2.contains("<script>evil()"));
+    }
+
+    #[test]
+    fn shell_title_attribute_cannot_inject_a_sandbox_attribute() {
+        // Regression: a resolved title keeps straight quotes, so the iframe `title="…"`
+        // attribute must be ATTRIBUTE-escaped — a text-only escape would let a hostile
+        // title inject a duplicate `sandbox="…allow-same-origin"` (HTML keeps the first
+        // duplicate) and escape the null-origin sandbox in the trusted shell.
+        let hostile = r#"x" sandbox="allow-scripts allow-same-origin"#;
+        let html = render("", "demo", "index", hostile, &nav_of(&["index"]), "n", None);
+        // The quote is encoded, so the title never closes the attribute — no real
+        // second `sandbox="` attribute is injected (the breakout form is absent).
+        assert!(!html.contains(r#"title="x" sandbox="#));
+        // The hostile text survives on the iframe only as INERT escaped text.
+        assert!(html.contains(r#"title="x&quot; sandbox=&quot;allow-scripts allow-same-origin""#));
+        // No live `sandbox="…allow-same-origin"` attribute is injected anywhere, and
+        // the real frozen sandbox token set is intact.
+        assert!(!html.contains(r#"sandbox="allow-scripts allow-same-origin""#));
+        assert!(
+            html.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
+        );
     }
 
     // --- Wave 4: nav chrome -------------------------------------------------

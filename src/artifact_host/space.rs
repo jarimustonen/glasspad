@@ -470,7 +470,7 @@ pub fn build_space_bundle(
     // resolves the home slug (`index` > `home` > first in nav order).
     space.nav = nav;
     space.nav_groups = nav_groups;
-    finalize(&mut space);
+    finalize(&mut space, total);
     Ok(space)
 }
 
@@ -680,7 +680,7 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
         return Err(ScanError::TooManyEntries(entries));
     }
 
-    finalize(&mut space);
+    finalize(&mut space, total);
     Ok(space)
 }
 
@@ -841,7 +841,13 @@ fn read_file_capped(path: &Path, total: &mut u64) -> Result<Vec<u8>, ScanError> 
 /// nav are both finalized against the artifact set *before* the landing is
 /// generated, so the landing lists a reconciled structure; the generated `index`
 /// is then inserted and becomes the home.
-fn finalize(space: &mut Space) {
+///
+/// `total_bytes` is the caller's running per-space byte total (all artifacts + assets
+/// read so far). The generated landing is only inserted if it keeps the space within
+/// every cap (`MAX_FILE_BYTES`, `MAX_ENTRIES`, `MAX_SPACE_BYTES`) — a derived landing
+/// must never breach the immutable-snapshot invariants; if it would, the space falls
+/// back to first-artifact home (the pre-landing behavior).
+fn finalize(space: &mut Space, total_bytes: u64) {
     // Manifest nav may have listed slugs; keep only ones that exist, **deduped**
     // (a manifest `nav: [a, a]` must not double the entry), then append any
     // remaining artifacts in lexicographic order so nothing is hidden. A `HashSet`
@@ -883,16 +889,29 @@ fn finalize(space: &mut Space) {
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| "Index".to_string());
         let html = generate_landing_body(space, &title);
-        // `index` is guaranteed free here (no `index`/`home` artifact exists).
-        space.artifacts.insert(
-            "index".to_string(),
-            Artifact {
-                html,
-                title: title.clone(),
-            },
-        );
-        // Surface the generated landing first in the flat allowlist.
-        space.nav.insert(0, "index".to_string());
+        let len = html.len() as u64;
+        let new_entries = space.artifacts.len() + space.assets.len() + 1;
+        // Only add the landing if it stays within every space cap; otherwise fall
+        // back to first-artifact home. A derived landing is optional — it must never
+        // push the immutable snapshot past MAX_FILE_BYTES / MAX_ENTRIES /
+        // MAX_SPACE_BYTES (which the scanner + bundle builder enforce on real files
+        // *before* finalize runs). This also keeps local scan and hosted ingest in
+        // agreement — neither accepts a space the other would reject.
+        if len <= MAX_FILE_BYTES
+            && new_entries <= MAX_ENTRIES
+            && total_bytes.saturating_add(len) <= MAX_SPACE_BYTES
+        {
+            // `index` is guaranteed free here (no `index`/`home` artifact exists).
+            space.artifacts.insert(
+                "index".to_string(),
+                Artifact {
+                    html,
+                    title: title.clone(),
+                },
+            );
+            // Surface the generated landing first in the flat allowlist.
+            space.nav.insert(0, "index".to_string());
+        }
     }
 
     space.home = if space.artifacts.contains_key("index") {
@@ -918,29 +937,41 @@ fn reconcile_nav_groups(space: &mut Space) {
     let groups = std::mem::take(&mut space.nav_groups);
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<NavGroup> = Vec::new();
-    for group in groups {
-        if out.len() >= MAX_NAV_GROUPS {
+    // Bound work on the **raw** input, not just the accepted output: stop after
+    // examining `MAX_NAV_GROUPS` groups, and within a group after examining
+    // `MAX_GROUP_MEMBERS` submitted members **plus their children** (the documented
+    // "incl. nested children" cap). Counting *examined* (not accepted) entries means a
+    // flood of dangling/duplicate entries at the untrusted ingest boundary can't force
+    // unbounded reconciliation work — DoS defense on top of correctness.
+    for (gi, group) in groups.into_iter().enumerate() {
+        if gi >= MAX_NAV_GROUPS {
             break;
         }
+        let mut examined = 0usize;
         let mut members: Vec<NavMember> = Vec::new();
         for member in group.members {
-            if members.len() >= MAX_GROUP_MEMBERS {
+            if examined >= MAX_GROUP_MEMBERS {
                 break;
             }
+            examined += 1;
             if !space.artifacts.contains_key(&member.slug) || !seen.insert(member.slug.clone()) {
                 continue;
             }
-            let children: Vec<NavMember> = member
-                .children
-                .into_iter()
-                .filter(|c| space.artifacts.contains_key(&c.slug) && seen.insert(c.slug.clone()))
-                .map(|c| NavMember {
-                    slug: c.slug,
-                    title: sanitize_label(c.title.as_deref(), MAX_TITLE_CHARS),
-                    desc: sanitize_label(c.desc.as_deref(), MAX_DESC_CHARS),
-                    children: Vec::new(), // one level only — grandchildren discarded
-                })
-                .collect();
+            let mut children: Vec<NavMember> = Vec::new();
+            for child in member.children {
+                if examined >= MAX_GROUP_MEMBERS {
+                    break;
+                }
+                examined += 1;
+                if space.artifacts.contains_key(&child.slug) && seen.insert(child.slug.clone()) {
+                    children.push(NavMember {
+                        slug: child.slug,
+                        title: sanitize_label(child.title.as_deref(), MAX_TITLE_CHARS),
+                        desc: sanitize_label(child.desc.as_deref(), MAX_DESC_CHARS),
+                        children: Vec::new(), // one level only — grandchildren discarded
+                    });
+                }
+            }
             members.push(NavMember {
                 slug: member.slug,
                 title: sanitize_label(member.title.as_deref(), MAX_TITLE_CHARS),
@@ -980,7 +1011,12 @@ fn generate_landing_body(space: &Space, heading: &str) -> String {
     } else {
         for group in &space.nav_groups {
             out.push_str("<section class=\"gp-index-group\">\n");
-            out.push_str(&format!("<h2>{}</h2>\n", html_escape(&group.label)));
+            // Omit the heading entirely for an empty label (a spoof-only label that
+            // sanitized to "") — never emit an empty `<h2></h2>` (ugly + screen-reader
+            // hostile). Mirrors the shell sidebar, which also skips the empty heading.
+            if !group.label.is_empty() {
+                out.push_str(&format!("<h2>{}</h2>\n", html_escape(&group.label)));
+            }
             out.push_str("<ul class=\"gp-index-list\">\n");
             for member in &group.members {
                 append_landing_member(&mut out, space, member);
@@ -1178,14 +1214,22 @@ fn apply_manifest(
 }
 
 /// Sanitize a producer-supplied display label (a group label, member title, or
-/// member description): entity-decode, strip invisible/bidi spoof chars, collapse
-/// whitespace, trim, and length-bound. Returns `None` for an absent or
-/// (post-sanitize) empty value. Identical treatment to a resolved artifact title,
-/// so a manifest/wire label can never smuggle a spoof/zero-width run into the chrome
-/// or landing — both of which insert it as text (shell `textContent`, landing escaped).
+/// member description): strip invisible/bidi spoof chars, collapse whitespace, trim,
+/// and length-bound. Returns `None` for an absent or (post-sanitize) empty value, so
+/// a manifest/wire label can never smuggle a spoof/zero-width run into the chrome or
+/// landing — both of which insert it as text (shell `textContent`, landing escaped).
+///
+/// Unlike a *resolved artifact title* (which is parsed out of HTML, so
+/// [`resolve_title`] entity-decodes it), a group label/title/desc is **plain
+/// producer text** from YAML/JSON — it is NOT entity-decoded. Decoding it would (a)
+/// be wrong (`R&amp;D` in a label means the literal five characters, not `R&D`) and
+/// (b) be **non-idempotent** across the scan→wire→ingest→reload passes (nested
+/// entities like `&amp;lt;` would mutate on each hop), so the same label could render
+/// differently locally vs. hosted, or drift after a restart. This function is
+/// idempotent: `f(f(x)) == f(x)`.
 fn sanitize_label(raw: Option<&str>, max: usize) -> Option<String> {
     let raw = raw?;
-    let cleaned = strip_unsafe_display_chars(&collapse_ws(decode_entities(raw.trim())));
+    let cleaned = strip_unsafe_display_chars(&collapse_ws(raw.trim().to_string()));
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
         None
@@ -1694,6 +1738,22 @@ mod tests {
         // A title that is ONLY invisible chars collapses to nothing → None.
         assert_eq!(
             resolve_title("<title>\u{202e}\u{200b}\u{feff}</title>"),
+            None
+        );
+    }
+
+    #[test]
+    fn sanitize_label_is_idempotent_and_not_entity_decoded() {
+        // Producer labels are plain text, NOT HTML: `&amp;` stays literal (a label is
+        // not entity-decoded), zero-width spoof chars are stripped, whitespace folded.
+        let once = sanitize_label(Some("R&amp;D  \u{200b}core"), MAX_TITLE_CHARS).unwrap();
+        assert_eq!(once, "R&amp;D core");
+        // Idempotent across the scan→wire→ingest→reload passes: f(f(x)) == f(x).
+        let twice = sanitize_label(Some(&once), MAX_TITLE_CHARS).unwrap();
+        assert_eq!(once, twice);
+        // A spoof/whitespace-only label sanitizes to None.
+        assert_eq!(
+            sanitize_label(Some("\u{202e}\u{200b}  "), MAX_TITLE_CHARS),
             None
         );
     }
@@ -2225,6 +2285,24 @@ mod fs_tests {
         let space = scan_dir(d.path()).unwrap();
         assert!(space.nav_groups.is_empty());
         assert_eq!(space.home.as_deref(), Some("index"));
+    }
+
+    #[test]
+    fn landing_omits_empty_group_heading() {
+        // A group whose label is spoof/whitespace-only sanitizes to "" but keeps its
+        // valid members; the landing must NOT emit an empty `<h2></h2>`.
+        let d = TempDir::new();
+        d.write("a.md", b"# A\n");
+        d.write("b.md", b"# B\n");
+        d.write(
+            "glasspad.yaml",
+            "groups:\n - label: \"\u{202e}\u{200b}\"\n   members: [a, b]\n".as_bytes(),
+        );
+        let space = scan_dir(d.path()).unwrap();
+        assert_eq!(space.nav_groups[0].label, "");
+        let landing = &space.artifact("index").unwrap().html;
+        assert!(!landing.contains("<h2></h2>"));
+        assert!(landing.contains(r#"<a href="a.html">"#));
     }
 
     #[test]
