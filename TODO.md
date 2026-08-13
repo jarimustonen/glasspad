@@ -193,8 +193,7 @@ parallel.)
 GLOBAL HEAD-OF-LINE: space-docsite-nav   ← only active scheduled unit; design-first
 
 LANE B — hosted/space core (space.rs + manifest + bridge.js + render/serve/build seam)
-  ▶ space-docsite-nav   (normal, design-first; grouped/nested nav + generated landing index
-                         so a structured docsite ports off aggountant's build_docs.py)
+  ▶ space-docsite-nav   (normal, design-first — grouped/nested nav + generated landing index; ports a structured docsite off aggountant's build_docs.py)
 ```
 <!-- execution-dag:end -->
 
