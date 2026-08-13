@@ -5,7 +5,13 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**glasspad 0.4.0 is FULLY RELEASED** (2026-08-10) — crates.io `0.4.0`, GitHub
+**CURRENT: glasspad 0.7.0 is FULLY RELEASED + verified live** (2026-08-13) — crates.io
+`0.7.0`, GitHub Release `v0.7.0` (12 assets), Homebrew `version "0.7.0"`. Ships the
+**publish-first CLI surface** (`publish` = default verb, config-driven loopback|hosted)
++ **emoji SVG favicon**. Details in _Round 2026-08-13_ below; next up is `space-docsite-nav`
+(see _▶ Start here_). The 0.3.0→0.6.0 release history is preserved below for context.
+
+**glasspad 0.4.0 was FULLY RELEASED** (2026-08-10) — crates.io `0.4.0`, GitHub
 Release `v0.4.0` (12 assets: mac `aarch64-apple-darwin` + 2× Linux tarballs,
 `installer.sh`, `glasspad.rb`), Homebrew tap `homebrew-glasspad` (`version "0.4.0"`),
 all live and verified. `main` carries 0.4.0 (`Cargo.toml`) + tag `v0.4.0` (commit
@@ -142,26 +148,63 @@ at a hosted URL this session):**
   must accept an **indirection** (env/key-file/secret ref), not only an inline secret, so
   this layers on later without a schema break.
 
+## Round 2026-08-13 — 0.7.0 SHIPPED (publish-first surface + emoji favicon)
+
+The publish-first design (2026-08-12) was **built, reviewed, released, and verified live**
+this session. Two Lane-B spinoffs landed on `main`, sequenced (both touch cli.rs/config):
+- ✅ `publish-first-surface` (`7d6d60e`+`6ac5307`) — **`publish` is THE default verb**
+  (markdown-first; file = 1-page space, dir = N-page space); config-driven `target:
+  loopback|hosted` via new `src/config.rs` per-key merge (`.glasspad.yaml` → home →
+  loopback default). `api_key` accepts an env/file **indirection** (room for
+  `hosted-multiworker-credentials`). `serve`/`create`/`render`/`open`/`stop` **removed**
+  as top-level verbs (regrouped under `glasspad loopback <serve|open|stop>`); `build` kept
+  advanced. `src/skill.md` rewritten around "hand glasspad markdown, get a URL." `/llm-review`
+  (4 models) + fixes. Issue `done`.
+- ✅ `emoji-favicon` (`344764e`+`9c18c78`) — zero-dep inline **SVG emoji favicon** on the
+  OUTER served/built document (new `src/favicon.rs`: strict validate + XML-escape + base64
+  data: URI); emoji from `.glasspad.yaml` `favicon:` else default 📊. Sandbox byte-for-byte
+  unaffected (asserted). `/llm-review` (4 models) + fixes. Issue `done`.
+
+**0.7.0 FULLY RELEASED + verified** (`21a65f9`, tag `v0.7.0`, autonomous per release
+autonomy). Full green gate: fmt + clippy -D + `cargo test` (288 core + suites) +
+`./test-security.sh` (48 + Wave 2a, **security contract untouched**) + `ossctl audit`
+(core complete) + `cargo publish --dry-run`. Single tag push → both CI workflows green,
+mac built clean on hauis. Live on all three channels: **crates.io `0.7.0`** (sparse index,
+yanked=false; the `/api` JSON endpoint cache-lags — index is authoritative), **GitHub
+Release `v0.7.0`** (12 assets, not draft), **Homebrew `version "0.7.0"`**. Crate
+description updated (`loopback-only` → publish-first). This is the 3rd clean tag-release.
+
+## Cross-repo finding 2026-08-13 — why aggountant still needs `tw view` (filed `space-docsite-nav`)
+
+Investigated why `../aggountant`'s `design-v2` docsite (index-type structure) doesn't port
+onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0:
+1. **Loopback-only viewing** → `tw view` bridges server→seat. **0.7.0 hosted `target`
+   removes this** once `glasspad.maalla.dev` is upgraded (blocked in aggountant
+   `docsite-glasspad-maalla-hosted` — an **ops redeploy**, not a glasspad code gap).
+2. **The index/nav structure doesn't port** — glasspad's space model is structurally flat:
+   `nav` is a single-level slug list; with no `index.md` `build` emits a **redirect stub**
+   (not a curated landing); dotted companion stems (`*.arkkitehdille.md`) are **rejected**
+   as invalid slugs. build_docs.py generates a grouped/nested sidebar + rich landing index
+   with per-doc descriptions. **This gap is now filed as glasspad `space-docsite-nav`** (see
+   below) — the head of the DAG.
+
 ## ▶ Start here (on return)
 
-**Design is complete and reviewed; ready to build.** `main == origin` (`852163f`), clean
-tree, nothing in flight. Next step is the **design-first implementation of
-`publish-first-surface`** — decompose (per design.md) and spawn:
-1. **(a)** config resolution + `target` + `.glasspad.yaml` (per-key merge; `api_key`
-   accepts an indirection — leave room for `hosted-multiworker-credentials`). **← head**
-2. **(b)** `publish` unification (file|dir; hosted|loopback dispatch) — *after (a)*.
-3. **(c)** remove `serve`/`create`/`render`/`open`; regroup loopback mgmt under
-   `glasspad loopback <cmd>`.
-4. **(d)** rewrite `src/skill.md` around the single default.
-5. **`emoji-favicon`** — *after (a)* (shares `.glasspad.yaml`).
+`main == origin`, clean tree, nothing in flight, 0.7.0 released + verified live. Tracker
+holds one active scheduled unit + one deferred backlog item.
 
-All Lane B (`cli.rs`/`main.rs`/config) → **sequenced, not parallel**. This is a big
-surface reshape with NO back-compat — do it design-first, `/llm-review` each unit, keep
-`./test-security.sh` green (should be untouched — CLI/config/skill change, not a host
-change). A release after it lands would be **0.7.0** (agent decides — release autonomy).
+**Head-of-line: `space-docsite-nav`** (normal, **design-first**) — grouped/nested space
+nav + generated landing index so a structured docsite (aggountant's design-v2 shape:
+grouped spec/ADRs/stints + arkkitehdille/kirjanpitajalle companions) ports onto glasspad
+without a bespoke `build_docs.py` index/sidebar. Scope + empirical findings + what's
+OUT-of-scope (glossary autolink / section-TOC / companion discovery / SVG diagrams stay an
+aggountant-side preprocessor) are in `issues/space-docsite-nav/item.md`. Lands on the space
+core (`src/artifact_host/space.rs` + manifest + `bridge.js` + render seam) → **Lane B**,
+design-first, `/llm-review`, keep `./test-security.sh` green (should be untouched). A
+release after it lands would be **0.8.0** (agent decides — release autonomy).
 
-_Older candidates still valid:_ tilictl docsite migration (tracked in tilictl; unblocked
-by 0.6.0); optional polish (below).
+_Older candidates still valid:_ tilictl docsite migration (tracked in tilictl); optional
+polish (below).
 
 ### Optional polish (no hard gate)
 
