@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.8.0] - 2026-08-13
+
+Makes a structured docsite a first-class glasspad space: **grouped/nested navigation
+and a generated landing index**, so a docsite like aggountant's `design-v2` shape
+(grouped spec/ADRs/stints + companion docs) ports onto glasspad driven only by a
+manifest and slug-safe markdown — no bespoke index/sidebar generator. Everything stays
+**structure-only** (no glasspad-owned content). The artifact security contract is
+unchanged: every page stays a null-origin sandboxed iframe (`./test-security.sh` 48
+checks + Wave 2a green).
+
+### Added
+
+- **Grouped, one-level-nestable nav** via an optional manifest `groups:` list. Each
+  group has a `label` and ordered `members`; a member is a bare slug or a map with
+  `title`/`desc`/`children` (one level of companion nesting). `Space.nav` stays the
+  complete slug allowlist — groups are display curation only, so ungrouped pages stay
+  reachable. No `groups:` → byte-compatible flat lexicographic nav (backward compatible,
+  `#[serde(default)]`).
+- **Generated grouped landing/index.** A space with no `index`/`home` page (and either
+  declared groups or ≥2 pages) synthesizes a grouped landing artifact — docs listed by
+  group, each with a description (manifest `desc:` → doc's first paragraph → none) —
+  replacing the old redirect stub. It flows through `serve`, static `build` (emitted as
+  `index.html`, no redirect), and hosted publish, and is idempotent. A single ungrouped
+  page keeps the old redirect behavior.
+- **Manifest-level companion mapping.** A group member's `children:` pairs slug-safe
+  companion pages (e.g. `backtest` + `backtest-arkkitehdille`) under their parent in the
+  nav, one level deep. glasspad stays slug-strict — dotted stems (`x.arkkitehdille.md`)
+  remain the producer's preprocessor concern (companion *discovery* stays out of scope).
+
+### Fixed
+
+- **Critical (pre-existing): iframe `title`-attribute sandbox-escape.** A duplicate
+  attribute could smuggle an `allow-same-origin` grant into an artifact iframe's
+  `sandbox`, breaking the null-origin guarantee. Now fixed with a regression test.
+
 ## [0.7.0] - 2026-08-12
 
 Reshapes the CLI around a single default: **hand glasspad markdown, get a URL.**
