@@ -233,10 +233,13 @@ parallel.)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: space-docsite-nav   ← only active scheduled unit; design-first
+GLOBAL HEAD-OF-LINE: loopback-lan-serve   ← high-pri Lane-B writer; hosted-submit-return-broken (read-only) runs in parallel
 
-LANE B — hosted/space core (space.rs + manifest + bridge.js + render/serve/build seam)
-  ▶ space-docsite-nav   (normal, design-first — grouped/nested nav + generated landing index; ports a structured docsite off aggountant's build_docs.py)
+LANE B — server/CLI/hosted/space core (cli.rs + server.rs + hosted/* + shell.rs + space.rs + render seam)
+  ▶ loopback-lan-serve   (feature, high, design-first — LAN-reachable loopback serve; keep DNS-rebinding Host-guard via allowlist; /llm-review; security-sensitive)
+
+UNLANED — confirmed no shared hot files (read-only; writes only its own issue), run anytime:
+    hosted-submit-return-broken   (bug, high — READ-ONLY analysis: why hosted form submissions don't reach the creating agent; classify code/deploy/by-design; Jari decides the fix)
 ```
 <!-- execution-dag:end -->
 
