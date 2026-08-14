@@ -88,12 +88,19 @@ pub struct ResolvedConfig {
     pub api_key_origin: Option<Origin>,
     pub template: Option<String>,
     pub space_key: Option<String>,
-    /// LAN bind host for `loopback serve` (loopback-lan-serve): the explicit LAN
-    /// IP/hostname other devices reach this machine at. `None` (default) keeps serve
-    /// loopback-only. A `--bind` flag / `$GLASSPAD_BIND` still override this. Off by
-    /// default and validated at use time (`server::resolve_lan_exposure`), so a bad
-    /// value is a hard, informative error — never a silent public bind.
+    /// LAN bind IP for `loopback serve` (loopback-lan-serve): the explicit private
+    /// LAN IPv4 other devices reach this machine at. **Honored from the HOME config
+    /// only, never the repo-local `.glasspad.yaml`** — LAN exposure is a per-machine
+    /// operator choice, not a per-project one, so a cloned repo cannot silently opt a
+    /// user into a network bind (a repo-local `bind:` is dropped here and reported via
+    /// [`bind_repo_ignored`](ResolvedConfig::bind_repo_ignored)). `None` (default)
+    /// keeps serve loopback-only. A `--bind` flag / `$GLASSPAD_BIND` still override
+    /// this. Validated at use time (`server::resolve_lan_exposure`).
     pub bind: Option<String>,
+    /// `true` when a repo-local `.glasspad.yaml` set `bind:` and it was **ignored**
+    /// (home-only policy above). The CLI surfaces a warning so the operator knows the
+    /// repo tried to opt them into a LAN bind.
+    pub bind_repo_ignored: bool,
     /// Emoji favicon — reserved for the `emoji-favicon` feature. Parsed and carried
     /// here (so a config that sets it is accepted, per the design's per-key schema)
     /// but not yet consumed by a publish path; `allow(dead_code)` until it lands.
@@ -289,7 +296,11 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
     let (server, server_origin) = pick_with_origin(|f| f.server.clone());
     let template = pick(|f| f.template.clone());
     let space_key = pick(|f| f.space_key.clone());
-    let bind = pick(|f| f.bind.clone());
+    // `bind` (LAN exposure) is HOME-ONLY — never inherited from the less-trusted
+    // repo-local `.glasspad.yaml`, so a cloned repo cannot silently bind a user's
+    // machine to the LAN. A repo-local `bind:` is dropped and flagged for a warning.
+    let bind = home_file.and_then(|f| nonempty(f.bind.clone()));
+    let bind_repo_ignored = repo_file.and_then(|f| nonempty(f.bind.clone())).is_some();
     let favicon = pick(|f| f.favicon.clone());
 
     // `api_key` resolves per-file (each file's `api_key`/`api_key_file` is a unit),
@@ -319,6 +330,7 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
         template,
         space_key,
         bind,
+        bind_repo_ignored,
         favicon,
     })
 }
@@ -457,23 +469,32 @@ mod tests {
     }
 
     #[test]
-    fn bind_key_merges_per_key_repo_over_home() {
-        // The LAN `bind:` key follows the same per-key merge as every other setting:
-        // the repo file wins, else home; unset stays `None` (loopback-only default).
+    fn bind_key_is_home_only_repo_local_is_ignored() {
+        // LAN exposure is a per-MACHINE operator choice: `bind:` is honored ONLY from
+        // the home config, never the less-trusted repo-local `.glasspad.yaml`, so a
+        // cloned repo cannot silently opt a user into a network bind.
         let dir = tmp();
         let none = resolve_within(&dir, Some(&dir), &[]).unwrap();
         assert_eq!(none.bind, None, "no config → loopback-only (bind unset)");
+        assert!(!none.bind_repo_ignored);
 
+        // Repo sets bind, home does NOT → repo value is ignored + flagged.
         write(&dir, ".glasspad.yaml", "bind: 192.168.1.50\n");
-        let home = write(&dir, "home/config.yaml", "bind: 10.0.0.9\n");
+        let home = write(&dir, "home/config.yaml", "server: https://h.example\n");
         let cfg = resolve_within(&dir, Some(&dir), std::slice::from_ref(&home)).unwrap();
-        assert_eq!(cfg.bind.as_deref(), Some("192.168.1.50"));
+        assert_eq!(
+            cfg.bind, None,
+            "repo-local bind: must not activate a LAN bind"
+        );
+        assert!(cfg.bind_repo_ignored, "repo-local bind: must be flagged");
 
-        // Repo unsets it → inherit home.
+        // Home sets bind → honored (repo bind still ignored, so home wins cleanly).
         let dir2 = tmp();
+        write(&dir2, ".glasspad.yaml", "bind: 192.168.1.50\n");
         let home2 = write(&dir2, "home/config.yaml", "bind: 10.0.0.9\n");
         let cfg2 = resolve_within(&dir2, Some(&dir2), std::slice::from_ref(&home2)).unwrap();
         assert_eq!(cfg2.bind.as_deref(), Some("10.0.0.9"));
+        assert!(cfg2.bind_repo_ignored);
     }
 
     #[test]

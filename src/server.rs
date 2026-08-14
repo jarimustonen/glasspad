@@ -396,88 +396,101 @@ pub struct LanExposure {
     /// The origin (`http://<host>:<port>`) the artifact CSP names and the submit
     /// CSRF check accepts, so a LAN client's shell + `/_gp/v1/*` base libs load.
     pub origin: String,
-    /// The resolved non-loopback socket address(es) to bind in addition to loopback.
+    /// The single private-LAN socket address to bind in addition to loopback. A
+    /// `Vec` for `bind_all`'s uniform iteration, but always exactly one entry.
     pub addrs: Vec<std::net::SocketAddr>,
-    /// The exact `--bind` value the operator gave — for the loud warning + URL.
+    /// The canonical LAN IP string — for the loud warning + URL.
     pub display: String,
 }
 
-/// Resolve a `--bind <HOST>` value into a [`LanExposure`], or a human error the CLI
-/// surfaces. Strict (AI-first §1), and deliberately narrow — the issue's "explicit
-/// address preferred over a blanket 0.0.0.0":
+/// Resolve a `--bind <IP>` value into a [`LanExposure`], or a human error the CLI
+/// surfaces. Deliberately **narrow and fail-closed** — a literal **private IPv4**
+/// only. This is the shape the security review converged on:
 ///
-/// * A **wildcard** (`0.0.0.0` / `::`) is refused — name the concrete LAN address.
-/// * A **loopback** value is refused — it is already served; `--bind` is for a LAN
-///   address other devices reach.
-/// * A value carrying a scheme / path / port is refused (pass a bare host or IPv4).
-/// * A **hostname** is resolved to its non-loopback socket address(es) to bind; the
-///   literal host string is what the Host allowlist matches (what a browser sends).
+/// * **Hostnames are refused.** A hostname would be added to the DNS-rebinding Host
+///   allowlist verbatim while the socket binds whatever the name resolved to *once*
+///   — an attacker-controlled (or mDNS-spoofed / re-resolved) name reintroduces the
+///   very DNS-rebinding the guard exists to stop. A literal IP cannot be rebound.
+/// * **Wildcard** (`0.0.0.0`) and **loopback** are refused — the former is the
+///   blanket public bind this feature must never become, the latter is already served.
+/// * **Only private / link-local / CGNAT ranges** are accepted (RFC1918 `10/8`,
+///   `172.16/12`, `192.168/16`; link-local `169.254/16`; CGNAT `100.64/10`). A
+///   globally-routable (public) address is refused, so "trusted-LAN, never a public
+///   bind" is *enforced*, not merely asserted.
+/// * **IPv6 is not supported yet** (the server binds v4; the Host guard parses v4
+///   authorities) — a clean error rather than a confusing one.
+///
+/// The single bound address, the Host-allowlist entry, and the browser origin are
+/// all derived from the one canonical IP string, so they cannot diverge.
 pub fn resolve_lan_exposure(host: &str, port: u16) -> Result<LanExposure, String> {
-    use std::net::{IpAddr, ToSocketAddrs};
+    use std::net::Ipv4Addr;
 
     let raw = host.trim();
     if raw.is_empty() {
         return Err(
-            "empty --bind value: name the LAN IP or hostname other devices reach this \
+            "empty --bind value: name the private LAN IPv4 other devices reach this \
              machine at (e.g. 192.168.1.50)"
                 .to_string(),
         );
     }
-    // A bare host is wanted — reject a URL / path / embedded port so the value we add
-    // to the allowlist is exactly what a browser will send in `Host:`.
-    if raw.contains("://") || raw.contains('/') {
-        return Err(format!(
-            "invalid --bind {raw:?}: pass a bare host or IPv4 address (e.g. 192.168.1.50), \
-             not a URL or path"
-        ));
-    }
-    let allow_host = raw.to_ascii_lowercase();
-    if allow_host.contains(':') {
-        return Err(format!(
-            "invalid --bind {raw:?}: do not include a port (glasspad uses --port); pass just \
-             the host or IPv4 address"
-        ));
-    }
 
-    // Reject wildcard / loopback IPs before resolving.
-    if let Ok(ip) = allow_host.parse::<IpAddr>() {
-        if ip.is_unspecified() {
-            return Err(format!(
-                "refusing to bind the wildcard address {raw:?}: name the concrete LAN IP other \
-                 devices use (e.g. 192.168.1.50), not 0.0.0.0/::. This is a trusted-LAN \
-                 convenience, never a public bind."
-            ));
+    // Must be a literal IPv4 address. A hostname (or IPv6) is refused with a specific
+    // message so the operator knows *why* — not a generic parse error.
+    let ip: Ipv4Addr = raw.parse().map_err(|_| {
+        if raw.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!(
+                "--bind {raw:?}: IPv6 is not supported yet — pass a private LAN IPv4 address \
+                 (e.g. 192.168.1.50)"
+            )
+        } else {
+            format!(
+                "--bind {raw:?} must be a literal private LAN IPv4 address (e.g. 192.168.1.50). \
+                 Hostnames are refused: a name in the Host allowlist would reintroduce \
+                 DNS-rebinding (the browser keeps sending that name while DNS is repointed). \
+                 Name the concrete LAN IP other devices use."
+            )
         }
-        if ip.is_loopback() {
-            return Err(format!(
-                "{raw:?} is a loopback address, which is already served — --bind names a LAN \
-                 address other devices can reach"
-            ));
-        }
-    }
+    })?;
 
-    // Resolve to the socket address(es) to bind. A literal IP yields itself; a
-    // hostname yields its resolved addrs. Loopback addrs are dropped (loopback is
-    // already bound; re-binding it would collide) — if nothing non-loopback remains
-    // the value is not a LAN address.
-    let addrs: Vec<std::net::SocketAddr> = (allow_host.as_str(), port)
-        .to_socket_addrs()
-        .map_err(|e| format!("cannot resolve --bind {raw:?} to an address to bind: {e}"))?
-        .filter(|a| !a.ip().is_loopback())
-        .collect();
-    if addrs.is_empty() {
+    if ip.is_unspecified() {
         return Err(format!(
-            "--bind {raw:?} resolves only to loopback: name a LAN address other devices can reach"
+            "refusing to bind the wildcard address {raw:?}: name the concrete private LAN IP \
+             other devices use (e.g. 192.168.1.50), not 0.0.0.0. This is a trusted-LAN \
+             convenience, never a public bind."
+        ));
+    }
+    if ip.is_loopback() {
+        return Err(format!(
+            "{raw:?} is a loopback address, which is already served — --bind names a LAN \
+             address other devices can reach"
+        ));
+    }
+    // CGNAT 100.64.0.0/10 (carrier-grade NAT shared address space).
+    let is_cgnat = {
+        let o = ip.octets();
+        o[0] == 100 && (0x40..=0x7f).contains(&o[1])
+    };
+    if !(ip.is_private() || ip.is_link_local() || is_cgnat) {
+        return Err(format!(
+            "--bind {raw:?} is not a private LAN address. glasspad LAN serve is a trusted-LAN \
+             convenience and refuses to bind a public / globally-routable address — pass an \
+             RFC1918 (10.x, 172.16–31.x, 192.168.x), link-local (169.254.x), or CGNAT \
+             (100.64–127.x) IPv4 address."
         ));
     }
 
+    let allow_host = ip.to_string();
     Ok(LanExposure {
-        allow_host: allow_host.clone(),
-        // Origin from the lowercased host — browsers normalize the Origin host to
-        // lowercase, and the submit CSRF check compares it verbatim.
-        origin: format!("http://{allow_host}:{port}"),
-        addrs,
-        display: raw.to_string(),
+        // Origin omits the default HTTP port (80) so it matches the browser's Origin
+        // header serialization; any other port is kept verbatim.
+        origin: if port == 80 {
+            format!("http://{allow_host}")
+        } else {
+            format!("http://{allow_host}:{port}")
+        },
+        addrs: vec![std::net::SocketAddr::from((ip, port))],
+        display: allow_host.clone(),
+        allow_host,
     })
 }
 
@@ -536,11 +549,16 @@ pub async fn serve_on_all(listeners: Vec<TcpListener>, app: Router) -> std::io::
         let app = app.clone();
         set.spawn(async move { axum::serve(listener, app).await });
     }
-    match set.join_next().await {
+    let result = match set.join_next().await {
         Some(Ok(res)) => res,
         Some(Err(join)) => Err(std::io::Error::other(format!("serve task failed: {join}"))),
         None => Ok(()),
-    }
+    };
+    // The first listener ended (only on error — serve runs until the process is
+    // signaled). Explicitly stop the rest rather than relying on JoinSet's drop-abort,
+    // so the intent survives refactoring and no sibling listener lingers.
+    set.abort_all();
+    result
 }
 
 /// Scan `dir` into a one-space [`Snapshot`], also returning the derived space
@@ -1261,26 +1279,82 @@ mod tests {
     }
 
     #[test]
-    fn resolve_lan_exposure_accepts_ip_and_rejects_wildcard_loopback_and_junk() {
-        // A concrete LAN IP resolves: it binds itself and is the allowlist host + origin.
-        let lan = resolve_lan_exposure("192.168.1.50", 3000).expect("LAN IP resolves");
+    fn resolve_lan_exposure_is_literal_private_ipv4_only() {
+        // A concrete private LAN IPv4 binds itself and becomes the allowlist host +
+        // origin (all three derived from one canonical string, so they can't diverge).
+        let lan = resolve_lan_exposure("192.168.1.50", 3000).expect("private LAN IP");
         assert_eq!(lan.allow_host, "192.168.1.50");
         assert_eq!(lan.origin, "http://192.168.1.50:3000");
-        assert!(
-            lan.addrs
-                .iter()
-                .any(|a| a.to_string() == "192.168.1.50:3000")
+        assert_eq!(lan.addrs, vec!["192.168.1.50:3000".parse().unwrap()]);
+
+        // Every private range + link-local + CGNAT is accepted.
+        for ip in ["10.0.0.5", "172.16.9.9", "169.254.1.2", "100.64.0.1"] {
+            assert!(
+                resolve_lan_exposure(ip, 3000).is_ok(),
+                "{ip} should resolve"
+            );
+        }
+
+        // Port 80 is omitted from the origin so it matches the browser's Origin header.
+        assert_eq!(
+            resolve_lan_exposure("192.168.1.50", 80).unwrap().origin,
+            "http://192.168.1.50"
         );
 
-        // The wildcard, loopback, and malformed values are all hard errors — never a
+        // Hostnames are REFUSED — a name in the Host allowlist reintroduces DNS
+        // rebinding. This is the core security property.
+        assert!(resolve_lan_exposure("mymac.local", 3000).is_err());
+        assert!(resolve_lan_exposure("localhost", 3000).is_err());
+        assert!(resolve_lan_exposure("evil.example.com", 3000).is_err());
+
+        // Wildcard, loopback, PUBLIC IPs, IPv6, and junk are all hard errors — never a
         // silent public bind.
         assert!(resolve_lan_exposure("0.0.0.0", 3000).is_err());
-        assert!(resolve_lan_exposure("::", 3000).is_err());
         assert!(resolve_lan_exposure("127.0.0.1", 3000).is_err());
-        assert!(resolve_lan_exposure("localhost", 3000).is_err()); // resolves only to loopback
-        assert!(resolve_lan_exposure("http://192.168.1.50", 3000).is_err()); // URL, not a host
+        assert!(resolve_lan_exposure("8.8.8.8", 3000).is_err()); // public
+        assert!(resolve_lan_exposure("203.0.113.5", 3000).is_err()); // public (TEST-NET)
+        assert!(resolve_lan_exposure("::1", 3000).is_err()); // IPv6 unsupported
+        assert!(resolve_lan_exposure("fe80::1", 3000).is_err()); // IPv6 unsupported
+        assert!(resolve_lan_exposure("http://192.168.1.50", 3000).is_err());
         assert!(resolve_lan_exposure("192.168.1.50:8080", 3000).is_err()); // embedded port
         assert!(resolve_lan_exposure("   ", 3000).is_err()); // empty
+    }
+
+    /// The guard also rejects a foreign HTTP/1.1 absolute-form / HTTP-2 `:authority`
+    /// even when the `Host:` header itself names loopback — the authority on the URI
+    /// must independently pass the allowlist (RFC 7230 §5.4 defense in depth).
+    #[tokio::test]
+    async fn host_guard_rejects_foreign_absolute_form_authority() {
+        let app = build_app(3000);
+        // Absolute-form target with a foreign authority but a loopback Host header.
+        let s = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("http://attacker.example.com/demo/_c/index")
+                    .header("host", "127.0.0.1:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(s, StatusCode::MISDIRECTED_REQUEST);
+        // A matching loopback absolute-form authority is fine.
+        let s = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("http://127.0.0.1:3000/demo/_c/index")
+                    .header("host", "127.0.0.1:3000")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(s, StatusCode::OK);
     }
 
     #[tokio::test]

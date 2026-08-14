@@ -273,13 +273,15 @@ enum LoopbackCmd {
         #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
         port: Option<u16>,
         /// SECURITY-SENSITIVE opt-in: also serve on this LAN address so other devices
-        /// on the same local network can load the space. Pass the explicit LAN IP (or
-        /// hostname) other devices reach this machine at, e.g. `--bind 192.168.1.50`.
-        /// Loopback stays bound; only the one named host is added to the DNS-rebinding
+        /// on the same local network can load the space. Pass the explicit private LAN
+        /// IPv4 other devices reach this machine at, e.g. `--bind 192.168.1.50`.
+        /// Loopback stays bound; only this one IP is added to the DNS-rebinding
         /// allowlist. A trusted-LAN convenience carrying NO API key — never a public
-        /// bind (0.0.0.0/:: is refused). Precedence: this flag > $GLASSPAD_BIND >
-        /// config `bind:`. Omitted → loopback-only (the default).
-        #[arg(long, value_name = "LAN-IP-OR-HOST")]
+        /// bind: hostnames (DNS-rebinding risk), wildcard (0.0.0.0), IPv6, and public
+        /// IPs are all refused; only RFC1918 / link-local / CGNAT ranges are accepted.
+        /// Precedence: this flag > $GLASSPAD_BIND > `bind:` in your HOME config (a
+        /// repo-local .glasspad.yaml `bind:` is ignored). Omitted → loopback-only.
+        #[arg(long, value_name = "LAN-IPV4")]
         bind: Option<String>,
         /// Open the served URL in a browser after binding.
         #[arg(long)]

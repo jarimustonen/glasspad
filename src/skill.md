@@ -180,16 +180,21 @@ Each round stays inside the frozen null-origin sandbox, and a submission answeri
   `publish` (loopback target) already folds serve + open; reach for `loopback serve`
   only for direct control (e.g. serving the built-in fixtures, a custom port, or
   `loopback stop` to halt a running server). See `glasspad loopback --help`.
-  - **`--bind <LAN-IP-or-host>` (LAN reach, security-sensitive, opt-in):** also serve
-    on this explicit LAN address so other devices on the same local network can load
-    the space (e.g. `glasspad loopback serve ./dir --bind 192.168.1.50`). OFF by
+  - **`--bind <LAN-IPV4>` (LAN reach, security-sensitive, opt-in):** also serve on
+    this explicit **private LAN IPv4** so other devices on the same local network can
+    load the space (e.g. `glasspad loopback serve ./dir --bind 192.168.1.50`). OFF by
     default — no flag stays loopback-only. Loopback is always kept, so local tooling
     (`await-submission`/`open`/`stop`) is unaffected. The DNS-rebinding Host guard is
-    NOT dropped: only the one named host (plus loopback) is accepted; every other Host
-    is still refused. It carries **no API key** — a trusted-LAN convenience, never a
-    public bind (`0.0.0.0`/`::` is refused; name the concrete LAN address). Also
-    settable via `bind:` in `.glasspad.yaml`/home config (flag > `$GLASSPAD_BIND` >
-    config). A loud startup warning names the exact reachable URL.
+    NOT dropped: only that one IP (plus loopback) is accepted; every other Host — a
+    rebinding attacker, a different LAN IP, a foreign port, an absolute-form/`:authority`
+    mismatch — is still refused. It carries **no API key** — a trusted-LAN convenience,
+    never a public bind: **hostnames are refused** (a name in the allowlist would
+    reintroduce DNS rebinding), as are wildcard (`0.0.0.0`), IPv6, and public IPs (only
+    RFC1918 / link-local / CGNAT ranges bind). Also settable via `bind:` in your **HOME**
+    config only (a repo-local `.glasspad.yaml bind:` is ignored so a cloned repo can't
+    opt you in); precedence flag > `$GLASSPAD_BIND` > home config. Traffic is plaintext
+    HTTP — only use it on a network you trust. A loud startup warning names the exact
+    reachable URL.
 
 ## Rules enforced on load (informative errors, no silent fixups)
 

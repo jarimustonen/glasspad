@@ -4,6 +4,9 @@ updated: 2026-08-14
 type: feature
 status: in-progress
 priority: high
+commits:
+- hash: 86a26e5
+  summary: LAN-reachable loopback serve with DNS-rebinding guard kept
 ---
 
 # LAN-reachable loopback serve (share the local server to other devices, keep DNS-rebinding guard)
@@ -63,3 +66,32 @@ Design and implement a **LAN-reachable serve mode** that keeps the security post
   stays a null-origin sandboxed iframe.
 - **Loud startup warning** naming the exact reachable URL; documents it as a
   trusted-LAN convenience carrying no API key, never a public bind.
+
+## Review-driven hardening (post `/llm-review`, 4-model panel)
+
+The security panel (gemini/openai/anthropic/deepseek) reached 4/4 consensus that
+the first cut was too permissive. Applied:
+
+- **`--bind` accepts a literal private IPv4 ONLY.** Hostnames are refused — a
+  hostname in the Host allowlist reintroduces DNS rebinding (the browser keeps
+  sending the name while DNS is repointed), and a hostname resolving to `0.0.0.0`
+  bypassed the wildcard check. A literal IP cannot be rebound. This also removes the
+  multi-A-record / resolve-TOCTOU / IPv6-via-DNS surface.
+- **Private-range enforced:** only RFC1918 / link-local (169.254) / CGNAT (100.64/10)
+  bind; wildcard, loopback, IPv6, and public/globally-routable IPs are hard errors —
+  so "never a public bind" is *enforced*, not merely asserted.
+- **`bind:` is HOME-config-only.** A repo-local `.glasspad.yaml bind:` is ignored
+  (and warned about) so a cloned repo cannot silently opt a machine into a LAN bind.
+- **Guard defense-in-depth:** the Host guard also rejects a foreign HTTP/1.1
+  absolute-form / HTTP-2 `:authority` (must independently pass the allowlist) and a
+  duplicate `Host` header.
+- **Loud warning printed BEFORE the serving envelope**, names plaintext-HTTP /
+  MITM risk; default HTTP port (80) omitted from the LAN origin so CSRF matches.
+- **`serve_on_all` aborts sibling listeners** explicitly on early return.
+
+**Accepted residual (trusted-LAN threat model, documented, not a code fix):** over
+plaintext HTTP a LAN MITM can read submissions/content and inject same-origin HTML
+at the LAN origin (which the artifact CSP now names). The artifact stays null-origin
+sandboxed with `connect-src 'none'`; this is the inherent cost of a plaintext-LAN
+convenience and is called out in the startup warning. HTTPS for the LAN bind is out
+of scope for this feature.

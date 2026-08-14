@@ -79,6 +79,23 @@ fn host_allowed(host: &str, policy: &HostPolicy) -> bool {
 /// legitimate is lost. In LAN mode the allowlist gains exactly the one opted-in
 /// host; a DNS-rebinding attacker's foreign `Host` is still refused.
 pub async fn host_guard(State(policy): State<HostPolicy>, req: Request, next: Next) -> Response {
+    // Reject a smuggled/duplicate `Host` (RFC 7230 §5.4: a request with more than one
+    // Host is malformed). `get()` would otherwise silently take only the first.
+    if req.headers().get_all(header::HOST).iter().count() > 1 {
+        return (StatusCode::BAD_REQUEST, "multiple Host headers").into_response();
+    }
+    // Defense in depth: an absolute-form request-target (HTTP/1.1) or an HTTP/2
+    // `:authority` puts the effective authority on the URI, which the server MUST honor
+    // over `Host` (RFC 7230 §5.4). Hyper keeps the `Host` header verbatim, so a guard
+    // that reads only the header could be bypassed by an absolute-form target naming a
+    // loopback `Host` while the real authority is foreign. When the URI carries an
+    // authority, it must ALSO pass the allowlist. (Normal browser origin-form requests
+    // carry none, so this is inert for them.)
+    if let Some(authority) = req.uri().authority()
+        && !host_allowed(authority.as_str(), &policy)
+    {
+        return (StatusCode::MISDIRECTED_REQUEST, "bad request authority").into_response();
+    }
     match req
         .headers()
         .get(header::HOST)

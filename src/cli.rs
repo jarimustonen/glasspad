@@ -564,14 +564,26 @@ fn resolve_lan_exposure(
     port: u16,
     json: bool,
 ) -> Option<server::LanExposure> {
-    // The config `bind:` value is read leniently (a decorative-config read must not,
-    // by itself, be fatal); the flag/env still take precedence and the resolved value
-    // is validated strictly below.
+    // The config `bind:` value is HOME-ONLY (a repo-local `.glasspad.yaml` cannot opt a
+    // user into a LAN bind — enforced in `config::merge`). It is read leniently (a
+    // decorative-config read must not, by itself, be fatal); the flag/env take
+    // precedence and the resolved value is validated strictly below.
     let from_config = || {
-        std::env::current_dir()
+        let cfg = std::env::current_dir()
             .ok()
-            .and_then(|cwd| config::resolve(&cwd, &publish_config_candidates()).ok())
-            .and_then(|c| c.bind)
+            .and_then(|cwd| config::resolve(&cwd, &publish_config_candidates()).ok());
+        // Loudly note a repo-local `bind:` that we deliberately ignored — the operator
+        // should know the repo tried to opt them into a network bind.
+        if let Some(c) = &cfg
+            && c.bind_repo_ignored
+        {
+            eprintln!(
+                "warning: ignoring a repo-local .glasspad.yaml `bind:` — LAN serve must be \
+                 opted into per machine (pass --bind, set $GLASSPAD_BIND, or add `bind:` to \
+                 your HOME config), not activated by a project file"
+            );
+        }
+        cfg.and_then(|c| c.bind)
     };
     let raw = resolve_setting(flag, "GLASSPAD_BIND", from_config())?;
     match server::resolve_lan_exposure(&raw, port) {
@@ -581,9 +593,9 @@ fn resolve_lan_exposure(
 }
 
 /// The loud, security-relevant startup banner for LAN mode, naming the exact
-/// reachable URL. Printed for text mode (stderr) on serve/create/render; the JSON
-/// envelopes carry the same facts structurally (`lan`/`lan_url`). Emitting it here,
-/// separately from the normal envelope, keeps the warning impossible to miss.
+/// reachable URL. Printed to stderr on serve/create/render **before** the normal
+/// startup envelope so it is impossible to miss; the JSON envelopes carry the same
+/// facts structurally (the `lan` URL + `lan_host`).
 fn warn_lan_exposure(lan: &server::LanExposure, space_url_path: &str) {
     let url = format!("{}{}", lan.origin, space_url_path);
     eprintln!(
@@ -592,13 +604,15 @@ fn warn_lan_exposure(lan: &server::LanExposure, space_url_path: &str) {
     );
     eprintln!(
         "    (bind {}). It carries NO API key and is a trusted-LAN convenience — only run it \
-         on a network you trust, and never on a public interface. Loopback (127.0.0.1) still \
+         on a network you TRUST. Traffic is plaintext HTTP: anyone able to reach or MITM this \
+         LAN (rogue AP, ARP/mDNS spoofing) can read submissions and page content and inject \
+         same-origin HTML. Never expose it beyond a trusted LAN. Loopback (127.0.0.1) still \
          works for local tooling.",
         lan.display
     );
 }
 
-/// The LAN URL for the JSON envelope (`lan_url`), given the space's URL path
+/// The LAN URL (`lan` field in the JSON envelope), given the space's URL path
 /// (e.g. `/myspace/` or `/`).
 fn lan_url(lan: &server::LanExposure, space_url_path: &str) -> String {
     format!("{}{}", lan.origin, space_url_path)
@@ -672,10 +686,11 @@ pub async fn serve(
         Some((name, _, _)) => format!("/{name}/"),
         None => "/".to_string(),
     };
-    emit_serving(json, port, live.as_ref(), lan.as_ref(), pid_warnings);
+    // Loud LAN warning FIRST, so it precedes the ordinary "serving" line/envelope.
     if let Some(l) = lan.as_ref() {
         warn_lan_exposure(l, &url_path);
     }
+    emit_serving(json, port, live.as_ref(), lan.as_ref(), pid_warnings);
     if open {
         let _ = launch_browser(&format!("http://127.0.0.1:{port}{url_path}"));
     }
@@ -823,10 +838,10 @@ pub async fn create(
     let pid_warnings = acquire_pidfile(json).await;
     server::spawn_file_watcher(host.clone(), file, space_name.clone());
     let url_path = format!("/{space_name}/");
-    emit_created(json, port, &space_name, kind, lan.as_ref(), pid_warnings);
     if let Some(l) = lan.as_ref() {
         warn_lan_exposure(l, &url_path);
     }
+    emit_created(json, port, &space_name, kind, lan.as_ref(), pid_warnings);
     if open {
         let _ = launch_browser(&format!("http://127.0.0.1:{port}{url_path}"));
     }
@@ -1155,6 +1170,9 @@ pub async fn render(
     warnings.extend(acquire_pidfile(json).await);
     server::spawn_render_watcher(host.clone(), file, template, space_name.clone());
     let url_path = format!("/{space_name}/");
+    if let Some(l) = lan.as_ref() {
+        warn_lan_exposure(l, &url_path);
+    }
     emit_rendered(
         json,
         port,
@@ -1164,9 +1182,6 @@ pub async fn render(
         lan.as_ref(),
         warnings,
     );
-    if let Some(l) = lan.as_ref() {
-        warn_lan_exposure(l, &url_path);
-    }
     if open {
         let _ = launch_browser(&format!("http://127.0.0.1:{port}{url_path}"));
     }
