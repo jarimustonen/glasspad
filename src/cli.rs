@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
+use crate::artifact_host::guards::HostPolicy;
 use crate::artifact_host::space::{self, ScanError};
 use crate::artifact_host::{self, ArtifactHost, render, wrap};
 use crate::build::{self, LibMode};
@@ -475,8 +476,14 @@ pub fn version(json: bool) {
 /// a **warning**, not fatal: serving pages must not depend on the return channel,
 /// so the host comes up with no submission store (submit endpoints then answer
 /// `503 return_channel_unavailable`).
-fn loopback_host(port: u16, favicon: Option<String>) -> Arc<ArtifactHost> {
-    let mut host = ArtifactHost::new(port).with_favicon(favicon);
+fn loopback_host(
+    port: u16,
+    favicon: Option<String>,
+    lan_origin: Option<String>,
+) -> Arc<ArtifactHost> {
+    let mut host = ArtifactHost::new(port)
+        .with_favicon(favicon)
+        .with_lan_origin(lan_origin);
     if let Some(store) = loopback_submissions(port) {
         host = host.with_submissions(store);
     }
@@ -517,14 +524,19 @@ pub async fn loopback_serve(
     template: Option<String>,
     name: Option<String>,
     port: u16,
+    bind: Option<String>,
     open: bool,
     json: bool,
 ) {
+    // Resolve the optional LAN exposure ONCE (flag > $GLASSPAD_BIND > config `bind:`)
+    // before dispatch, so serve/create/render share one validated value. Off by
+    // default → loopback-only, byte-compatible with the pre-LAN path.
+    let lan = resolve_lan_exposure(bind, port, json);
     match path {
-        None => serve(None, port, open, json).await,
+        None => serve(None, port, lan, open, json).await,
         Some(p) => match classify_publish_path(&p, json) {
-            PathKind::Dir => serve(Some(p), port, open, json).await,
-            PathKind::Markdown => render(p, template, name, port, open, json).await,
+            PathKind::Dir => serve(Some(p), port, lan, open, json).await,
+            PathKind::Markdown => render(p, template, name, port, lan, open, json).await,
             PathKind::Html => {
                 if template.is_some() {
                     exit_error(
@@ -536,9 +548,79 @@ pub async fn loopback_serve(
                         None,
                     );
                 }
-                create(p, name, port, open, json).await;
+                create(p, name, port, lan, open, json).await;
             }
         },
+    }
+}
+
+/// Resolve the optional LAN exposure for `loopback serve --bind`: `--bind` flag >
+/// `$GLASSPAD_BIND` > config `bind:` key. `None` at every level → loopback-only (the
+/// byte-compatible default). A present value is validated eagerly
+/// ([`server::resolve_lan_exposure`]) — a wildcard/loopback/malformed value is a
+/// hard, informative error (AI-first §1), never a silent public bind.
+fn resolve_lan_exposure(
+    flag: Option<String>,
+    port: u16,
+    json: bool,
+) -> Option<server::LanExposure> {
+    // The config `bind:` value is read leniently (a decorative-config read must not,
+    // by itself, be fatal); the flag/env still take precedence and the resolved value
+    // is validated strictly below.
+    let from_config = || {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| config::resolve(&cwd, &publish_config_candidates()).ok())
+            .and_then(|c| c.bind)
+    };
+    let raw = resolve_setting(flag, "GLASSPAD_BIND", from_config())?;
+    match server::resolve_lan_exposure(&raw, port) {
+        Ok(lan) => Some(lan),
+        Err(msg) => exit_error(json, 1, "invalid_bind", &msg, Some(&raw), None),
+    }
+}
+
+/// The loud, security-relevant startup banner for LAN mode, naming the exact
+/// reachable URL. Printed for text mode (stderr) on serve/create/render; the JSON
+/// envelopes carry the same facts structurally (`lan`/`lan_url`). Emitting it here,
+/// separately from the normal envelope, keeps the warning impossible to miss.
+fn warn_lan_exposure(lan: &server::LanExposure, space_url_path: &str) {
+    let url = format!("{}{}", lan.origin, space_url_path);
+    eprintln!(
+        "⚠️  LAN MODE: this glasspad server is now reachable from OTHER DEVICES on your \
+         local network at {url}"
+    );
+    eprintln!(
+        "    (bind {}). It carries NO API key and is a trusted-LAN convenience — only run it \
+         on a network you trust, and never on a public interface. Loopback (127.0.0.1) still \
+         works for local tooling.",
+        lan.display
+    );
+}
+
+/// The LAN URL for the JSON envelope (`lan_url`), given the space's URL path
+/// (e.g. `/myspace/` or `/`).
+fn lan_url(lan: &server::LanExposure, space_url_path: &str) -> String {
+    format!("{}{}", lan.origin, space_url_path)
+}
+
+/// Bind loopback + any LAN address, exiting with the `bind_failed` envelope naming
+/// the exact address on failure. Shared by serve/create/render.
+async fn bind_all_or_exit(
+    port: u16,
+    lan: Option<&server::LanExposure>,
+    json: bool,
+) -> Vec<tokio::net::TcpListener> {
+    match server::bind_all(port, lan).await {
+        Ok(listeners) => listeners,
+        Err(e) => exit_error(
+            json,
+            2,
+            "bind_failed",
+            &format!("cannot bind {}: {}", e.addr, e.source),
+            Some(&e.addr),
+            None,
+        ),
     }
 }
 
@@ -547,8 +629,18 @@ pub async fn loopback_serve(
 /// on the served URL after binding (the loopback `publish` path sets it; explicit
 /// `loopback serve` defaults it off). Reached via `glasspad loopback serve` and the
 /// loopback `publish` dispatch.
-pub async fn serve(dir: Option<PathBuf>, port: u16, open: bool, json: bool) {
-    let host = loopback_host(port, resolve_favicon_lenient());
+pub async fn serve(
+    dir: Option<PathBuf>,
+    port: u16,
+    lan: Option<server::LanExposure>,
+    open: bool,
+    json: bool,
+) {
+    let host = loopback_host(
+        port,
+        resolve_favicon_lenient(),
+        lan.as_ref().map(|l| l.origin.clone()),
+    );
 
     // (name, nav slugs, home) when a live directory is served; None = fixtures.
     let live: Option<(String, Vec<String>, Option<String>)> = match &dir {
@@ -565,18 +657,9 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, open: bool, json: bool) {
     };
 
     // Bind before announcing: a port collision is surfaced as an error, and the
-    // startup envelope is only printed once the port is actually held.
-    let listener = match server::bind_loopback(port).await {
-        Ok(l) => l,
-        Err(e) => exit_error(
-            json,
-            2,
-            "bind_failed",
-            &format!("cannot bind 127.0.0.1:{port}: {e}"),
-            Some(&port.to_string()),
-            None,
-        ),
-    };
+    // startup envelope is only printed once the port(s) are actually held. Loopback
+    // is always bound; LAN mode additionally binds the opted-in address.
+    let listeners = bind_all_or_exit(port, lan.as_ref(), json).await;
 
     // Record this process (post-bind, so a bind failure leaves no pid file) and
     // arrange clean SIGTERM/SIGINT shutdown; a write/permission failure is fatal here.
@@ -585,17 +668,27 @@ pub async fn serve(dir: Option<PathBuf>, port: u16, open: bool, json: bool) {
     if let Some(d) = dir {
         server::spawn_watcher(host.clone(), d);
     }
-    emit_serving(json, port, live.as_ref(), pid_warnings);
+    let url_path = match live.as_ref() {
+        Some((name, _, _)) => format!("/{name}/"),
+        None => "/".to_string(),
+    };
+    emit_serving(json, port, live.as_ref(), lan.as_ref(), pid_warnings);
+    if let Some(l) = lan.as_ref() {
+        warn_lan_exposure(l, &url_path);
+    }
     if open {
-        let url = match live.as_ref() {
-            Some((name, _, _)) => format!("http://127.0.0.1:{port}/{name}/"),
-            None => format!("http://127.0.0.1:{port}/"),
-        };
-        let _ = launch_browser(&url);
+        let _ = launch_browser(&format!("http://127.0.0.1:{port}{url_path}"));
     }
 
-    let app = server::build_app_with_host(port, host);
-    if let Err(e) = server::serve_on(listener, app).await {
+    let policy = match lan.as_ref() {
+        Some(l) => HostPolicy {
+            port,
+            allow_host: Some(l.allow_host.clone()),
+        },
+        None => HostPolicy::loopback(port),
+    };
+    let app = server::build_app_with_host(policy, host);
+    if let Err(e) = server::serve_on_all(listeners, app).await {
         // A mid-run failure exits without hitting the signal handler; drop our pid
         // file so it does not linger stale.
         pidfile::remove_if_owned(std::process::id());
@@ -620,9 +713,19 @@ fn emit_serving(
     json: bool,
     port: u16,
     live: Option<&(String, Vec<String>, Option<String>)>,
+    lan: Option<&server::LanExposure>,
     mut warnings: Vec<String>,
 ) {
     let pid = std::process::id();
+    // LAN envelope fields (JSON): `lan` = the reachable URL, `lan_host` = the
+    // allowlisted host, or `null` when loopback-only.
+    let (lan_field, lan_host_field) = match (lan, live) {
+        (Some(l), Some((name, _, _))) => {
+            (json!(lan_url(l, &format!("/{name}/"))), json!(l.allow_host))
+        }
+        (Some(l), None) => (json!(lan_url(l, "/")), json!(l.allow_host)),
+        (None, _) => (serde_json::Value::Null, serde_json::Value::Null),
+    };
     match live {
         Some((name, slugs, home)) => {
             let url = format!("http://127.0.0.1:{port}/{name}/");
@@ -634,6 +737,8 @@ fn emit_serving(
                     "pid": pid,
                     "space": name,
                     "url": url,
+                    "lan": lan_field,
+                    "lan_host": lan_host_field,
                     "artifacts": slugs,
                     "home": home,
                     "warnings": warnings,
@@ -667,6 +772,8 @@ fn emit_serving(
                     "pid": pid,
                     "space": serde_json::Value::Null,
                     "url": url,
+                    "lan": lan_field,
+                    "lan_host": lan_host_field,
                     "artifacts": [],
                     "home": serde_json::Value::Null,
                     "warnings": warnings,
@@ -687,7 +794,14 @@ fn emit_serving(
 /// `glasspad create <file> [--name <space>]` — build a one-artifact space from a
 /// single file and serve it live (a single-file watch reloads on edit). The space
 /// name defaults to the file stem (validated) and can be overridden with `--name`.
-pub async fn create(file: PathBuf, name: Option<String>, port: u16, open: bool, json: bool) {
+pub async fn create(
+    file: PathBuf,
+    name: Option<String>,
+    port: u16,
+    lan: Option<server::LanExposure>,
+    open: bool,
+    json: bool,
+) {
     let (space_name, html) = load_single_file(&file, name.as_deref(), json);
     // Report which authoring level was detected — the same classifier the content
     // route uses to decide wrap-vs-verbatim (design.md §4 / plan §4).
@@ -697,30 +811,35 @@ pub async fn create(file: PathBuf, name: Option<String>, port: u16, open: bool, 
         "full-document"
     };
 
-    let host = loopback_host(port, resolve_favicon_lenient());
+    let host = loopback_host(
+        port,
+        resolve_favicon_lenient(),
+        lan.as_ref().map(|l| l.origin.clone()),
+    );
     host.swap(server::one_artifact_snapshot(&space_name, html));
 
-    let listener = match server::bind_loopback(port).await {
-        Ok(l) => l,
-        Err(e) => exit_error(
-            json,
-            2,
-            "bind_failed",
-            &format!("cannot bind 127.0.0.1:{port}: {e}"),
-            Some(&port.to_string()),
-            None,
-        ),
-    };
+    let listeners = bind_all_or_exit(port, lan.as_ref(), json).await;
 
     let pid_warnings = acquire_pidfile(json).await;
     server::spawn_file_watcher(host.clone(), file, space_name.clone());
-    emit_created(json, port, &space_name, kind, pid_warnings);
+    let url_path = format!("/{space_name}/");
+    emit_created(json, port, &space_name, kind, lan.as_ref(), pid_warnings);
+    if let Some(l) = lan.as_ref() {
+        warn_lan_exposure(l, &url_path);
+    }
     if open {
-        let _ = launch_browser(&format!("http://127.0.0.1:{port}/{space_name}/"));
+        let _ = launch_browser(&format!("http://127.0.0.1:{port}{url_path}"));
     }
 
-    let app = server::build_app_with_host(port, host);
-    if let Err(e) = server::serve_on(listener, app).await {
+    let policy = match lan.as_ref() {
+        Some(l) => HostPolicy {
+            port,
+            allow_host: Some(l.allow_host.clone()),
+        },
+        None => HostPolicy::loopback(port),
+    };
+    let app = server::build_app_with_host(policy, host);
+    if let Err(e) = server::serve_on_all(listeners, app).await {
         pidfile::remove_if_owned(std::process::id());
         exit_error(
             json,
@@ -913,9 +1032,23 @@ fn read_capped(file: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 /// Print the `create` startup envelope (mirrors [`emit_serving`], plus the single
 /// slug and the detected authoring `kind`). `pid` names what `stop` targets;
 /// `warnings` carries any pid-file takeover note.
-fn emit_created(json: bool, port: u16, space: &str, kind: &str, warnings: Vec<String>) {
+fn emit_created(
+    json: bool,
+    port: u16,
+    space: &str,
+    kind: &str,
+    lan: Option<&server::LanExposure>,
+    warnings: Vec<String>,
+) {
     let url = format!("http://127.0.0.1:{port}/{space}/");
     let pid = std::process::id();
+    let (lan_field, lan_host_field) = match lan {
+        Some(l) => (
+            json!(lan_url(l, &format!("/{space}/"))),
+            json!(l.allow_host),
+        ),
+        None => (serde_json::Value::Null, serde_json::Value::Null),
+    };
     if json {
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
@@ -926,6 +1059,8 @@ fn emit_created(json: bool, port: u16, space: &str, kind: &str, warnings: Vec<St
             "slug": server::SINGLE_SLUG,
             "home": server::SINGLE_SLUG,
             "url": url,
+            "lan": lan_field,
+            "lan_host": lan_host_field,
             "kind": kind,
             "warnings": warnings,
         });
@@ -958,6 +1093,7 @@ pub async fn render(
     template_ref: Option<String>,
     name: Option<String>,
     port: u16,
+    lan: Option<server::LanExposure>,
     open: bool,
     json: bool,
 ) {
@@ -1007,30 +1143,43 @@ pub async fn render(
         );
     }
 
-    let host = loopback_host(port, resolve_favicon_lenient());
+    let host = loopback_host(
+        port,
+        resolve_favicon_lenient(),
+        lan.as_ref().map(|l| l.origin.clone()),
+    );
     host.swap(server::one_artifact_snapshot(&space_name, body));
 
-    let listener = match server::bind_loopback(port).await {
-        Ok(l) => l,
-        Err(e) => exit_error(
-            json,
-            2,
-            "bind_failed",
-            &format!("cannot bind 127.0.0.1:{port}: {e}"),
-            Some(&port.to_string()),
-            None,
-        ),
-    };
+    let listeners = bind_all_or_exit(port, lan.as_ref(), json).await;
 
     warnings.extend(acquire_pidfile(json).await);
     server::spawn_render_watcher(host.clone(), file, template, space_name.clone());
-    emit_rendered(json, port, &space_name, &label, kind, warnings);
+    let url_path = format!("/{space_name}/");
+    emit_rendered(
+        json,
+        port,
+        &space_name,
+        &label,
+        kind,
+        lan.as_ref(),
+        warnings,
+    );
+    if let Some(l) = lan.as_ref() {
+        warn_lan_exposure(l, &url_path);
+    }
     if open {
-        let _ = launch_browser(&format!("http://127.0.0.1:{port}/{space_name}/"));
+        let _ = launch_browser(&format!("http://127.0.0.1:{port}{url_path}"));
     }
 
-    let app = server::build_app_with_host(port, host);
-    if let Err(e) = server::serve_on(listener, app).await {
+    let policy = match lan.as_ref() {
+        Some(l) => HostPolicy {
+            port,
+            allow_host: Some(l.allow_host.clone()),
+        },
+        None => HostPolicy::loopback(port),
+    };
+    let app = server::build_app_with_host(policy, host);
+    if let Err(e) = server::serve_on_all(listeners, app).await {
         pidfile::remove_if_owned(std::process::id());
         exit_error(
             json,
@@ -1213,10 +1362,18 @@ fn emit_rendered(
     space: &str,
     template: &str,
     kind: &str,
+    lan: Option<&server::LanExposure>,
     warnings: Vec<String>,
 ) {
     let url = format!("http://127.0.0.1:{port}/{space}/");
     let pid = std::process::id();
+    let (lan_field, lan_host_field) = match lan {
+        Some(l) => (
+            json!(lan_url(l, &format!("/{space}/"))),
+            json!(l.allow_host),
+        ),
+        None => (serde_json::Value::Null, serde_json::Value::Null),
+    };
     if json {
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
@@ -1227,6 +1384,8 @@ fn emit_rendered(
             "slug": server::SINGLE_SLUG,
             "home": server::SINGLE_SLUG,
             "url": url,
+            "lan": lan_field,
+            "lan_host": lan_host_field,
             "template": template,
             "template_kind": kind,
             "warnings": warnings,
@@ -1980,10 +2139,12 @@ async fn publish_loopback(
 ) {
     // `template` is `None` for a non-markdown path (validated + narrowed upstream in
     // `publish`), so the Html/Dir arms carry no template.
+    // The default `publish` verb stays loopback-only (LAN reach is the explicit
+    // `loopback serve --bind` opt-in), so no LAN exposure is threaded here.
     match kind {
-        PathKind::Dir => serve(Some(path), port, open, json).await,
-        PathKind::Markdown => render(path, template, None, port, open, json).await,
-        PathKind::Html => create(path, None, port, open, json).await,
+        PathKind::Dir => serve(Some(path), port, None, open, json).await,
+        PathKind::Markdown => render(path, template, None, port, None, open, json).await,
+        PathKind::Html => create(path, None, port, None, open, json).await,
     }
 }
 

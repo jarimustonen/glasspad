@@ -88,6 +88,12 @@ pub struct ResolvedConfig {
     pub api_key_origin: Option<Origin>,
     pub template: Option<String>,
     pub space_key: Option<String>,
+    /// LAN bind host for `loopback serve` (loopback-lan-serve): the explicit LAN
+    /// IP/hostname other devices reach this machine at. `None` (default) keeps serve
+    /// loopback-only. A `--bind` flag / `$GLASSPAD_BIND` still override this. Off by
+    /// default and validated at use time (`server::resolve_lan_exposure`), so a bad
+    /// value is a hard, informative error — never a silent public bind.
+    pub bind: Option<String>,
     /// Emoji favicon — reserved for the `emoji-favicon` feature. Parsed and carried
     /// here (so a config that sets it is accepted, per the design's per-key schema)
     /// but not yet consumed by a publish path; `allow(dead_code)` until it lands.
@@ -125,6 +131,7 @@ struct ConfigFile {
     api_key_file: Option<String>,
     template: Option<String>,
     space_key: Option<String>,
+    bind: Option<String>,
     favicon: Option<String>,
 }
 
@@ -282,6 +289,7 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
     let (server, server_origin) = pick_with_origin(|f| f.server.clone());
     let template = pick(|f| f.template.clone());
     let space_key = pick(|f| f.space_key.clone());
+    let bind = pick(|f| f.bind.clone());
     let favicon = pick(|f| f.favicon.clone());
 
     // `api_key` resolves per-file (each file's `api_key`/`api_key_file` is a unit),
@@ -310,6 +318,7 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
         api_key_origin,
         template,
         space_key,
+        bind,
         favicon,
     })
 }
@@ -445,6 +454,26 @@ mod tests {
         // server + api_key inherited from home.
         assert_eq!(cfg.server.as_deref(), Some("https://h.example"));
         assert_eq!(cfg.api_key, Some(ApiKeySource::Inline("sekret".into())));
+    }
+
+    #[test]
+    fn bind_key_merges_per_key_repo_over_home() {
+        // The LAN `bind:` key follows the same per-key merge as every other setting:
+        // the repo file wins, else home; unset stays `None` (loopback-only default).
+        let dir = tmp();
+        let none = resolve_within(&dir, Some(&dir), &[]).unwrap();
+        assert_eq!(none.bind, None, "no config → loopback-only (bind unset)");
+
+        write(&dir, ".glasspad.yaml", "bind: 192.168.1.50\n");
+        let home = write(&dir, "home/config.yaml", "bind: 10.0.0.9\n");
+        let cfg = resolve_within(&dir, Some(&dir), std::slice::from_ref(&home)).unwrap();
+        assert_eq!(cfg.bind.as_deref(), Some("192.168.1.50"));
+
+        // Repo unsets it → inherit home.
+        let dir2 = tmp();
+        let home2 = write(&dir2, "home/config.yaml", "bind: 10.0.0.9\n");
+        let cfg2 = resolve_within(&dir2, Some(&dir2), std::slice::from_ref(&home2)).unwrap();
+        assert_eq!(cfg2.bind.as_deref(), Some("10.0.0.9"));
     }
 
     #[test]

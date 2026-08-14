@@ -510,6 +510,87 @@ else
   grep -qi "reserved" /tmp/glasspad-reserved-test.log; scheck $? "reserved slug refused with informative error"
 fi
 
+# ---------------------------------------------------------------------------
+# LAN serve (loopback-lan-serve). `glasspad loopback serve --bind <LAN-IP>` opts the
+# loopback server into ALSO being reachable from other LAN devices — WITHOUT dropping
+# the DNS-rebinding Host guard. The gate: the one opted-in host is served, loopback
+# still works, and EVERY other Host (a rebinding attacker, a different LAN IP, a
+# foreign port) is STILL refused; the sandbox/CSP/airlock are unchanged (the LAN
+# origin is added to the artifact CSP host set, nothing is loosened). Needs a real
+# non-loopback IPv4 the machine owns to bind; if none is discoverable this probe is
+# SKIPPED (never a false failure) so the suite stays hermetic on a LAN-less box.
+# ---------------------------------------------------------------------------
+echo "==> Running loopback-lan-serve probes (LAN Host allowlist / DNS-rebinding held)"
+LAN_IP="$( { ipconfig getifaddr en0 2>/dev/null \
+          || ipconfig getifaddr en1 2>/dev/null \
+          || { hostname -I 2>/dev/null | awk '{print $1}'; } \
+          || true ; } | head -n1 || true )"
+case "$LAN_IP" in
+  ""|127.*|169.254.*) LAN_IP="" ;;  # none / loopback / link-local → not a LAN address
+esac
+if [ -z "$LAN_IP" ]; then
+  echo "SKIP  loopback-lan-serve probes (no non-loopback IPv4 to bind on this host)"
+else
+  LAN_PORT=$((PORT+4))
+  pkill -f "target/debug/glasspad loopback serve" 2>/dev/null || true
+  sleep 0.3
+  ./target/debug/glasspad loopback serve --port "$LAN_PORT" --bind "$LAN_IP" \
+    >/tmp/glasspad-lan-test.log 2>&1 &
+  LAN_PID=$!
+  cleanup_lan() { kill "${LAN_PID:-0}" 2>/dev/null || true; }
+  trap 'cleanup; cleanup_space; cleanup_lan' EXIT
+  # Wait for the LAN socket itself to answer (proves the extra bind came up).
+  for _ in $(seq 1 50); do
+    curl -fsS "http://$LAN_IP:$LAN_PORT/demo/_c/index" >/dev/null 2>&1 && break; sleep 0.1
+  done
+
+  lan_code() { # url  host-header(optional) -> http_code
+    if [ -n "${2:-}" ]; then
+      curl -s -o /dev/null -w '%{http_code}' -H "Host: $2" "$1"
+    else
+      curl -s -o /dev/null -w '%{http_code}' "$1"
+    fi
+  }
+
+  # Loud startup warning names the exact reachable URL (operator can't miss it).
+  grep -q "LAN MODE" /tmp/glasspad-lan-test.log; scheck $? "lan: loud LAN-mode startup warning emitted"
+  grep -q "$LAN_IP:$LAN_PORT" /tmp/glasspad-lan-test.log; scheck $? "lan: startup warning names the exact reachable host:port"
+
+  # The space is genuinely reachable over the LAN socket (the opted-in Host is served).
+  [ "$(lan_code "http://$LAN_IP:$LAN_PORT/demo/_c/index")" = "200" ]; scheck $? "lan: opted-in LAN host is served (200)"
+  # Loopback still works — local tooling (await-submission/open/stop) is unaffected.
+  [ "$(lan_code "http://127.0.0.1:$LAN_PORT/demo/_c/index")" = "200" ]; scheck $? "lan: loopback still served alongside the LAN bind (200)"
+
+  # DNS-REBINDING STILL BLOCKED: a foreign Host sent to the LAN-bound socket is refused
+  # (421), exactly as loopback-only mode refuses it — the guard is an allowlist + one
+  # opted-in host, not an off switch.
+  [ "$(lan_code "http://$LAN_IP:$LAN_PORT/demo/_c/index" "attacker.example.com")" = "421" ]; scheck $? "lan: foreign Host to the LAN socket refused (DNS-rebinding blocked, 421)"
+  [ "$(lan_code "http://$LAN_IP:$LAN_PORT/demo/_c/index" "10.255.255.254:$LAN_PORT")" = "421" ]; scheck $? "lan: a DIFFERENT LAN IP Host is refused (only the opted-in host is allowlisted, 421)"
+  [ "$(lan_code "http://$LAN_IP:$LAN_PORT/demo/_c/index" "$LAN_IP:9999")" = "421" ]; scheck $? "lan: the opted-in host on a FOREIGN port is refused (421)"
+
+  # Sandbox / CSP / airlock UNCHANGED: the artifact stays a null-origin sandboxed frame,
+  # egress stays fully closed, and the LAN origin is ADDED to the host set (nothing is
+  # loosened) so a LAN client's base libs load.
+  LAN_CSP="$(hdr "http://$LAN_IP:$LAN_PORT/demo/_c/index" content-security-policy)"
+  echo "$LAN_CSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "lan: artifact sandbox tokens unchanged"
+  echo "$LAN_CSP" | grep -q "connect-src 'none';"; scheck $? "lan: artifact egress still fully closed (connect-src 'none')"
+  ! echo "$LAN_CSP" | grep -q "allow-same-origin"; scheck $? "lan: artifact still has NO allow-same-origin"
+  ! echo "$LAN_CSP" | grep -q "allow-forms"; scheck $? "lan: artifact still has NO allow-forms (airlock intact)"
+  echo "$LAN_CSP" | grep -q "http://$LAN_IP:$LAN_PORT"; scheck $? "lan: LAN origin is added to the artifact CSP host set (base libs load)"
+
+  kill "$LAN_PID" 2>/dev/null || true
+  sleep 0.3
+fi
+
+# A wildcard / loopback / malformed --bind value is a hard, informative error — never
+# a silent public (0.0.0.0) bind. Server-independent (fails before binding).
+LAN_PORT2=$((PORT+5))
+if ./target/debug/glasspad loopback serve --port "$LAN_PORT2" --bind 0.0.0.0 >/tmp/glasspad-lan-wildcard.log 2>&1; then
+  scheck 1 "lan: wildcard --bind 0.0.0.0 refused"
+else
+  grep -qi "wildcard" /tmp/glasspad-lan-wildcard.log; scheck $? "lan: wildcard --bind 0.0.0.0 refused with informative error (no silent public bind)"
+fi
+
 echo ""
 if [ "$SPACE_FAILURES" -eq 0 ]; then
   echo "✅ Wave 2a space-model probes PASSED"

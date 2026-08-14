@@ -57,8 +57,13 @@ use space::Snapshot;
 #[derive(Clone, Debug)]
 pub enum OriginPolicy {
     /// The loopback dev server: CSP names `127.0.0.1:port` + `localhost:port`,
-    /// shell URLs are root-absolute (no mount prefix).
-    Loopback { port: u16 },
+    /// shell URLs are root-absolute (no mount prefix). In `loopback serve --bind`
+    /// LAN mode `lan` additionally carries the one opted-in LAN origin
+    /// (`http://<host>:<port>`) so a LAN client's shell + `/_gp/v1/*` base libs load
+    /// and its trusted-shell submit `Origin` is accepted; `None` (default) keeps the
+    /// origin set byte-compatible with loopback-only. The sandbox / `connect-src
+    /// 'none'` / Trusted-Types boundary is unchanged either way.
+    Loopback { port: u16, lan: Option<String> },
     /// The hosted share server: CSP names the single public `origin`
     /// (`scheme://host[:port]`), shell content/nav URLs carry the `/p` mount.
     Public { origin: String },
@@ -121,7 +126,7 @@ impl ArtifactHost {
     /// The loopback dev host (unchanged behavior): CSP names both loopback
     /// origins, shell URLs are root-absolute.
     pub fn new(port: u16) -> Self {
-        Self::with_origins(OriginPolicy::Loopback { port }, String::new())
+        Self::with_origins(OriginPolicy::Loopback { port, lan: None }, String::new())
     }
 
     /// The hosted share host: the artifact CSP names `origin` (the operator's
@@ -145,6 +150,19 @@ impl ArtifactHost {
     /// Attach a return-channel submission store (builder; loopback run mode).
     pub fn with_submissions(mut self, subs: Arc<crate::submissions::SubmissionStore>) -> Self {
         self.submissions = Some(subs);
+        self
+    }
+
+    /// Opt a loopback host into LAN mode (builder; `loopback serve --bind`): the one
+    /// extra origin `http://<host>:<port>` a LAN client is served from. Recorded on
+    /// the loopback [`OriginPolicy`] so the artifact CSP names it and the submit CSRF
+    /// check accepts it. A `None` (or a non-loopback policy) is a no-op, so the
+    /// default loopback path stays byte-compatible. The sandbox / egress boundary is
+    /// untouched — only the named same-origin host set grows by exactly one.
+    pub fn with_lan_origin(mut self, lan: Option<String>) -> Self {
+        if let (OriginPolicy::Loopback { lan: slot, .. }, Some(origin)) = (&mut self.origins, lan) {
+            *slot = Some(origin);
+        }
         self
     }
 
@@ -172,10 +190,18 @@ impl ArtifactHost {
     /// this is exercised on the loopback path).
     pub fn origin_list(&self) -> Vec<String> {
         match &self.origins {
-            OriginPolicy::Loopback { port } => vec![
-                format!("http://127.0.0.1:{port}"),
-                format!("http://localhost:{port}"),
-            ],
+            OriginPolicy::Loopback { port, lan } => {
+                let mut v = vec![
+                    format!("http://127.0.0.1:{port}"),
+                    format!("http://localhost:{port}"),
+                ];
+                // LAN mode: the shell served to a LAN device is same-origin at the
+                // opted-in host, so its trusted-shell submit carries that Origin.
+                if let Some(origin) = lan {
+                    v.push(origin.clone());
+                }
+                v
+            }
             OriginPolicy::Public { origin } => vec![origin.clone()],
         }
     }
@@ -183,7 +209,15 @@ impl ArtifactHost {
     /// The space-separated origin list the artifact CSP names for this host.
     fn csp_origins(&self) -> String {
         match &self.origins {
-            OriginPolicy::Loopback { port } => headers::self_origins(*port),
+            OriginPolicy::Loopback { port, lan } => match lan {
+                // LAN mode: the artifact loaded by a LAN client fetches `/_gp/v1/*`
+                // (and is framed) from the LAN origin, so the artifact CSP must name
+                // it alongside the loopback spellings — otherwise base.css/charts.js
+                // are CSP-blocked and the shell can't frame it. Only the named host
+                // set grows; every egress closure is unchanged.
+                Some(origin) => format!("{} {origin}", headers::self_origins(*port)),
+                None => headers::self_origins(*port),
+            },
             OriginPolicy::Public { origin } => origin.clone(),
         }
     }
@@ -783,6 +817,39 @@ mod tests {
         assert!(!valid_name("dot.ext"));
         assert!(!valid_name("../etc"));
         assert!(!valid_name(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn lan_origin_extends_csrf_and_artifact_csp_only() {
+        // `loopback serve --bind` (loopback-lan-serve): the LAN origin is added to
+        // BOTH the submit-CSRF origin list and the artifact CSP host set (so a LAN
+        // client's shell submit is accepted and its base libs load), alongside — never
+        // replacing — the loopback spellings. The default loopback host names neither.
+        let plain = ArtifactHost::new(3000);
+        assert_eq!(
+            plain.origin_list(),
+            vec!["http://127.0.0.1:3000", "http://localhost:3000"]
+        );
+        assert!(!plain.artifact_csp(true).contains("192.168.1.50"));
+
+        let lan = ArtifactHost::new(3000).with_lan_origin(Some("http://192.168.1.50:3000".into()));
+        assert_eq!(
+            lan.origin_list(),
+            vec![
+                "http://127.0.0.1:3000",
+                "http://localhost:3000",
+                "http://192.168.1.50:3000",
+            ]
+        );
+        let csp = lan.artifact_csp(true);
+        // The LAN origin is named for script/style/img/font/frame-ancestors…
+        assert!(csp.contains("http://192.168.1.50:3000"));
+        // …but the loopback spellings remain, and the frozen egress boundary is
+        // UNCHANGED — the null-origin sandbox + connect-src 'none' are intact.
+        assert!(csp.contains("http://127.0.0.1:3000"));
+        assert!(csp.starts_with("sandbox allow-scripts"));
+        assert!(csp.contains("connect-src 'none'"));
+        assert!(!csp.contains("allow-same-origin"));
     }
 
     #[test]

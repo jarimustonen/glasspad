@@ -40,14 +40,16 @@ const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 /// removed in Wave 3 (design.md §10, decision D2): the only same-origin surface
 /// now is the sandboxed artifact host, so the sole coexistence risk it posed is
 /// closed.
-pub fn build_app_with_host(port: u16, host: Arc<ArtifactHost>) -> Router {
+pub fn build_app_with_host(policy: guards::HostPolicy, host: Arc<ArtifactHost>) -> Router {
     // --- v0.2 HTML-artifact host (Wave 1 security gate + Wave 2a space model) ---
     artifact_host::router(host.clone())
         // The loopback return channel (POST submit + poll/wait), under the same
         // `_gp`/space topology and behind the same Host guard below.
         .merge(loopback_submissions_router(host))
-        // Global DNS-rebinding defense: validate the Host header on every route.
-        .layer(middleware::from_fn_with_state(port, guards::host_guard))
+        // Global DNS-rebinding defense: validate the Host header on every route
+        // against the allowlist ([`guards::HostPolicy`] — loopback, plus the one
+        // opted-in `--bind` host in LAN mode).
+        .layer(middleware::from_fn_with_state(policy, guards::host_guard))
 }
 
 // --- loopback return channel ----------------------------------------------
@@ -363,18 +365,150 @@ fn sub_err(status: StatusCode, code: &str, message: &str) -> Response {
 /// Convenience for tests that don't serve a live directory (fixtures only).
 #[cfg(test)]
 pub fn build_app(port: u16) -> Router {
-    build_app_with_host(port, Arc::new(ArtifactHost::new(port)))
+    build_app_with_host(
+        guards::HostPolicy::loopback(port),
+        Arc::new(ArtifactHost::new(port)),
+    )
 }
 
 /// The slug of the single artifact a `create`d space holds: its canonical home.
 pub const SINGLE_SLUG: &str = "index";
 
-/// Bind the loopback control plane. **Loopback-only** (design.md §5): binding a
-/// routable interface is not offered without an explicit unsafe opt-in (not
-/// implemented). Returns the bind error so the CLI can surface it as its error
-/// envelope (e.g. port already in use) rather than panicking.
+/// Bind the loopback control plane. Loopback is bound **unconditionally** on every
+/// run mode (so `await-submission` / `open` / `stop`, which all speak loopback HTTP,
+/// keep working) — LAN reach is an *additional* bind, see [`bind_all`]. Returns the
+/// bind error so the CLI can surface it as its error envelope (e.g. port already in
+/// use) rather than panicking.
 pub async fn bind_loopback(port: u16) -> std::io::Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", port)).await
+}
+
+/// A resolved LAN exposure for `glasspad loopback serve --bind <HOST>`
+/// (loopback-lan-serve). OFF by default; opting in binds ONE extra explicitly-named
+/// non-loopback address in addition to loopback and extends the DNS-rebinding Host
+/// allowlist + the artifact CSP / submit-CSRF origin set by exactly that one host.
+/// It is a **trusted-LAN convenience carrying no API key** — never a public bind.
+#[derive(Clone, Debug)]
+pub struct LanExposure {
+    /// The literal host a LAN browser sends in `Host:` (lowercased, no port) — the
+    /// one entry added to the DNS-rebinding allowlist ([`guards::HostPolicy`]).
+    pub allow_host: String,
+    /// The origin (`http://<host>:<port>`) the artifact CSP names and the submit
+    /// CSRF check accepts, so a LAN client's shell + `/_gp/v1/*` base libs load.
+    pub origin: String,
+    /// The resolved non-loopback socket address(es) to bind in addition to loopback.
+    pub addrs: Vec<std::net::SocketAddr>,
+    /// The exact `--bind` value the operator gave — for the loud warning + URL.
+    pub display: String,
+}
+
+/// Resolve a `--bind <HOST>` value into a [`LanExposure`], or a human error the CLI
+/// surfaces. Strict (AI-first §1), and deliberately narrow — the issue's "explicit
+/// address preferred over a blanket 0.0.0.0":
+///
+/// * A **wildcard** (`0.0.0.0` / `::`) is refused — name the concrete LAN address.
+/// * A **loopback** value is refused — it is already served; `--bind` is for a LAN
+///   address other devices reach.
+/// * A value carrying a scheme / path / port is refused (pass a bare host or IPv4).
+/// * A **hostname** is resolved to its non-loopback socket address(es) to bind; the
+///   literal host string is what the Host allowlist matches (what a browser sends).
+pub fn resolve_lan_exposure(host: &str, port: u16) -> Result<LanExposure, String> {
+    use std::net::{IpAddr, ToSocketAddrs};
+
+    let raw = host.trim();
+    if raw.is_empty() {
+        return Err(
+            "empty --bind value: name the LAN IP or hostname other devices reach this \
+             machine at (e.g. 192.168.1.50)"
+                .to_string(),
+        );
+    }
+    // A bare host is wanted — reject a URL / path / embedded port so the value we add
+    // to the allowlist is exactly what a browser will send in `Host:`.
+    if raw.contains("://") || raw.contains('/') {
+        return Err(format!(
+            "invalid --bind {raw:?}: pass a bare host or IPv4 address (e.g. 192.168.1.50), \
+             not a URL or path"
+        ));
+    }
+    let allow_host = raw.to_ascii_lowercase();
+    if allow_host.contains(':') {
+        return Err(format!(
+            "invalid --bind {raw:?}: do not include a port (glasspad uses --port); pass just \
+             the host or IPv4 address"
+        ));
+    }
+
+    // Reject wildcard / loopback IPs before resolving.
+    if let Ok(ip) = allow_host.parse::<IpAddr>() {
+        if ip.is_unspecified() {
+            return Err(format!(
+                "refusing to bind the wildcard address {raw:?}: name the concrete LAN IP other \
+                 devices use (e.g. 192.168.1.50), not 0.0.0.0/::. This is a trusted-LAN \
+                 convenience, never a public bind."
+            ));
+        }
+        if ip.is_loopback() {
+            return Err(format!(
+                "{raw:?} is a loopback address, which is already served — --bind names a LAN \
+                 address other devices can reach"
+            ));
+        }
+    }
+
+    // Resolve to the socket address(es) to bind. A literal IP yields itself; a
+    // hostname yields its resolved addrs. Loopback addrs are dropped (loopback is
+    // already bound; re-binding it would collide) — if nothing non-loopback remains
+    // the value is not a LAN address.
+    let addrs: Vec<std::net::SocketAddr> = (allow_host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|e| format!("cannot resolve --bind {raw:?} to an address to bind: {e}"))?
+        .filter(|a| !a.ip().is_loopback())
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!(
+            "--bind {raw:?} resolves only to loopback: name a LAN address other devices can reach"
+        ));
+    }
+
+    Ok(LanExposure {
+        allow_host: allow_host.clone(),
+        // Origin from the lowercased host — browsers normalize the Origin host to
+        // lowercase, and the submit CSRF check compares it verbatim.
+        origin: format!("http://{allow_host}:{port}"),
+        addrs,
+        display: raw.to_string(),
+    })
+}
+
+/// A bind failure that names the exact address that could not be bound, so the CLI
+/// can surface `cannot bind <addr>: <source>` in its structured error envelope.
+pub struct BindError {
+    pub addr: String,
+    pub source: std::io::Error,
+}
+
+/// Bind loopback (always) plus, in LAN mode, each resolved `--bind` address. Binding
+/// loopback first means a port collision is reported against `127.0.0.1:<port>`
+/// exactly as before; a LAN-address collision is reported against that address.
+/// Returns all listeners so the caller serves the one app on every bound socket.
+pub async fn bind_all(port: u16, lan: Option<&LanExposure>) -> Result<Vec<TcpListener>, BindError> {
+    let mut listeners = Vec::new();
+    let lo = bind_loopback(port).await.map_err(|source| BindError {
+        addr: format!("127.0.0.1:{port}"),
+        source,
+    })?;
+    listeners.push(lo);
+    if let Some(lan) = lan {
+        for addr in &lan.addrs {
+            let l = TcpListener::bind(addr).await.map_err(|source| BindError {
+                addr: addr.to_string(),
+                source,
+            })?;
+            listeners.push(l);
+        }
+    }
+    Ok(listeners)
 }
 
 /// Serve the app on an already-bound listener until the process is killed. Split
@@ -384,6 +518,29 @@ pub async fn bind_loopback(port: u16) -> std::io::Result<TcpListener> {
 /// mid-run failure as its structured error envelope (AI-first §10).
 pub async fn serve_on(listener: TcpListener, app: Router) -> std::io::Result<()> {
     axum::serve(listener, app).await
+}
+
+/// Serve one shared app on every bound listener concurrently (loopback + any LAN
+/// address), returning when the first serve task ends — normally never, until the
+/// process is signaled, at which point all tasks die with it. The [`Router`] is
+/// cheap to clone (an `Arc` of the shared [`ArtifactHost`] underneath), so both
+/// sockets front the identical guarded app; there is exactly one security contract.
+pub async fn serve_on_all(listeners: Vec<TcpListener>, app: Router) -> std::io::Result<()> {
+    // Single listener (the common loopback-only case): serve directly, no JoinSet.
+    let mut listeners = listeners;
+    if listeners.len() == 1 {
+        return serve_on(listeners.remove(0), app).await;
+    }
+    let mut set = tokio::task::JoinSet::new();
+    for listener in listeners {
+        let app = app.clone();
+        set.spawn(async move { axum::serve(listener, app).await });
+    }
+    match set.join_next().await {
+        Some(Ok(res)) => res,
+        Some(Err(join)) => Err(std::io::Error::other(format!("serve task failed: {join}"))),
+        None => Ok(()),
+    }
 }
 
 /// Scan `dir` into a one-space [`Snapshot`], also returning the derived space
@@ -774,7 +931,7 @@ mod tests {
         let store = crate::submissions::SubmissionStore::open(root).unwrap();
         let host = Arc::new(ArtifactHost::new(3000).with_submissions(store));
         host.swap(one_artifact_snapshot("myspace", "<h1>form</h1>".into()));
-        build_app_with_host(3000, host)
+        build_app_with_host(guards::HostPolicy::loopback(3000), host)
     }
 
     fn lb_req(
@@ -1055,6 +1212,75 @@ mod tests {
         )
         .await;
         assert_eq!(s, StatusCode::OK);
+    }
+
+    /// `loopback serve --bind <LAN-IP>` (loopback-lan-serve): a LAN-bound app answers
+    /// the opted-in LAN Host AND loopback, but STILL refuses every other Host — the
+    /// DNS-rebinding guard is loosened by exactly one allowlist entry, not disabled.
+    #[tokio::test]
+    async fn lan_bound_app_allowlists_only_the_configured_host() {
+        let policy = guards::HostPolicy {
+            port: 3000,
+            allow_host: Some("192.168.1.50".into()),
+        };
+        let app = build_app_with_host(policy, Arc::new(ArtifactHost::new(3000)));
+        let get = |host: &str| {
+            let host = host.to_string();
+            let app = app.clone();
+            async move {
+                app.oneshot(
+                    Request::get("/demo/_c/index")
+                        .header("host", host)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+            }
+        };
+        // The opted-in LAN host + loopback are served.
+        assert_eq!(get("192.168.1.50:3000").await, StatusCode::OK);
+        assert_eq!(get("192.168.1.50").await, StatusCode::OK);
+        assert_eq!(get("127.0.0.1:3000").await, StatusCode::OK);
+        assert_eq!(get("localhost:3000").await, StatusCode::OK);
+        // A DNS-rebinding attacker Host, a different LAN IP, and a foreign port are
+        // all still refused — the guard is an allowlist, not an off switch.
+        assert_eq!(
+            get("attacker.example.com").await,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        assert_eq!(
+            get("192.168.1.99:3000").await,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        assert_eq!(
+            get("192.168.1.50:9999").await,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+    }
+
+    #[test]
+    fn resolve_lan_exposure_accepts_ip_and_rejects_wildcard_loopback_and_junk() {
+        // A concrete LAN IP resolves: it binds itself and is the allowlist host + origin.
+        let lan = resolve_lan_exposure("192.168.1.50", 3000).expect("LAN IP resolves");
+        assert_eq!(lan.allow_host, "192.168.1.50");
+        assert_eq!(lan.origin, "http://192.168.1.50:3000");
+        assert!(
+            lan.addrs
+                .iter()
+                .any(|a| a.to_string() == "192.168.1.50:3000")
+        );
+
+        // The wildcard, loopback, and malformed values are all hard errors — never a
+        // silent public bind.
+        assert!(resolve_lan_exposure("0.0.0.0", 3000).is_err());
+        assert!(resolve_lan_exposure("::", 3000).is_err());
+        assert!(resolve_lan_exposure("127.0.0.1", 3000).is_err());
+        assert!(resolve_lan_exposure("localhost", 3000).is_err()); // resolves only to loopback
+        assert!(resolve_lan_exposure("http://192.168.1.50", 3000).is_err()); // URL, not a host
+        assert!(resolve_lan_exposure("192.168.1.50:8080", 3000).is_err()); // embedded port
+        assert!(resolve_lan_exposure("   ", 3000).is_err()); // empty
     }
 
     #[tokio::test]

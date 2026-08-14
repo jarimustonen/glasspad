@@ -2,7 +2,7 @@
 created: 2026-08-14
 updated: 2026-08-14
 type: feature
-status: open
+status: in-progress
 priority: high
 ---
 
@@ -37,3 +37,29 @@ Design and implement a **LAN-reachable serve mode** that keeps the security post
 ## Related / lands
 - Lane B (server/CLI/loopback core): `src/cli.rs`, `src/server.rs`, the loopback Host guard, config (`src/config.rs`).
 - Historically `tw view` bridged server→seat for exactly this reason; this makes the local serve natively LAN-reachable instead.
+
+## Design decisions (implementation, 2026-08-14)
+
+- **Flag:** `glasspad loopback serve --bind <LAN-IP-or-host>` (OFF by default).
+  Resolution precedence (AI-first §8): `--bind` flag > `$GLASSPAD_BIND` > config
+  `bind:` key (`.glasspad.yaml` → home). No flag → byte-compatible loopback-only.
+- **Bind model (two listeners, not `0.0.0.0`):** loopback `127.0.0.1:port` is
+  ALWAYS bound (so `await-submission`/`open`/`stop`, which all speak loopback HTTP,
+  keep working). `--bind <HOST>` ADDITIONALLY binds the resolved non-loopback
+  address(es) of `<HOST>`. Wildcard (`0.0.0.0`/`::`) and loopback values are
+  rejected — the issue's "explicit address over a blanket 0.0.0.0". A hostname is
+  resolved to its non-loopback addrs to bind; the literal host string is what the
+  allowlist matches.
+- **DNS-rebinding guard = allowlist, still fail-closed.** The `host_guard` state
+  becomes `HostPolicy{port, allow_host: Option<String>}`. Accepted Hosts: the two
+  loopback names PLUS (LAN mode) the one configured `<HOST>` (case-insensitive
+  host, exact port). Every other Host — a rebinding attacker name, a foreign IP —
+  is still `421`-refused.
+- **What the LAN Host legitimately requires:** the artifact CSP and the submit
+  CSRF `Origin` allowlist gain the LAN origin `http://<host>:<port>` (carried on
+  `OriginPolicy::Loopback{ lan }`), so a LAN client's shell + `/_gp/v1/*` base
+  libs load and its trusted-shell submit is accepted. The sandbox/`connect-src
+  'none'`/Trusted-Types/`allow-forms`-absent boundary is UNCHANGED — the artifact
+  stays a null-origin sandboxed iframe.
+- **Loud startup warning** naming the exact reachable URL; documents it as a
+  trusted-LAN convenience carrying no API key, never a public bind.

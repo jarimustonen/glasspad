@@ -222,6 +222,11 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   served space, plus hostile-SVG-asset sandboxing, the SSE-scoped `connect-src`,
   and (Wave 4) a **server-side nav-injection check** (a hostile artifact title is
   emitted only `<`-encoded in the nav data literal, never as raw markup) +
-  the shell Trusted-Types header.
+  the shell Trusted-Types header. Plus (loopback-lan-serve) **LAN-serve probes**:
+  with `loopback serve --bind <LAN-IP>`, the opted-in host + loopback are served but
+  a foreign `Host` to the LAN socket is STILL `421`-refused (DNS-rebinding held), the
+  sandbox/CSP/airlock are unchanged (the LAN origin is only *added* to the host set),
+  and a wildcard `--bind 0.0.0.0` is refused; the reachable-socket probe self-SKIPs
+  on a LAN-less host so the suite stays hermetic.
   Keep it green and **extend it** when later waves add attack surface (injection
   probes in Wave 4).

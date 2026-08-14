@@ -272,6 +272,15 @@ enum LoopbackCmd {
         /// $GLASSPAD_PORT > the built-in default (3000).
         #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
         port: Option<u16>,
+        /// SECURITY-SENSITIVE opt-in: also serve on this LAN address so other devices
+        /// on the same local network can load the space. Pass the explicit LAN IP (or
+        /// hostname) other devices reach this machine at, e.g. `--bind 192.168.1.50`.
+        /// Loopback stays bound; only the one named host is added to the DNS-rebinding
+        /// allowlist. A trusted-LAN convenience carrying NO API key — never a public
+        /// bind (0.0.0.0/:: is refused). Precedence: this flag > $GLASSPAD_BIND >
+        /// config `bind:`. Omitted → loopback-only (the default).
+        #[arg(long, value_name = "LAN-IP-OR-HOST")]
+        bind: Option<String>,
         /// Open the served URL in a browser after binding.
         #[arg(long)]
         open: bool,
@@ -347,6 +356,7 @@ async fn main() {
                 template,
                 name,
                 port,
+                bind,
                 open,
             } => {
                 cli::loopback_serve(
@@ -354,6 +364,7 @@ async fn main() {
                     template,
                     name,
                     cli::resolve_port(port, json),
+                    bind,
                     open,
                     json,
                 )
