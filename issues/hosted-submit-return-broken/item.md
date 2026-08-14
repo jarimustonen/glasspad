@@ -2,13 +2,14 @@
 created: 2026-08-14
 updated: 2026-08-14
 type: bug
-status: in-progress
+status: fixed
 priority: high
 commits:
 - hash: 52e9e4a
   summary: fix return channel for space pages + submissions drain command + publish hint
 - hash: 57cdd43
   summary: amended message (clean backticks)
+closed: 2026-08-14
 ---
 
 # Hosted form submissions don't reach the creating agent (return channel dead on maalla.dev)
