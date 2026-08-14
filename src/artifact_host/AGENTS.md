@@ -241,3 +241,13 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   on a LAN-less host so the suite stays hermetic.
   Keep it green and **extend it** when later waves add attack surface (injection
   probes in Wave 4).
+- **Green means the WHOLE suite ran, not just Phase 1.** `./test-security.sh` is
+  `set -euo pipefail`, so the FIRST failing probe aborts the run mid-suite — you can
+  see Phase 1's `✅ ALL PASSED (48 checks)` and still have Wave 2a (the Gap/space
+  probes) never execute. Confirm the run reaches its final **`✅ Wave 2a space-model
+  probes PASSED`** line AND exits 0; the 48-check count alone is not "green." (0.10.0:
+  a stale Gap-2 `grep -q '<h1>Home</h1>'` broke on the new prose heading `id`s and
+  aborted Wave 2a — a worker's "48 green" claim missed it. Re-verify worker green
+  claims against the full suite.) Also kill stray `target/debug/glasspad`
+  serve/host-serve processes between runs — a leftover port bind causes a spurious
+  early death (a false red).
