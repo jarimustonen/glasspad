@@ -210,6 +210,33 @@ enum Commands {
         #[arg(long, requires = "stream")]
         follow: bool,
     },
+    /// Drain a hosted page's return-channel backlog in one shot — every user
+    /// submission already stored for `<slug>`, without blocking.
+    ///
+    /// The returning-agent companion to `await-submission`: where that BLOCKS for
+    /// the next answer inside a live session, this does a single plain poll and
+    /// returns immediately with everything persisted so far (stdout = one compact
+    /// JSON submission per line; `--json` the full `{submissions, cursor}` envelope).
+    /// Use it when you published a page, walked away, and came back: submissions
+    /// persist server-side for the retention window, so `--since 0` (the default)
+    /// drains the whole retained backlog. Hosted-only + API-key-authenticated +
+    /// owner-scoped (a slug your key does not own is an opaque `no_such_page`);
+    /// config mirrors `publish` (--server / $GLASSPAD_SERVER, --api-key /
+    /// $GLASSPAD_API_KEY > config file).
+    Submissions {
+        /// The page slug (the `{slug}` in `/p/{slug}/`) to drain submissions for.
+        slug: String,
+        /// Only return submissions with an id greater than this cursor (default 0 =
+        /// the whole retained backlog).
+        #[arg(long, default_value_t = 0)]
+        since: u64,
+        /// Hosted server base URL (required), e.g. https://pad.example.com.
+        #[arg(long)]
+        server: Option<String>,
+        /// Bearer API key for the owning tenant (required).
+        #[arg(long)]
+        api_key: Option<String>,
+    },
     /// Parse a legacy tabular file (CSV / JSON / mbox) to JSON rows on stdout.
     ///
     /// A standalone helper for the old data formats: it parses the file (bounded
@@ -402,6 +429,12 @@ async fn main() {
             )
             .await
         }
+        Some(Commands::Submissions {
+            slug,
+            since,
+            server,
+            api_key,
+        }) => cli::submissions(slug, since, server, api_key, json).await,
         Some(Commands::Data { file, format, meta }) => cli::data(file, format, meta, json),
         Some(Commands::Version) => cli::version(json),
         Some(Commands::Skill {

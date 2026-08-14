@@ -100,9 +100,10 @@ async fn submit(
     headers: HeaderMap,
     body: Result<axum::Json<SubmitRequest>, JsonRejection>,
 ) -> Response {
-    // CSRF: a cross-site browser fetch always carries an `Origin`; require it to
-    // name our own public origin. A request with no `Origin` is not a cross-site
-    // browser POST (server-to-server / curl), so it is allowed.
+    // CSRF: the only legitimate caller is the trusted shell, whose `fetch` POST
+    // always carries an `Origin` naming our own public origin. Fail-closed — a
+    // request with a foreign `Origin` OR none at all (curl/server-to-server) is
+    // rejected (see `origin_ok`).
     if !origin_ok(&headers, std::slice::from_ref(&state.public_origin)) {
         return err(
             StatusCode::FORBIDDEN,

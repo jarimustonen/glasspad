@@ -344,30 +344,57 @@ impl Store {
     }
 
     /// The authenticated owner tenant recorded in `slug`'s `meta.json`, or `None`
-    /// if the page is absent/unreadable or its meta names a different slug. This is
-    /// the authority the return-channel read scoping uses: a tenant may read a
-    /// page's submissions only when this equals its authenticated id.
+    /// if the slug is absent/unreadable or its meta names a different slug. This is
+    /// the authority the return-channel read scoping (and `push_round`) uses: a
+    /// tenant may read/mutate a slug's submissions only when this equals its
+    /// authenticated id.
+    ///
+    /// A slug can name **either** a single-artifact page (`pages/`) **or** a
+    /// multi-artifact space (`spaces/`) — the two share one slug keyspace and the
+    /// shell's hosted return-channel endpoint (`/api/v1/pages/<slug>/submit`) is the
+    /// same for both — so this checks the page tree first, then the space tree.
+    /// Without the space fallback, every CLI-published page (the CLI always uploads a
+    /// *space* bundle, even for a single file) would be an owner-less `404` on submit
+    /// and on the owner's read — the return channel would be dead for exactly the
+    /// pages the CLI produces.
     pub fn page_tenant(&self, slug: &str) -> Option<String> {
-        let meta_path = self.pages_dir.join(slug).join(META_FILE);
-        let bytes = read_capped(&meta_path, MAX_META_BYTES).ok()?;
-        if bytes.len() as u64 > MAX_META_BYTES {
-            return None;
+        let page_meta = self.pages_dir.join(slug).join(META_FILE);
+        if let Some(bytes) = read_capped(&page_meta, MAX_META_BYTES)
+            .ok()
+            .filter(|b| b.len() as u64 <= MAX_META_BYTES)
+            && let Some(m) = serde_json::from_slice::<PageMeta>(&bytes)
+                .ok()
+                .filter(|m| m.slug == slug)
+        {
+            return Some(m.tenant);
         }
-        serde_json::from_slice::<PageMeta>(&bytes)
+        let space_meta = self.spaces_dir.join(slug).join(META_FILE);
+        let bytes = read_capped(&space_meta, MAX_META_BYTES)
+            .ok()
+            .filter(|b| b.len() as u64 <= MAX_META_BYTES)?;
+        serde_json::from_slice::<SpaceMeta>(&bytes)
             .ok()
             .filter(|m| m.slug == slug)
             .map(|m| m.tenant)
     }
 
-    /// The currently-served artifact body for `slug` (the single-artifact page's
-    /// `index`), or `None` if the page is not served. Used to compute the artifact
-    /// content-version a submission answered — server-side, never from the payload.
+    /// The currently-served artifact body a return-channel submission answered, or
+    /// `None` if the slug is not served. Used to compute the authoritative
+    /// content-version server-side (never from the payload).
+    ///
+    /// A single-file page and a single-page space both key their lone artifact as
+    /// [`SINGLE_SLUG`] (`index`), so that is tried first. A multi-page space has no
+    /// `index`-keyed lone artifact; there the submit endpoint is space-level, so the
+    /// space **home** artifact (`index` > `home` > first in nav) is the served body
+    /// whose version the submission is bound to.
     pub fn page_body(&self, slug: &str) -> Option<String> {
-        self.host
-            .snapshot()
-            .space(slug)?
-            .artifact(SINGLE_SLUG)
-            .map(|a| a.html.clone())
+        let snap = self.host.snapshot();
+        let space = snap.space(slug)?;
+        if let Some(art) = space.artifact(SINGLE_SLUG) {
+            return Some(art.html.clone());
+        }
+        let home = space.home.as_deref()?;
+        space.artifact(home).map(|a| a.html.clone())
     }
 
     /// Scan the whole store (`pages/` **and** `spaces/`) into a fresh [`Snapshot`].

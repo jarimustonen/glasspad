@@ -150,6 +150,24 @@ glasspad await-submission <slug> --server https://pad.example.com --json
   (1–300, default 30). Optional `--stream` (+`--follow`) rides an SSE stream instead
   of the long-poll, with the same result shape, for sub-second / many-page cases.
 
+**Came back later? Drain the backlog with `submissions`.** A hosted page keeps every
+answer in a durable store whether or not an agent is listening, so if you published a
+page and walked away, the submissions are still there. `glasspad submissions <slug>`
+does a single non-blocking poll and returns the whole retained backlog at once — no
+long-poll, no cursor bookkeeping:
+
+```bash
+# Hosted only: --server (or $GLASSPAD_SERVER) + API key; <slug> is the page slug.
+glasspad submissions <slug> --server https://pad.example.com --json
+# → {"submissions":[{"id":1,"data":{...}},{"id":2,...}],"cursor":2}
+```
+
+- `--since <cursor>` (default `0` = the whole retained backlog) skips already-seen
+  ids. Owner-scoped: a slug your key does not own is an opaque `no_such_page`.
+- Exit `0` whether or not the backlog is empty (an empty backlog is a valid answer,
+  not an error). Submissions survive the server's retention window; `publish` prints
+  both this command and the exact retention for the page you just published.
+
 **Multi-round (re-render in place).** After a submission you can update the *same
 live page* and the user's open view swaps to the new content:
 

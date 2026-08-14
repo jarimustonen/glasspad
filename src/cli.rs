@@ -2466,17 +2466,50 @@ async fn post_space_bundle(
         launch_browser(&space_url)
     };
 
+    // Return-channel discoverability: a hosted page's form/choice submissions are
+    // delivered only to an agent actively reading them — a published-and-forgotten
+    // page has no consumer, so its answers pile up unseen in the durable store. Print
+    // the exact `await-submission` (block for the next answer) + `submissions` (drain
+    // the backlog) invocations so a returning agent can find them, plus how long they
+    // survive. Keyed off the same `server` this publish used (config/flag precedence),
+    // never a hardcoded host. The API key is a placeholder — it is never printed.
+    let server_base = server.trim_end_matches('/');
+    let retention_days = payload.get("retention_days").and_then(|d| d.as_i64());
+    let await_cmd =
+        format!("glasspad await-submission --server {server_base} --api-key <api-key> {slug}");
+    let drain_cmd =
+        format!("glasspad submissions --server {server_base} --api-key <api-key> {slug}");
+    let retention_note = match retention_days {
+        Some(d) => format!(
+            "submissions are delivered only while an agent is listening; otherwise they persist \
+             on the server for {d} day(s) — drain the backlog later with `submissions`"
+        ),
+        None => {
+            "submissions are delivered only while an agent is listening; otherwise they persist \
+             on the server for the retention window — drain the backlog later with `submissions`"
+                .to_string()
+        }
+    };
+
     if json {
         let mut out = payload.clone();
         if let Some(obj) = out.as_object_mut() {
             obj.insert("published".into(), json!(true));
             obj.insert("browser_launched".into(), json!(launched));
+            obj.insert("await_submission".into(), json!(await_cmd));
+            obj.insert("drain_submissions".into(), json!(drain_cmd));
+            obj.insert("submissions_note".into(), json!(retention_note));
         }
         emit_json_line(&out);
     } else {
         println!("{space_url}");
         let verb = if created { "published" } else { "updated" };
         eprintln!("{verb} space '{slug}' ({page_count} pages) to {space_url}");
+        eprintln!("to receive return-channel submissions from this page, run (with your API key):");
+        eprintln!("  {await_cmd}");
+        eprintln!("or drain what accumulated while you were away:");
+        eprintln!("  {drain_cmd}");
+        eprintln!("note: {retention_note}");
     }
 }
 
@@ -2952,6 +2985,137 @@ fn resolve_publish_template(reference: &str, json: bool) -> String {
     }
     // A path to a template file (read strictly, bounded, UTF-8).
     read_capped_utf8_file(Path::new(reference), "template", "template_not_found", json)
+}
+
+// --- submissions (drain the return-channel backlog) -----------------------
+
+/// `glasspad submissions <slug> [--since <cursor>] [--server <url>]
+/// [--api-key <key>] [--json]` — fetch, in one shot, the return-channel backlog a
+/// hosted page accumulated while no agent was listening.
+///
+/// This is the **returning-agent** surface (companion to `await-submission`):
+/// where `await-submission` *blocks* for the next answer inside a live session,
+/// `submissions` does a single plain poll of the durable store and returns
+/// immediately with everything already persisted for `<slug>` since `--since`
+/// (default `0` = the whole retained backlog). A page that was published and
+/// forgotten keeps every human answer for the server's retention window, so an
+/// agent that comes back later drains it with one call.
+///
+/// Hosted-only: the return-channel store and its per-tenant scoping live on the
+/// hosted server, so a `--server` (flag / `$GLASSPAD_SERVER` / config) is required
+/// and the read is API-key-authenticated + owner-scoped — a slug the key's tenant
+/// does not own is an opaque `no_such_page` (never a cross-tenant read).
+pub async fn submissions(
+    slug: String,
+    since: u64,
+    server: Option<String>,
+    api_key: Option<String>,
+    json: bool,
+) {
+    // The slug obeys the same grammar the hosted router enforces (fail before any
+    // network round-trip, per the AI-first CLI contract).
+    if !artifact_host::valid_space(&slug) {
+        exit_error(
+            json,
+            1,
+            "invalid_slug",
+            "slug must be lowercase [a-z0-9-], start alphanumeric, ≤64 chars, and not be reserved",
+            Some(&slug),
+            None,
+        );
+    }
+
+    let cfg = resolve_publish_config(json);
+    // Hosted-only: the backlog and its per-tenant scope live on the hosted server.
+    // `resolve_server` exits with `missing_server` when none is configured, which is
+    // the right failure — there is no loopback backlog to drain.
+    let server = resolve_server(server, &cfg, json);
+    let api_key = resolve_api_key(api_key, &cfg, json);
+    if server.starts_with("http://") && !server_is_loopback(&server) {
+        eprintln!(
+            "warning: draining over plaintext http:// to a non-local host sends the API \
+             key in the clear; prefer https://"
+        );
+    }
+
+    let base = server.trim_end_matches('/');
+    let url = format!("{base}/api/v1/pages/{slug}/submissions?since={since}");
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
+    };
+    let resp = match client.get(&url).bearer_auth(&api_key).send().await {
+        Ok(r) => r,
+        Err(e) => exit_error(
+            json,
+            2,
+            "request_failed",
+            &format!("cannot reach {url}: {e}"),
+            None,
+            None,
+        ),
+    };
+
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let msg = payload
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("the server rejected the read");
+        let code = payload
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("read_rejected");
+        let exit = if status.is_client_error() { 1 } else { 2 };
+        exit_error(
+            json,
+            exit,
+            code,
+            &format!("{msg} (HTTP {})", status.as_u16()),
+            None,
+            None,
+        );
+    }
+
+    let submissions = payload
+        .get("submissions")
+        .and_then(|s| s.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let cursor = payload
+        .get("cursor")
+        .and_then(|c| c.as_u64())
+        .unwrap_or(since);
+
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "submissions": submissions,
+            "cursor": cursor,
+            "warnings": [],
+        }));
+    } else {
+        // stdout is the data channel: one compact JSON submission per line, so a
+        // caller can pipe the backlog straight into a processor.
+        for s in &submissions {
+            println!("{}", serde_json::to_string(s).unwrap_or_default());
+        }
+        eprintln!(
+            "drained {} submission(s) for '{slug}' (next cursor {cursor})",
+            submissions.len()
+        );
+    }
+    // A drain is informational: exit 0 whether or not the backlog was empty (an
+    // empty backlog is a valid answer, not an error — unlike `await-submission`'s
+    // timeout, which has a distinct exit 3).
 }
 
 // --- await-submission (return-channel client) -----------------------------

@@ -81,6 +81,10 @@ pub struct HostedState {
     pub public_origin: String,
     /// The URL mount for read routes (`/p`).
     pub mount: String,
+    /// Days a published page (and its return-channel submissions) are retained
+    /// before GC. Surfaced in the publish response so the client can tell the agent
+    /// how long an unconsumed submission backlog survives.
+    pub retention_days: i64,
 }
 
 /// Validated run configuration for the hosted server.
@@ -311,6 +315,7 @@ pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle,
         submissions,
         public_origin: config.public_origin.clone(),
         mount: MOUNT.to_string(),
+        retention_days: config.retention_days,
     };
     let app = build_router(state, host, keys);
 
@@ -414,6 +419,7 @@ mod tests {
             submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
+            retention_days: 90,
         };
         (build_router(state, host.clone(), keys), host, store)
     }
@@ -1174,6 +1180,7 @@ mod tests {
             submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
+            retention_days: 90,
         };
         let app = build_router(state, host, keys);
 
@@ -1297,6 +1304,7 @@ mod tests {
             submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
+            retention_days: 90,
         };
         let app = build_router(state, host, keys);
 
@@ -1345,6 +1353,95 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Publish a whole SPACE bundle (`POST /api/v1/spaces`) as `KEY`'s tenant and
+    /// return its assigned slug. The CLI's `publish` always uploads a space bundle
+    /// (even for a single file), so this is the shape a real return-channel page has.
+    async fn publish_space_slug(app: &Router, pages: serde_json::Value) -> String {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/spaces")
+            .header("host", TEST_HOST)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {KEY}"))
+            .body(Body::from(
+                serde_json::json!({ "pages": pages }).to_string(),
+            ))
+            .unwrap();
+        body_json(send(app, req).await).await["slug"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn space_published_page_submit_reaches_owner_and_scopes_by_tenant() {
+        // Regression for `hosted-submit-return-broken`: the CLI publishes a SPACE
+        // bundle (not a single `/api/v1/pages` page), and the return-channel submit +
+        // owner read must resolve the owner from the SPACE tree. Before the fix,
+        // `page_tenant` only consulted `pages/`, so every space page 404'd on submit
+        // and the return channel was dead for exactly the pages the CLI produces.
+        let root = tmp_root("space-submit");
+        let key2 = "fedcba9876543210fedcba9876543210";
+        let host = Arc::new(ArtifactHost::new_public(
+            "https://pad.example.com".into(),
+            MOUNT.to_string(),
+        ));
+        let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
+        let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}\nglobex:{key2}")).unwrap());
+        let state = HostedState {
+            store: store.clone(),
+            submissions,
+            public_origin: "https://pad.example.com".into(),
+            mount: MOUNT.to_string(),
+            retention_days: 90,
+        };
+        let app = build_router(state, host, keys);
+
+        // acme publishes a single-file space (the natural form-page shape).
+        let slug = publish_space_slug(
+            &app,
+            serde_json::json!([{ "slug": "index", "html": "<h1>form</h1>" }]),
+        )
+        .await;
+
+        // The shell's same-origin submit must now be ACCEPTED (was 404 before).
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({ "data": { "answer": "yes" } }),
+            ),
+        )
+        .await;
+        assert_eq!(
+            r.status(),
+            StatusCode::CREATED,
+            "space-page submit must land"
+        );
+
+        // The OWNER (acme) reads it back.
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{slug}/submissions"), Some(KEY)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let j = body_json(r).await;
+        assert_eq!(j["submissions"].as_array().unwrap().len(), 1);
+        assert_eq!(j["submissions"][0]["data"]["answer"], "yes");
+
+        // A different tenant still cannot read acme's space submissions — opaque 404.
+        let r = send(
+            &app,
+            read_req(&format!("/api/v1/pages/{slug}/submissions"), Some(key2)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[tokio::test]
     async fn stream_requires_owner_key_and_scopes_by_tenant() {
         // A2 SSE: the stream carries the SAME API-key + per-tenant scope as the poll/
@@ -1365,6 +1462,7 @@ mod tests {
             submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
+            retention_days: 90,
         };
         let app = build_router(state, host, keys);
         let slug = publish_slug(&app, serde_json::json!({ "html": "<h1>form</h1>" })).await;
@@ -1617,6 +1715,7 @@ mod tests {
             submissions,
             public_origin: "https://pad.example.com".into(),
             mount: MOUNT.to_string(),
+            retention_days: 90,
         };
         let app = build_router(state, host, keys);
 

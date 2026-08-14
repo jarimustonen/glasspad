@@ -483,6 +483,7 @@ pub async fn publish_space(
                 "pages": pages_json,
                 "page_count": published.pages.len(),
                 "created": published.created,
+                "retention_days": state.retention_days,
                 "warnings": [],
             });
             (status, axum::Json(payload)).into_response()
