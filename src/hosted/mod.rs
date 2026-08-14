@@ -81,9 +81,10 @@ pub struct HostedState {
     pub public_origin: String,
     /// The URL mount for read routes (`/p`).
     pub mount: String,
-    /// Days a published page (and its return-channel submissions) are retained
-    /// before GC. Surfaced in the publish response so the client can tell the agent
-    /// how long an unconsumed submission backlog survives.
+    /// Days a published page is retained before GC (the page lease). Surfaced in the
+    /// publish response so the client can tell the agent roughly how long an
+    /// unconsumed submission backlog stays retrievable — a submission is readable
+    /// while its owning page is still retained (submission GC shares this window).
     pub retention_days: i64,
 }
 
@@ -1439,6 +1440,85 @@ mod tests {
         )
         .await;
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn multi_page_space_binds_content_version_to_the_viewed_page() {
+        // A multi-page space shares ONE space-level submit endpoint; the trusted shell
+        // reports which page the form was on (`slug` in the envelope). The server must
+        // check `content_version` against THAT page's body, not the home page's —
+        // otherwise every non-home form would spuriously 409. Regression guard for the
+        // `page_body(space, page)` binding.
+        let root = tmp_root("space-multipage");
+        let host = Arc::new(ArtifactHost::new_public(
+            "https://pad.example.com".into(),
+            MOUNT.to_string(),
+        ));
+        let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
+        let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}")).unwrap());
+        let state = HostedState {
+            store: store.clone(),
+            submissions,
+            public_origin: "https://pad.example.com".into(),
+            mount: MOUNT.to_string(),
+            retention_days: 90,
+        };
+        let app = build_router(state, host, keys);
+
+        let contact_html = "<h1>contact</h1>";
+        let slug = publish_space_slug(
+            &app,
+            serde_json::json!([
+                { "slug": "index", "html": "<h1>home</h1>" },
+                { "slug": "contact", "html": contact_html },
+            ]),
+        )
+        .await;
+        let contact_version = crate::submissions::content_version(contact_html);
+
+        // A submit from the NON-home `contact` page, echoing contact's version, is
+        // accepted (before the fix this compared against home's version → 409).
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({
+                    "data": { "note": "hi" },
+                    "slug": "contact",
+                    "content_version": contact_version,
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(
+            r.status(),
+            StatusCode::CREATED,
+            "non-home page submit with its own version must be accepted"
+        );
+
+        // A genuinely stale version for that page is still rejected (cross-round
+        // protection intact).
+        let r = send(
+            &app,
+            submit_req(
+                &slug,
+                Some("https://pad.example.com"),
+                serde_json::json!({
+                    "data": { "note": "stale" },
+                    "slug": "contact",
+                    "content_version": "sha256:deadbeef",
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(
+            r.status(),
+            StatusCode::CONFLICT,
+            "a stale version must still 409"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

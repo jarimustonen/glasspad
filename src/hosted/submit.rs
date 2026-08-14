@@ -80,8 +80,12 @@ pub fn router(state: HostedState, keys: std::sync::Arc<auth::KeyTable>) -> Route
 /// Submit request body from the trusted shell. `data` is the untrusted user
 /// payload (size-bounded, stored opaque). `content_version` is the artifact's
 /// self-reported version echo (validated against the server's authoritative value
-/// — cross-round protection). `slug` is accepted (the shared shell sends it for
-/// the loopback path) but **ignored** here: hosted binds the slug from the URL.
+/// — cross-round protection). `slug` is the shell's currently-viewed artifact slug
+/// **within** the space: the space-level submit endpoint binds the space from the
+/// URL, but `slug` disambiguates *which page* of a multi-page space the form was on,
+/// so the authoritative `content_version` is computed from the right body (a foreign/
+/// unknown value falls back safely — see [`Store::page_body`]). Never used for
+/// ownership, which is always read from the page's own meta.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SubmitRequest {
@@ -89,7 +93,6 @@ struct SubmitRequest {
     #[serde(default)]
     content_version: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     slug: Option<String>,
 }
 
@@ -123,9 +126,11 @@ async fn submit(
         }
     };
 
-    // The slug is bound from the URL path; the page must be served and its owner is
-    // read from its own meta (never the payload).
-    let Some(body_html) = state.store.page_body(&slug) else {
+    // The space is bound from the URL path; the page must be served and its owner is
+    // read from its own meta (never the payload). `req.slug` picks the viewed page
+    // within a multi-page space so the content-version is checked against the right
+    // body; it is validated inside `page_body` and never affects ownership.
+    let Some(body_html) = state.store.page_body(&slug, req.slug.as_deref()) else {
         return err(StatusCode::NOT_FOUND, "no_such_page", "no such page");
     };
     let Some(tenant) = state.store.page_tenant(&slug) else {

@@ -2472,21 +2472,32 @@ async fn post_space_bundle(
     // the exact `await-submission` (block for the next answer) + `submissions` (drain
     // the backlog) invocations so a returning agent can find them, plus how long they
     // survive. Keyed off the same `server` this publish used (config/flag precedence),
-    // never a hardcoded host. The API key is a placeholder — it is never printed.
+    // never a hardcoded host.
+    //
+    // The commands are shown WITHOUT `--api-key`: both resolve the key from
+    // `$GLASSPAD_API_KEY` / config (the same precedence this publish used), so the
+    // printed line is copy-pasteable without pasting a secret onto argv (and where it
+    // would leak into shell history / process listings). The server is single-quoted
+    // so a URL is never re-interpreted by the shell. The real key is never printed.
     let server_base = server.trim_end_matches('/');
-    let retention_days = payload.get("retention_days").and_then(|d| d.as_i64());
-    let await_cmd =
-        format!("glasspad await-submission --server {server_base} --api-key <api-key> {slug}");
-    let drain_cmd =
-        format!("glasspad submissions --server {server_base} --api-key <api-key> {slug}");
+    let await_cmd = format!("glasspad await-submission --server '{server_base}' {slug}");
+    let drain_cmd = format!("glasspad submissions --server '{server_base}' {slug}");
+    // Only state an exact window when the server reported a sane positive value;
+    // otherwise stay generic rather than print "0 day(s)".
+    let retention_days = payload
+        .get("retention_days")
+        .and_then(|d| d.as_i64())
+        .filter(|d| *d > 0);
     let retention_note = match retention_days {
         Some(d) => format!(
-            "submissions are delivered only while an agent is listening; otherwise they persist \
-             on the server for {d} day(s) — drain the backlog later with `submissions`"
+            "submissions are delivered only while an agent is listening; otherwise the page keeps \
+             them for up to {d} day(s) (retrievable while the page is retained) — drain later with \
+             `submissions`"
         ),
         None => {
-            "submissions are delivered only while an agent is listening; otherwise they persist \
-             on the server for the retention window — drain the backlog later with `submissions`"
+            "submissions are delivered only while an agent is listening; otherwise the page keeps \
+             them for its retention window (retrievable while the page is retained) — drain later \
+             with `submissions`"
                 .to_string()
         }
     };
@@ -2505,7 +2516,10 @@ async fn post_space_bundle(
         println!("{space_url}");
         let verb = if created { "published" } else { "updated" };
         eprintln!("{verb} space '{slug}' ({page_count} pages) to {space_url}");
-        eprintln!("to receive return-channel submissions from this page, run (with your API key):");
+        eprintln!(
+            "to receive return-channel submissions from this page, run (reads \
+             $GLASSPAD_API_KEY / config):"
+        );
         eprintln!("  {await_cmd}");
         eprintln!("or drain what accumulated while you were away:");
         eprintln!("  {drain_cmd}");
@@ -2990,16 +3004,19 @@ fn resolve_publish_template(reference: &str, json: bool) -> String {
 // --- submissions (drain the return-channel backlog) -----------------------
 
 /// `glasspad submissions <slug> [--since <cursor>] [--server <url>]
-/// [--api-key <key>] [--json]` — fetch, in one shot, the return-channel backlog a
-/// hosted page accumulated while no agent was listening.
+/// [--api-key <key>] [--json]` — drain the whole return-channel backlog a hosted
+/// page accumulated while no agent was listening.
 ///
 /// This is the **returning-agent** surface (companion to `await-submission`):
 /// where `await-submission` *blocks* for the next answer inside a live session,
-/// `submissions` does a single plain poll of the durable store and returns
-/// immediately with everything already persisted for `<slug>` since `--since`
-/// (default `0` = the whole retained backlog). A page that was published and
-/// forgotten keeps every human answer for the server's retention window, so an
-/// agent that comes back later drains it with one call.
+/// `submissions` polls the durable store and returns everything persisted for
+/// `<slug>` since `--since` (default `0` = the whole retained backlog). A page that
+/// was published and forgotten keeps every human answer for the server's retention
+/// window, so an agent that comes back later drains it here. The server caps each
+/// read (`MAX_LIST`), so this **pages** through the backlog — advancing the cursor
+/// until a fetch comes back empty — rather than silently returning only the first
+/// page. A non-destructive read: it does not delete or acknowledge, so re-running
+/// with the same `--since` returns the same records.
 ///
 /// Hosted-only: the return-channel store and its per-tenant scoping live on the
 /// hosted server, so a `--server` (flag / `$GLASSPAD_SERVER` / config) is required
@@ -3031,15 +3048,20 @@ pub async fn submissions(
     // the right failure — there is no loopback backlog to drain.
     let server = resolve_server(server, &cfg, json);
     let api_key = resolve_api_key(api_key, &cfg, json);
+    let mut warnings: Vec<String> = Vec::new();
     if server.starts_with("http://") && !server_is_loopback(&server) {
-        eprintln!(
-            "warning: draining over plaintext http:// to a non-local host sends the API \
-             key in the clear; prefer https://"
-        );
+        let w = "draining over plaintext http:// to a non-local host sends the API key in the \
+                 clear; prefer https://";
+        // Under --json the warning belongs in the envelope's `warnings` array, not on
+        // stderr as unstructured text (AI-first CLI contract); otherwise print it.
+        if json {
+            warnings.push(w.to_string());
+        } else {
+            eprintln!("warning: {w}");
+        }
     }
 
     let base = server.trim_end_matches('/');
-    let url = format!("{base}/api/v1/pages/{slug}/submissions?since={since}");
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -3049,69 +3071,105 @@ pub async fn submissions(
         Ok(c) => c,
         Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
     };
-    let resp = match client.get(&url).bearer_auth(&api_key).send().await {
-        Ok(r) => r,
-        Err(e) => exit_error(
-            json,
-            2,
-            "request_failed",
-            &format!("cannot reach {url}: {e}"),
-            None,
-            None,
-        ),
-    };
 
-    let status = resp.status();
-    let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-    if !status.is_success() {
-        let msg = payload
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(|m| m.as_str())
-            .unwrap_or("the server rejected the read");
-        let code = payload
-            .get("error")
-            .and_then(|e| e.get("code"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("read_rejected");
-        let exit = if status.is_client_error() { 1 } else { 2 };
-        exit_error(
-            json,
-            exit,
-            code,
-            &format!("{msg} (HTTP {})", status.as_u16()),
-            None,
-            None,
-        );
+    // Page through the backlog: each read returns at most `MAX_LIST` rows and a
+    // cursor; keep fetching from the cursor until a page comes back empty. The
+    // cursor is strictly monotonic server-side, so this always terminates and never
+    // re-reads a row. (A steady live writer would keep feeding new rows; we stop the
+    // moment a fetch returns nothing, so at worst we also drain rows that arrived
+    // mid-scan — the intended behaviour for a "give me everything" drain.)
+    let mut cursor = since;
+    let mut all: Vec<serde_json::Value> = Vec::new();
+    loop {
+        let url = format!("{base}/api/v1/pages/{slug}/submissions?since={cursor}");
+        let resp = match client.get(&url).bearer_auth(&api_key).send().await {
+            Ok(r) => r,
+            Err(e) => exit_error(
+                json,
+                2,
+                "request_failed",
+                &format!("cannot reach {url}: {e}"),
+                None,
+                None,
+            ),
+        };
+
+        let status = resp.status();
+        let payload: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+        if !status.is_success() {
+            let msg = payload
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("the server rejected the read");
+            let code = payload
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("read_rejected");
+            let exit = if status.is_client_error() { 1 } else { 2 };
+            exit_error(
+                json,
+                exit,
+                code,
+                &format!("{msg} (HTTP {})", status.as_u16()),
+                None,
+                None,
+            );
+        }
+
+        // A 2xx with a body that is not the documented envelope (a proxy error page,
+        // truncated JSON, wrong shape) must NOT be silently reported as "no backlog":
+        // require a `submissions` array, else fail as a protocol error (exit 2).
+        let Some(page) = payload.get("submissions").and_then(|s| s.as_array()) else {
+            exit_error(
+                json,
+                2,
+                "invalid_server_response",
+                &format!(
+                    "server returned HTTP {} but no submissions array",
+                    status.as_u16()
+                ),
+                None,
+                None,
+            );
+        };
+        let next = payload.get("cursor").and_then(|c| c.as_u64());
+
+        if page.is_empty() {
+            // Drained: adopt the server's terminal cursor when it gave one.
+            if let Some(c) = next {
+                cursor = c;
+            }
+            break;
+        }
+
+        // Non-JSON mode streams each row as it lands (so a huge backlog pipes without
+        // buffering); JSON mode accumulates for one envelope at the end.
+        for s in page {
+            if json {
+                all.push(s.clone());
+            } else {
+                println!("{}", serde_json::to_string(s).unwrap_or_default());
+            }
+        }
+
+        // Advance strictly; a non-advancing/absent cursor would loop forever, so stop.
+        match next {
+            Some(c) if c > cursor => cursor = c,
+            _ => break,
+        }
     }
-
-    let submissions = payload
-        .get("submissions")
-        .and_then(|s| s.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let cursor = payload
-        .get("cursor")
-        .and_then(|c| c.as_u64())
-        .unwrap_or(since);
 
     if json {
         emit_json_line(&json!({
             "schema_version": SCHEMA_VERSION,
-            "submissions": submissions,
+            "submissions": all,
             "cursor": cursor,
-            "warnings": [],
+            "warnings": warnings,
         }));
     } else {
-        // stdout is the data channel: one compact JSON submission per line, so a
-        // caller can pipe the backlog straight into a processor.
-        for s in &submissions {
-            println!("{}", serde_json::to_string(s).unwrap_or_default());
-        }
-        eprintln!(
-            "drained {} submission(s) for '{slug}' (next cursor {cursor})",
-            submissions.len()
-        );
+        eprintln!("drained backlog for '{slug}' (final cursor {cursor})");
     }
     // A drain is informational: exit 0 whether or not the backlog was empty (an
     // empty backlog is a valid answer, not an error — unlike `await-submission`'s

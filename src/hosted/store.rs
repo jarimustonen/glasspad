@@ -345,9 +345,12 @@ impl Store {
 
     /// The authenticated owner tenant recorded in `slug`'s `meta.json`, or `None`
     /// if the slug is absent/unreadable or its meta names a different slug. This is
-    /// the authority the return-channel read scoping (and `push_round`) uses: a
-    /// tenant may read/mutate a slug's submissions only when this equals its
-    /// authenticated id.
+    /// the authority the return-channel scoping uses: the submit handler binds a
+    /// submission to this owner, and a tenant may read a slug's submissions only
+    /// when this equals its authenticated id. (`push_round` is *not* routed through
+    /// here — it uses the page-only `page_owned_by`, so multi-round stays a
+    /// single-artifact-page feature; see the return-channel notes for the space
+    /// follow-up.)
     ///
     /// A slug can name **either** a single-artifact page (`pages/`) **or** a
     /// multi-artifact space (`spaces/`) — the two share one slug keyspace and the
@@ -358,38 +361,69 @@ impl Store {
     /// and on the owner's read — the return channel would be dead for exactly the
     /// pages the CLI produces.
     pub fn page_tenant(&self, slug: &str) -> Option<String> {
-        let page_meta = self.pages_dir.join(slug).join(META_FILE);
-        if let Some(bytes) = read_capped(&page_meta, MAX_META_BYTES)
-            .ok()
-            .filter(|b| b.len() as u64 <= MAX_META_BYTES)
-            && let Some(m) = serde_json::from_slice::<PageMeta>(&bytes)
-                .ok()
-                .filter(|m| m.slug == slug)
-        {
-            return Some(m.tenant);
+        let page_owner = self.owner_from_meta::<PageMeta, _>(
+            &self.pages_dir.join(slug).join(META_FILE),
+            slug,
+            |m| (m.schema == META_SCHEMA).then_some((m.slug, m.tenant)),
+        );
+        let space_owner = self.owner_from_meta::<SpaceMeta, _>(
+            &self.spaces_dir.join(slug).join(META_FILE),
+            slug,
+            |m| (m.schema == SPACE_META_SCHEMA).then_some((m.slug, m.tenant)),
+        );
+        // Fail closed under ambiguity: `fresh_slug` keeps the page and space trees
+        // from ever sharing a slug, so a slug present in BOTH is corrupt/tampered
+        // state where the two metas could name different owners and the served
+        // snapshot (pages win) could disagree with a naive pages-first pick. Rather
+        // than risk binding a submission to the wrong tenant, refuse — the caller
+        // maps `None` to the same opaque 404 as a missing page, leaking nothing.
+        match (page_owner, space_owner) {
+            (Some(_), Some(_)) => None,
+            (Some(t), None) | (None, Some(t)) => Some(t),
+            (None, None) => None,
         }
-        let space_meta = self.spaces_dir.join(slug).join(META_FILE);
-        let bytes = read_capped(&space_meta, MAX_META_BYTES)
+    }
+
+    /// Read + validate an owner tenant from a `meta.json` sidecar. Bounded read;
+    /// `extract` returns `(meta.slug, meta.tenant)` only when the schema is current.
+    /// The recorded slug must equal the addressed `slug` and the tenant must satisfy
+    /// the space grammar (matching the loaders' defense-in-depth), else `None` — a
+    /// hand-tampered meta cannot smuggle a bad owner into route authorization.
+    fn owner_from_meta<T, F>(&self, meta_path: &Path, slug: &str, extract: F) -> Option<String>
+    where
+        T: serde::de::DeserializeOwned,
+        F: FnOnce(T) -> Option<(String, String)>,
+    {
+        let bytes = read_capped(meta_path, MAX_META_BYTES)
             .ok()
             .filter(|b| b.len() as u64 <= MAX_META_BYTES)?;
-        serde_json::from_slice::<SpaceMeta>(&bytes)
-            .ok()
-            .filter(|m| m.slug == slug)
-            .map(|m| m.tenant)
+        let (meta_slug, tenant) = extract(serde_json::from_slice::<T>(&bytes).ok()?)?;
+        (meta_slug == slug && valid_space(&tenant)).then_some(tenant)
     }
 
     /// The currently-served artifact body a return-channel submission answered, or
     /// `None` if the slug is not served. Used to compute the authoritative
     /// content-version server-side (never from the payload).
     ///
-    /// A single-file page and a single-page space both key their lone artifact as
-    /// [`SINGLE_SLUG`] (`index`), so that is tried first. A multi-page space has no
-    /// `index`-keyed lone artifact; there the submit endpoint is space-level, so the
-    /// space **home** artifact (`index` > `home` > first in nav) is the served body
-    /// whose version the submission is bound to.
-    pub fn page_body(&self, slug: &str) -> Option<String> {
+    /// The hosted submit endpoint is **space-level** (`/api/v1/pages/<space>/submit`),
+    /// but a multi-page space's form lives on a *specific* page, and the trusted shell
+    /// reports which one in its envelope (`slug: <current>`). `page` is that reported
+    /// artifact slug: when it names a real artifact of this space, its body is the one
+    /// the submission answered (so a non-home page's `content_version` is checked
+    /// against the right body, not the home's — otherwise every non-home form would
+    /// spuriously 409). `page` is untrusted, so a missing/empty/unknown value falls
+    /// back to the lone single-artifact body ([`SINGLE_SLUG`] = `index`, the single-
+    /// file / single-page case) and then the space **home** (`index` > `home` > first
+    /// in nav) — never an escape from this space.
+    pub fn page_body(&self, space_slug: &str, page: Option<&str>) -> Option<String> {
         let snap = self.host.snapshot();
-        let space = snap.space(slug)?;
+        let space = snap.space(space_slug)?;
+        if let Some(art) = page
+            .filter(|p| !p.is_empty())
+            .and_then(|p| space.artifact(p))
+        {
+            return Some(art.html.clone());
+        }
         if let Some(art) = space.artifact(SINGLE_SLUG) {
             return Some(art.html.clone());
         }
@@ -1825,6 +1859,84 @@ mod tests {
     }
 
     #[test]
+    fn page_tenant_resolves_page_or_space_and_fails_closed_on_collision() {
+        let root = tmp_root("page-tenant");
+        let store = Store::open(&root, host()).unwrap();
+
+        // A page-tree owner and a space-tree owner each resolve on their own.
+        let page = store
+            .publish("acme", "<h1>page</h1>".into(), None, None)
+            .unwrap();
+        assert_eq!(store.page_tenant(&page.slug).as_deref(), Some("acme"));
+
+        let space = space::Space {
+            artifacts: std::collections::BTreeMap::from([(
+                "index".to_string(),
+                space::Artifact {
+                    html: "<h1>space</h1>".into(),
+                    title: "s".into(),
+                },
+            )]),
+            assets: Default::default(),
+            nav: vec!["index".into()],
+            nav_groups: vec![],
+            home: Some("index".into()),
+            title: None,
+            favicon: None,
+        };
+        let sp = store.publish_space("globex", space, None).unwrap();
+        assert_eq!(store.page_tenant(&sp.slug).as_deref(), Some("globex"));
+
+        // An UNKNOWN slug is None (opaque-404 upstream).
+        assert_eq!(store.page_tenant("nope-nope-nope"), None);
+
+        // Hand-plant a page/ and space/ meta at the SAME slug owned by DIFFERENT
+        // tenants — a corrupt/tampered state `fresh_slug` normally prevents. Ownership
+        // is ambiguous, so `page_tenant` must FAIL CLOSED (None), never silently bind
+        // a submission to whichever tree it happened to read first.
+        let collide = "collideslug";
+        let now = Utc::now();
+        let page_dir = root.join("pages").join(collide);
+        std::fs::create_dir_all(&page_dir).unwrap();
+        std::fs::write(
+            page_dir.join(META_FILE),
+            serde_json::to_vec(&PageMeta {
+                schema: META_SCHEMA,
+                slug: collide.into(),
+                tenant: "acme".into(),
+                title: "t".into(),
+                created_at: now,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let space_dir = root.join("spaces").join(collide);
+        std::fs::create_dir_all(&space_dir).unwrap();
+        std::fs::write(
+            space_dir.join(META_FILE),
+            serde_json::to_vec(&SpaceMeta {
+                schema: SPACE_META_SCHEMA,
+                slug: collide.into(),
+                tenant: "globex".into(),
+                title: None,
+                nav: vec![],
+                nav_groups: vec![],
+                home: None,
+                favicon: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            store.page_tenant(collide),
+            None,
+            "a slug owned by different tenants in both trees must fail closed"
+        );
+    }
+
+    #[test]
     fn publish_persists_and_serves_and_survives_reopen() {
         let root = tmp_root("persist");
         let h = host();
@@ -2252,7 +2364,7 @@ mod tests {
             crate::submissions::content_version("<h1>round one</h1>")
         );
         assert_eq!(
-            store.page_body(&p.slug).as_deref(),
+            store.page_body(&p.slug, None).as_deref(),
             Some("<h1>round one</h1>")
         );
 
@@ -2262,7 +2374,7 @@ mod tests {
             .unwrap();
         assert_eq!(r2.round, 2);
         assert_eq!(
-            store.page_body(&p.slug).as_deref(),
+            store.page_body(&p.slug, None).as_deref(),
             Some("<h1>round two</h1>")
         );
 
@@ -2294,7 +2406,7 @@ mod tests {
         let h2 = host();
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(
-            store2.page_body(&p.slug).as_deref(),
+            store2.page_body(&p.slug, None).as_deref(),
             Some("<h1>live</h1>"),
             "reopened store must serve the live round, not the baseline"
         );
@@ -2321,7 +2433,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, RoundError::NoSuchPage));
         assert_eq!(
-            store.page_body(&victim.slug).as_deref(),
+            store.page_body(&victim.slug, None).as_deref(),
             Some("<h1>owned by globex</h1>"),
             "a non-owner push must not change the served body"
         );
@@ -2362,7 +2474,7 @@ mod tests {
         let h2 = host();
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(
-            store2.page_body(&p.slug).as_deref(),
+            store2.page_body(&p.slug, None).as_deref(),
             Some("<h1>baseline</h1>"),
             "a corrupt overlay must revert to the baseline, never blank the page"
         );
@@ -2394,7 +2506,7 @@ mod tests {
         let h2 = host();
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(
-            store2.page_body(&p.slug).as_deref(),
+            store2.page_body(&p.slug, None).as_deref(),
             Some("<h1>baseline</h1>"),
             "a torn overlay (body≠meta digest) must revert to baseline"
         );
@@ -2404,7 +2516,7 @@ mod tests {
             .unwrap();
         assert_eq!(r.round, 1);
         assert_eq!(
-            store2.page_body(&p.slug).as_deref(),
+            store2.page_body(&p.slug, None).as_deref(),
             Some("<h1>recovered</h1>")
         );
         std::fs::remove_dir_all(&root).ok();
