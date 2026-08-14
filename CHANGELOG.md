@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.11.0] - 2026-08-14
+
+Fixes the **hosted artifact return channel** and adds **inline-SVG diagrams** to
+markdown (prose) spaces. The artifact security contract is unchanged — the diagram
+pattern adds no JavaScript or `eval` surface and requires zero change to the
+null-origin sandbox or the artifact CSP; each page stays a null-origin sandboxed
+iframe (`./test-security.sh` 48 checks + Wave 2a green).
+
+### Added
+- **Inline-SVG diagram pattern for markdown spaces** — a documented, supported way to
+  embed theme-aware diagrams (the priority case: a colour-coded status DAG,
+  done/next/blocked/future) in prose pages. The producing agent owns SVG generation and
+  embeds it inline; glasspad supplies only theme-aware CSS — a `--gp-status-*` palette
+  across all three theme blocks plus `.gp-diagram` / `.gp-node` / `.gp-edge` /
+  `.gp-status-*` / `.gp-legend` / `.gp-chip` classes. Chosen over native mermaid because
+  it directly serves the live project-view case and adds no new JS/eval surface.
+- **`glasspad submissions <slug>` drain command** — a returning (or previously departed)
+  agent can fetch the accumulated submission backlog for a published page (per-tenant
+  scoped, `--json`, paginated; cross-tenant access → opaque 404).
+- **`publish` return-channel discoverability** — publishing a page now prints the exact
+  `await-submission` invocation (with the configured `--public-host`) plus a retention note.
+
+### Fixed
+- **Hosted return channel now works for CLI-published (space) pages** — hosted form
+  submissions reach the creating agent end-to-end; this was a genuine defect in the
+  hosted delivery path, not only a UX gap. Multi-page version binding, fail-closed owner
+  checks, and paginated drain hardened after multi-model review.
+
 ## [0.10.0] - 2026-08-14
 
 Adds a **per-page "on this page" table of contents** to prose (markdown) spaces —

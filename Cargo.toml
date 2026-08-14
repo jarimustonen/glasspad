@@ -1,6 +1,6 @@
 [package]
 name = "glasspad"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 description = "AI-friendly HTML/Markdown-artifact publisher: hand it markdown, get a URL — config-driven loopback or hosted, each page in a null-origin sandboxed iframe for dashboards, charts, and interactive UIs."
 license = "MIT"
