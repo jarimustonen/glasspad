@@ -2,11 +2,14 @@
 created: 2026-08-14
 updated: 2026-08-14
 type: feature
-status: in-progress
+status: done
 priority: high
 commits:
 - hash: 86a26e5
   summary: LAN-reachable loopback serve with DNS-rebinding guard kept
+- hash: cf84ed8
+  summary: harden LAN serve per 4-model security review
+closed: 2026-08-14
 ---
 
 # LAN-reachable loopback serve (share the local server to other devices, keep DNS-rebinding guard)
