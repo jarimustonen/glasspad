@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.9.0] - 2026-08-14
+
+Adds an **opt-in, LAN-reachable loopback serve** so another device on your local
+network can view a served space — without weakening the artifact security model.
+The DNS-rebinding protection is preserved as an allowlist, not dropped; the default
+behaviour is byte-compatible loopback-only. The artifact sandbox/CSP/airlock are
+unchanged (`./test-security.sh` 48 checks + Wave 2a green, plus new LAN-serve probes).
+
+### Added
+
+- **`glasspad loopback serve --bind <LAN-IP>`** — opt in to serving a space on the
+  local network, reachable from other LAN devices. Off by default (no flag →
+  byte-compatible loopback-only). The bind address must be a **literal private
+  IPv4** (RFC 1918); a wildcard `0.0.0.0` and public addresses are refused. Also
+  configurable via `.glasspad.yaml` / home config per the existing per-key merge.
+  A loud startup warning names the exact reachable URL and notes the server carries
+  no API key — a trusted-LAN convenience, never a public bind.
+
+### Security
+
+- **DNS-rebinding protection preserved under LAN mode.** The Host-header guard is
+  extended to an **allowlist** (loopback hosts + the one explicitly-configured bind
+  host), not disabled: a foreign `Host` sent to the LAN socket is still refused
+  (`421`). The artifact sandbox, CSP, egress (`connect-src 'none'`), and the
+  return-channel airlock are unchanged — the LAN origin is only *added* to the host
+  set. Hardened per a 4-model review (literal-private-IPv4-only, home-directory-only
+  bind, authority guard) with 13 new adversarial LAN probes.
+
 ## [0.8.0] - 2026-08-13
 
 Makes a structured docsite a first-class glasspad space: **grouped/nested navigation
