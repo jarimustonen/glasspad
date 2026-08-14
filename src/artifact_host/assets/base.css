@@ -49,6 +49,22 @@
   --gp-chart-grid: #e5e7eb;
   --gp-chart-bg: transparent;
   --gp-chart-cat: #4c78a8, #f58518, #e45756, #72b7b2, #54a24b, #eeca3b, #b279a2, #ff9da6, #9d755d, #bab0ac;
+
+  /* Semantic status palette for authored diagrams (the colour-coded status DAG:
+     done / next / blocked / future). Each status is a solid stroke/accent, a soft
+     fill for a node body, and a readable label colour — theme-aware. */
+  --gp-status-done: #16a34a;
+  --gp-status-done-soft: #dcfce7;
+  --gp-status-done-text: #15803d;
+  --gp-status-next: #2563eb;
+  --gp-status-next-soft: #dbeafe;
+  --gp-status-next-text: #1e40af;
+  --gp-status-blocked: #dc2626;
+  --gp-status-blocked-soft: #fee2e2;
+  --gp-status-blocked-text: #b91c1c;
+  --gp-status-future: #9ca3af;
+  --gp-status-future-soft: #f3f4f6;
+  --gp-status-future-text: #6b7280;
 }
 
 /* Dark theme tokens (explicit dark) */
@@ -85,6 +101,19 @@
   --gp-chart-grid: rgba(255, 255, 255, 0.06);
   --gp-chart-bg: #1a1b26;
   --gp-chart-cat: #60a5fa, #f472b6, #34d399, #fbbf24, #a78bfa, #fb923c, #2dd4bf, #f87171, #818cf8, #a3e635;
+
+  --gp-status-done: #34d399;
+  --gp-status-done-soft: rgba(52, 211, 153, 0.15);
+  --gp-status-done-text: #6ee7b7;
+  --gp-status-next: #60a5fa;
+  --gp-status-next-soft: rgba(96, 165, 250, 0.15);
+  --gp-status-next-text: #93c5fd;
+  --gp-status-blocked: #f87171;
+  --gp-status-blocked-soft: rgba(248, 113, 113, 0.15);
+  --gp-status-blocked-text: #fca5a5;
+  --gp-status-future: #6b7280;
+  --gp-status-future-soft: rgba(255, 255, 255, 0.06);
+  --gp-status-future-text: #9ca3af;
 }
 
 /* Auto theme: adopt dark tokens when the system prefers dark.
@@ -124,6 +153,19 @@
     --gp-chart-grid: rgba(255, 255, 255, 0.06);
     --gp-chart-bg: #1a1b26;
     --gp-chart-cat: #60a5fa, #f472b6, #34d399, #fbbf24, #a78bfa, #fb923c, #2dd4bf, #f87171, #818cf8, #a3e635;
+
+    --gp-status-done: #34d399;
+    --gp-status-done-soft: rgba(52, 211, 153, 0.15);
+    --gp-status-done-text: #6ee7b7;
+    --gp-status-next: #60a5fa;
+    --gp-status-next-soft: rgba(96, 165, 250, 0.15);
+    --gp-status-next-text: #93c5fd;
+    --gp-status-blocked: #f87171;
+    --gp-status-blocked-soft: rgba(248, 113, 113, 0.15);
+    --gp-status-blocked-text: #fca5a5;
+    --gp-status-future: #6b7280;
+    --gp-status-future-soft: rgba(255, 255, 255, 0.06);
+    --gp-status-future-text: #9ca3af;
   }
 }
 
@@ -757,6 +799,133 @@ tbody tr:hover {
   .gp-toc {
     display: none;
   }
+}
+
+/* === Authored diagrams (inline SVG) ===
+ *
+ * Approach (a) of the markdown-diagrams feature: the producing agent OWNS diagram
+ * rendering (e.g. a data-driven SVG generator) and embeds the result as inline
+ * `<svg>` — raw HTML in a `.md`/template body passes through the renderer verbatim
+ * and displays inside the null-origin artifact sandbox. NOTHING here widens the
+ * security boundary: no script, no external fetch, no CSP change. These classes only
+ * give an authored SVG (or an HTML legend) theme-aware colours from the `--gp-*`
+ * status palette above, so a colour-coded status DAG (done/next/blocked/future) reads
+ * correctly in both Glass Light and Glass Dark.
+ *
+ * The canonical shape:
+ *
+ *   <figure class="gp-diagram">
+ *     <svg viewBox="0 0 …" role="img" aria-label="…">
+ *       <path class="gp-edge" d="…"/>
+ *       <g class="gp-node gp-status-done">
+ *         <rect …/><text class="gp-node-label">Ship</text>
+ *       </g>
+ *     </svg>
+ *     <figcaption>…</figcaption>
+ *   </figure>
+ *
+ * A `.gp-status-*` class sets two custom properties — `--gp-status` (solid) and
+ * `--gp-status-bg` (soft) — that `.gp-node`/`.gp-edge`/`.gp-chip` read, so the same
+ * status class colours an SVG node, an SVG edge, or an HTML legend chip.
+ */
+
+.gp-diagram {
+  margin: 1.5em 0;
+  /* Wide diagrams scroll inside the figure instead of the page (never a horizontal
+     body scroll); centered otherwise. */
+  overflow-x: auto;
+  text-align: center;
+}
+
+.gp-diagram svg {
+  max-width: 100%;
+  height: auto;
+  display: inline-block;
+}
+
+/* Status classes expose the palette as two custom props; the shape rules below
+   consume them, falling back to neutral chrome when no status class is present. */
+.gp-status-done {
+  --gp-status: var(--gp-status-done);
+  --gp-status-bg: var(--gp-status-done-soft);
+  --gp-status-fg: var(--gp-status-done-text);
+}
+.gp-status-next {
+  --gp-status: var(--gp-status-next);
+  --gp-status-bg: var(--gp-status-next-soft);
+  --gp-status-fg: var(--gp-status-next-text);
+}
+.gp-status-blocked {
+  --gp-status: var(--gp-status-blocked);
+  --gp-status-bg: var(--gp-status-blocked-soft);
+  --gp-status-fg: var(--gp-status-blocked-text);
+}
+.gp-status-future {
+  --gp-status: var(--gp-status-future);
+  --gp-status-bg: var(--gp-status-future-soft);
+  --gp-status-fg: var(--gp-status-future-text);
+}
+
+/* An SVG node: soft body fill, solid status stroke. Defaults to neutral surface
+   chrome when the author omits a status class. */
+.gp-node {
+  fill: var(--gp-status-bg, var(--gp-surface-alt));
+  stroke: var(--gp-status, var(--gp-border-strong));
+  stroke-width: 1.5px;
+}
+
+/* A node label (SVG text) — always the reading foreground so it stays legible on
+   the soft fill in either theme. */
+.gp-node-label {
+  fill: var(--gp-text);
+  font-family: var(--gp-font-sans);
+  font-size: 13px;
+}
+
+/* An edge/connector between nodes: solid status colour (or neutral), never filled. */
+.gp-edge {
+  fill: none;
+  stroke: var(--gp-status, var(--gp-border-strong));
+  stroke-width: 1.5px;
+}
+
+.gp-edge-arrow {
+  fill: var(--gp-status, var(--gp-border-strong));
+  stroke: none;
+}
+
+/* HTML legend for the status palette (a colour key beside the diagram). */
+.gp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em 1em;
+  justify-content: center;
+  margin: 0.75em 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85em;
+}
+
+.gp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  color: var(--gp-status-fg, var(--gp-text-secondary));
+}
+
+.gp-chip::before {
+  content: "";
+  width: 0.75em;
+  height: 0.75em;
+  border-radius: 3px;
+  background: var(--gp-status-bg, var(--gp-surface-alt));
+  border: 1.5px solid var(--gp-status, var(--gp-border-strong));
+}
+
+/* A diagram sits happily inside prose too (embedded as raw HTML in a markdown body):
+   drop the default prose figure margin duplication and let the diagram center. */
+.gp-prose .gp-diagram {
+  margin-inline: auto;
 }
 
 /* The `--gp-prose-*` scale is theme-independent, but printing an explicitly dark

@@ -1,0 +1,5 @@
+# Example space demonstrating the markdown-diagrams pattern (approach a):
+# an authored inline-SVG colour-coded status DAG, themed from the --gp-* palette.
+# Serve with:  glasspad serve ./examples/status-dag
+title: Project view
+template: prose

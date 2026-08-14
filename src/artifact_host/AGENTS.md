@@ -73,6 +73,15 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   unchanged**. Heading text is untrusted and reaches the rail only server-side
   HTML-escaped. Fewer than 2 H2/H3 (or a non-prose / full-document artifact) degrades to
   the plain prose fragment (no empty rail). `dashboard`/custom templates are unchanged.
+  **Diagrams (markdown-diagrams):** authored **inline SVG** is the supported diagram
+  path — the producer owns SVG generation and embeds it; the `.md`/template renderer
+  passes raw HTML/SVG through verbatim (no strip, no rewrite), so a diagram displays
+  inside the null-origin sandbox with **no CSP change** (pure markup: no script, no
+  network). `base.css` supplies the theming only — a `--gp-*` status palette
+  (done/next/blocked/future) + `.gp-diagram`/`.gp-node`/`.gp-edge`/`.gp-status-*`/
+  `.gp-legend` classes — so a colour-coded status DAG reads in both themes. Full pattern
+  + accessibility notes: [`AGENTS-DIAGRAMS.md`](AGENTS-DIAGRAMS.md); runnable example:
+  `examples/status-dag/`.
 - `guards.rs` — control-plane guards (design.md §5): `host_guard` (DNS-rebinding
   defense, all routes, **fail-closed** on missing/foreign/malformed Host; only
   `127.0.0.1`/`localhost` + our port) + `control_origin_guard` (reject
