@@ -233,13 +233,13 @@ parallel.)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none spawnable — every active item awaits a Jari decision)
+GLOBAL HEAD-OF-LINE: prose-page-toc   ← scheduled this round (design-first); project-view completion
 
 LANE B — server/CLI/hosted/space core (cli.rs + server.rs + hosted/* + shell.rs + space.rs + render seam)
-  hosted-submit-return-broken   (bug, high — ANALYZED: by-design/UX gap, submit path is correct; hosted delivery needs a live agent consumer. AWAITING Jari's fix/defer decision (docs+list vs async webhook) — NOT spawnable until decided)
-  prose-page-toc                (feature, normal — worker-filed FR: per-page TOC. PENDING OWNERSHIP decision — space-docsite-nav marked TOC an aggountant-side preprocessor. NOT spawnable until Jari decides keep/close)
-  markdown-diagrams             (feature, normal — worker-filed FR: inline md/SVG diagrams. PENDING same ownership decision — space-docsite-nav marked diagrams aggountant-side)
-  docsite-autolink-convention   (feature, low — worker-filed FR: cross-doc section autolink. PENDING same ownership decision — space-docsite-nav marked autolink aggountant-side)
+  ▶ prose-page-toc              (feature, normal, design-first — per-page H2/H3 "on this page" rail for prose spaces; last build_docs.py blocker for aggountant project-view. SECURITY: null-origin sandbox → TOC derived server-side, heading text via textContent only)
+    markdown-diagrams           (feature, normal, design-first — inline-SVG pattern OR native mermaid; priority = colour-coded status-DAG (the live project-view). CSP/sandbox-sensitive. after prose-page-toc, same lane)
+    docsite-autolink-convention (feature, low — mostly docs/producer-convention; aggountant keeps a thin preprocessor. Tracked, no rush)
+  hosted-submit-return-broken   (bug, high — ANALYZED: by-design/UX gap, submit path is correct; hosted delivery needs a live agent consumer. AWAITING Jari's fix/defer decision (docs+list vs async webhook))
 ```
 <!-- execution-dag:end -->
 
