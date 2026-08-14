@@ -648,6 +648,11 @@ tbody tr:hover {
   font-family: var(--gp-font-sans);
   font-size: 0.875rem;
   line-height: 1.45;
+  /* A long TOC must not run off the bottom of a pinned sticky rail: cap it to the
+     viewport and let the rail itself scroll, contained so it never chains to the page. */
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .gp-toc-panel {
@@ -667,6 +672,14 @@ tbody tr:hover {
   user-select: none;
 }
 
+/* Keyboard focus must stay visible after we restyle the summary (the native outline
+   can be suppressed once list-style/marker are overridden). */
+.gp-toc-title:focus-visible {
+  outline: 2px solid var(--gp-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* Swap the default <summary> triangle for a rotating caret that reflects state. */
 .gp-toc-title::-webkit-details-marker {
   display: none;
@@ -682,6 +695,13 @@ tbody tr:hover {
 
 .gp-toc-panel[open] > .gp-toc-title::before {
   transform: rotate(90deg);
+}
+
+/* Respect a reduced-motion preference — no caret spin. */
+@media (prefers-reduced-motion: reduce) {
+  .gp-toc-title::before {
+    transition: none;
+  }
 }
 
 .gp-toc-list {
@@ -706,11 +726,19 @@ tbody tr:hover {
   color: var(--gp-accent);
 }
 
-/* H3 entries nest under their H2. */
+/* H3 entries are indented under the preceding H2 (visual sub-level; the list stays
+   a single flat <ul>). */
 .gp-toc-l3 a {
   padding-inline-start: 1rem;
   font-size: 0.95em;
   color: var(--gp-text-muted);
+}
+
+/* Landing an in-page #anchor flush against the viewport edge reads poorly; give the
+   heading targets a little breathing room above so the jumped-to heading isn't glued
+   to the top. Applies to every anchored heading, not just rail targets. */
+.gp-prose :is(h1, h2, h3, h4, h5, h6)[id] {
+  scroll-margin-top: 1.5rem;
 }
 
 /* Below the breakpoint the rail cannot fit beside the reading column: collapse the

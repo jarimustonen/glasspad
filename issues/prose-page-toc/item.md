@@ -5,6 +5,9 @@ type: feature
 reporter: jari
 status: in-progress
 priority: normal
+commits:
+- hash: 1baff4f
+  summary: per-page H2/H3 TOC rail for prose spaces (approach a, server-side render)
 ---
 
 # Per-page TOC rail (on-this-page H2/H3 navigation) for prose spaces

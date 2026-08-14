@@ -30,7 +30,7 @@
 //! CSP unchanged. Heading text is untrusted and reaches the rail only HTML-escaped.
 //! Every other template (`dashboard`, custom) is the unchanged plain splice.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html};
@@ -47,6 +47,15 @@ pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard"];
 /// The default template when `--template` is omitted: the reading theme.
 pub const DEFAULT_TEMPLATE: &str = "prose";
 
+/// The built-in `prose` fragment, as a single source of truth. Both
+/// [`builtin_template`] (the `--template prose` resolution) and [`render_to_body`]
+/// (which routes this exact fragment through the TOC-aware [`render_prose_body`])
+/// reference it, so the "is this the prose template?" dispatch can never silently
+/// drift from the string it dispatches on. `render_prose_body` reproduces the same
+/// `<article class="gp-prose">…</article>` shape (it must — it emits an optional TOC
+/// sibling around it), which this constant documents as the canonical form.
+const PROSE_TEMPLATE: &str = "<article class=\"gp-prose\">\n{{content}}\n</article>\n";
+
 /// Resolve a built-in template name to its HTML fragment, or `None` if the name is
 /// not a built-in. Both fragments carry exactly one `{{content}}` and are
 /// fragments (not full documents), so the content route wraps them with
@@ -58,7 +67,7 @@ pub const DEFAULT_TEMPLATE: &str = "prose";
 /// * `dashboard` — the default dashboard look, content in a `.gp-card` surface.
 pub fn builtin_template(name: &str) -> Option<&'static str> {
     match name {
-        "prose" => Some("<article class=\"gp-prose\">\n{{content}}\n</article>\n"),
+        "prose" => Some(PROSE_TEMPLATE),
         "dashboard" => Some("<div class=\"gp-card\">\n{{content}}\n</div>\n"),
         _ => None,
     }
@@ -91,10 +100,12 @@ fn gfm_options() -> Options {
     opts
 }
 
-/// The lowest number of H2/H3 headings a page needs before the "on this page" rail
-/// is worth rendering. One entry is not a table of contents, so a single-heading (or
-/// heading-less) page degrades to the plain prose fragment — no empty rail, byte-for-
-/// byte the pre-TOC layout apart from the (harmless, deep-link-enabling) heading ids.
+/// The lowest number of rail-eligible (non-empty, non-footnote) H2/H3 headings a page
+/// needs before the "on this page" rail is worth rendering. One entry is not a table of
+/// contents, so a single-heading (or heading-less) page degrades to the plain prose
+/// fragment — no empty rail. The degraded fragment is the pre-TOC layout **plus** a
+/// server-generated `id` on each heading: a deliberate, safe enhancement (deep-linking
+/// works even on short pages), not a byte-for-byte reproduction of the old output.
 const MIN_TOC_ENTRIES: usize = 2;
 
 /// One entry in the per-page "on this page" table of contents: a server-derived H2 or
@@ -110,49 +121,77 @@ struct TocEntry {
 }
 
 /// Render a markdown body to an HTML fragment **and** stamp a stable `id` on every
-/// heading, collecting the H2/H3 headings as [`TocEntry`]s for the rail.
+/// **Markdown heading** (H1–H6 parsed by pulldown-cmark — raw-HTML headings pass
+/// through untouched), collecting the rail-eligible H2/H3 as [`TocEntry`]s.
 ///
 /// The ids are generated **server-side** from the heading text (slugify +
-/// deterministic collision disambiguation) — never an attacker-controlled raw id —
-/// and are written through `pulldown-cmark`'s own HTML-escaping heading-id path
-/// (`Tag::Heading.id`), so the same null-origin-sandbox trust story as
-/// [`render_markdown`] holds. In-page `#anchor` links then resolve natively inside the
-/// artifact iframe with no shell involvement.
+/// collision disambiguation that reserves every emitted id, [`unique_slug`]) — never
+/// an attacker-controlled raw id — and are written through `pulldown-cmark`'s own
+/// HTML-escaping heading-id path (`Tag::Heading.id`), so the same null-origin-sandbox
+/// trust story as [`render_markdown`] holds. In-page `#anchor` links then resolve
+/// natively inside the artifact iframe with no shell involvement. (Uniqueness is
+/// "unique among generated ids": an id an artifact author hand-writes in raw HTML can
+/// still coincide — raw HTML passthrough predates this feature and is a sandboxed sink.)
 fn render_markdown_with_headings(md: &str) -> (String, Vec<TocEntry>) {
     // Materialize the event stream so a heading's id can be rewritten *before* it is
     // serialized: the slug is derived from the heading's inner text, which only arrives
     // in the events *after* the `Start(Heading)`. Buffering the whole stream also lets
     // the final `push_html` run as a SINGLE call, preserving its internal list/newline
-    // state exactly as `render_markdown` produces it.
+    // state exactly as `render_markdown` produces it. The input is bounded upstream
+    // (`space::MAX_FILE_BYTES` caps the `.md` source, and the rendered body is re-capped
+    // after render), so this O(n) buffer is over a bounded n — not an unbounded artifact.
     let mut events: Vec<Event> = Parser::new_ext(md, gfm_options()).collect();
     let mut toc: Vec<TocEntry> = Vec::new();
-    let mut used_ids: HashMap<String, usize> = HashMap::new();
+    let mut used_ids: SlugSet = SlugSet::default();
+    // Headings inside a footnote *definition* are page content, not part of the
+    // reading spine, so they must not appear in the "on this page" rail. Track the
+    // footnote-definition nesting depth as we walk and skip the TOC entry (the id is
+    // still stamped) for any heading emitted while inside one.
+    let mut footnote_depth: u32 = 0;
 
     let mut i = 0;
     while i < events.len() {
+        match &events[i] {
+            Event::Start(Tag::FootnoteDefinition(_)) => footnote_depth += 1,
+            Event::End(TagEnd::FootnoteDefinition) => {
+                footnote_depth = footnote_depth.saturating_sub(1)
+            }
+            _ => {}
+        }
         let Event::Start(Tag::Heading { level, .. }) = &events[i] else {
             i += 1;
             continue;
         };
         let level = *level;
-        // Accumulate the heading's plain text (Text + inline Code) up to its close.
+        // Accumulate the heading's plain text up to its matching close. Only `Text` and
+        // inline `Code` carry visible text; a soft/hard break is a word boundary, so it
+        // maps to a space (otherwise `First\nSecond` slugs/labels as `firstsecond`).
+        // Headings cannot nest in CommonMark, so the first heading-end is ours; we still
+        // match the level for robustness against a future parser extension.
         let mut text = String::new();
         let mut j = i + 1;
         while j < events.len() {
             match &events[j] {
-                Event::End(TagEnd::Heading(_)) => break,
+                Event::End(TagEnd::Heading(l)) if *l == level => break,
                 Event::Text(t) | Event::Code(t) => text.push_str(t),
+                Event::SoftBreak | Event::HardBreak => text.push(' '),
                 _ => {}
             }
             j += 1;
         }
-        let text = text.trim().to_string();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let id = unique_slug(&text, &mut used_ids);
         // Stamp the id on the heading start event; `push_html` HTML-escapes it.
         if let Event::Start(Tag::Heading { id: hid, .. }) = &mut events[i] {
             *hid = Some(CowStr::from(id.clone()));
         }
-        if matches!(level, HeadingLevel::H2 | HeadingLevel::H3) {
+        // The rail lists only H2/H3, only outside footnote definitions, and only when
+        // the heading has visible text — a text-less heading (e.g. one that is solely
+        // raw inline HTML or an image with no alt) gets its `id` but no blank rail link.
+        if footnote_depth == 0
+            && !text.is_empty()
+            && matches!(level, HeadingLevel::H2 | HeadingLevel::H3)
+        {
             let depth = if level == HeadingLevel::H2 { 2 } else { 3 };
             toc.push(TocEntry {
                 level: depth,
@@ -168,14 +207,31 @@ fn render_markdown_with_headings(md: &str) -> (String, Vec<TocEntry>) {
     (out, toc)
 }
 
-/// Slugify `text` into an anchor id and disambiguate it against ids already used on
-/// this page, deterministically: lowercase, every run of non-alphanumeric characters
-/// collapses to a single `-`, and leading/trailing `-` are trimmed. Unicode letters
-/// are kept (Finnish `ä`/`ö` stay readable in the anchor). An empty result (a heading
-/// of only punctuation/emoji) falls back to `section`. A repeat of an already-used
-/// slug gets `-1`, `-2`, … appended — so ids are unique and stable for a given
-/// document order, and never attacker-controlled raw markup.
-fn unique_slug(text: &str, used: &mut HashMap<String, usize>) -> String {
+/// Tracks the anchor ids already emitted on the current page so [`unique_slug`] can
+/// hand out an id that is unique **among the ids it generates**. `emitted` is the
+/// authoritative set (every returned id, base *and* disambiguated); `next_suffix` is
+/// an amortization hint — the next `-N` to try for a base — so disambiguation does not
+/// rescan from `-1` for every repeat of a hot base slug. (Uniqueness cannot extend to
+/// raw-HTML ids an artifact author writes by hand — raw HTML passes through by design —
+/// so this guarantees "unique among generated ids", not page-global uniqueness.)
+#[derive(Default)]
+struct SlugSet {
+    emitted: HashSet<String>,
+    next_suffix: HashMap<String, usize>,
+}
+
+/// Slugify `text` into an anchor id, then disambiguate it against every id already
+/// emitted on this page so the result is collision-free. Slug rules: lowercase, each
+/// run of non-alphanumeric characters collapses to a single `-`, leading/trailing `-`
+/// trimmed. Unicode letters are kept (Finnish `ä`/`ö` stay readable in the anchor); an
+/// empty result (a heading of only punctuation/emoji) falls back to `section`.
+///
+/// Disambiguation reserves the **actual** id returned, not just the base slug, so a
+/// disambiguated id (`setup-1`) can never later be re-handed to a heading whose natural
+/// slug is `setup-1` — the counterexample `## Setup / ## Setup / ## Setup 1` (which a
+/// base-only counter mis-assigns two `setup-1`s) resolves to `setup / setup-1 /
+/// setup-1-1`. Deterministic and stable for a given document order.
+fn unique_slug(text: &str, used: &mut SlugSet) -> String {
     let mut base = String::with_capacity(text.len());
     let mut prev_dash = false;
     for ch in text.chars() {
@@ -192,14 +248,20 @@ fn unique_slug(text: &str, used: &mut HashMap<String, usize>) -> String {
     let base = base.trim_matches('-');
     let base = if base.is_empty() { "section" } else { base };
 
-    match used.get_mut(base) {
-        Some(n) => {
-            *n += 1;
-            format!("{base}-{n}")
-        }
-        None => {
-            used.insert(base.to_string(), 0);
-            base.to_string()
+    // The bare base is available: take it.
+    if used.emitted.insert(base.to_string()) {
+        used.next_suffix.entry(base.to_string()).or_insert(1);
+        return base.to_string();
+    }
+    // Otherwise append `-N`, resuming from the last suffix tried for this base, and
+    // keep bumping until we land on an id no heading has claimed yet.
+    let mut n = *used.next_suffix.get(base).unwrap_or(&1);
+    loop {
+        let candidate = format!("{base}-{n}");
+        n += 1;
+        if used.emitted.insert(candidate.clone()) {
+            used.next_suffix.insert(base.to_string(), n);
+            return candidate;
         }
     }
 }
@@ -356,7 +418,7 @@ pub fn render_to_body(markdown: &str, template: &str) -> Result<String, Template
     // (approach (a): the rail lives inside the artifact's own prose fragment). Every
     // other template — `dashboard`, or a client-supplied custom template — is the
     // unchanged plain splice, so its output is byte-for-byte what it was pre-TOC.
-    if template == builtin_template(DEFAULT_TEMPLATE).expect("prose is a built-in") {
+    if template == PROSE_TEMPLATE {
         return Ok(render_prose_body(markdown));
     }
     // Validate the single placeholder up front (cheap) so a bad template short-
@@ -554,13 +616,112 @@ mod tests {
 
     #[test]
     fn slugify_keeps_unicode_letters() {
-        let mut used = HashMap::new();
+        let mut used = SlugSet::default();
         assert_eq!(
             unique_slug("Ääkköset ja Öljy", &mut used),
             "ääkköset-ja-öljy"
         );
         // Punctuation-only heading falls back to a stable slug.
         assert_eq!(unique_slug("!!! ???", &mut used), "section");
+    }
+
+    #[test]
+    fn unique_slug_reserves_disambiguated_ids_no_collision() {
+        // The regression the review caught: a base-only counter hands `setup-1` to BOTH
+        // the 2nd "Setup" and a later literal "Setup 1". Reserving the emitted id forces
+        // the literal to `setup-1-1`, so every id is distinct.
+        let mut used = SlugSet::default();
+        assert_eq!(unique_slug("Setup", &mut used), "setup");
+        assert_eq!(unique_slug("Setup", &mut used), "setup-1");
+        assert_eq!(unique_slug("Setup 1", &mut used), "setup-1-1");
+        // The inverse order is also collision-free.
+        let mut used = SlugSet::default();
+        assert_eq!(unique_slug("Setup 1", &mut used), "setup-1");
+        assert_eq!(unique_slug("Setup", &mut used), "setup");
+        assert_eq!(unique_slug("Setup", &mut used), "setup-2");
+    }
+
+    #[test]
+    fn prose_toc_ids_are_pairwise_unique_end_to_end() {
+        let md = "## Setup\n\na\n\n## Setup\n\nb\n\n## Setup 1\n";
+        let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
+        // Collect every emitted heading id; assert no duplicates.
+        let mut ids: Vec<&str> = Vec::new();
+        let mut rest = out.as_str();
+        while let Some(p) = rest.find(" id=\"") {
+            rest = &rest[p + 5..];
+            let end = rest.find('"').unwrap();
+            ids.push(&rest[..end]);
+            rest = &rest[end..];
+        }
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len(), "duplicate heading id in {ids:?}");
+    }
+
+    #[test]
+    fn heading_breaks_become_spaces_not_run_together() {
+        // A soft break inside a setext heading is a word boundary → a space, not glue.
+        let md = "First line\nSecond line\n===\n\n## A\n\n## B\n";
+        let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
+        assert!(out.contains(r#"<h1 id="first-line-second-line">"#));
+        assert!(!out.contains("firstlinesecond"));
+    }
+
+    #[test]
+    fn text_less_heading_gets_id_but_no_blank_rail_entry() {
+        // A heading that is solely raw inline HTML (a non-Text event) has no visible
+        // text: it still gets an id, but it must NOT emit a blank <a> in the rail, and
+        // it must not count toward the rail threshold.
+        let md = "## <span></span>\n\nbody\n\n## Real One\n";
+        let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
+        // Only one real rail entry → below MIN_TOC_ENTRIES → no rail at all.
+        assert!(
+            !out.contains("gp-toc"),
+            "text-less heading padded the rail: {out}"
+        );
+        // No empty anchor was emitted.
+        assert!(!out.contains(r##"<a href="#section"></a>"##));
+    }
+
+    #[test]
+    fn footnote_definition_headings_are_kept_out_of_the_rail() {
+        // A heading inside a footnote *definition* is page content, not part of the
+        // reading spine — it must not appear in / pad the rail.
+        let md = "## Alpha\n\nBody[^1]\n\n## Beta\n\n[^1]: ### Note heading\n";
+        let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
+        assert!(out.contains(r##"href="#alpha""##));
+        assert!(out.contains(r##"href="#beta""##));
+        // The footnote's H3 is not a rail entry.
+        assert!(!out.contains(r##"href="#note-heading""##));
+    }
+
+    #[test]
+    fn prose_toc_extracts_text_from_inline_formatting_and_links() {
+        let md = "## Set the `PATH`\n\na\n\n## See [the guide](/guide)\n";
+        let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
+        // Inline code + link text are captured for the rail label and the slug.
+        assert!(out.contains(r##"<a href="#set-the-path">Set the PATH</a>"##));
+        assert!(out.contains(r##"<a href="#see-the-guide">See the guide</a>"##));
+    }
+
+    #[test]
+    fn dashboard_and_custom_templates_get_no_ids_or_rail() {
+        // Non-prose templates are the unchanged plain splice: no heading ids, no rail.
+        let dash = render_to_body(
+            "## Heading\n\n### Sub\n",
+            builtin_template("dashboard").unwrap(),
+        )
+        .unwrap();
+        assert!(dash.contains("<h2>Heading</h2>"));
+        assert!(!dash.contains("id=\"heading\""));
+        assert!(!dash.contains("gp-toc") && !dash.contains("gp-doc"));
+
+        let custom = render_to_body("## Heading\n\n### Sub\n", "<main>{{content}}</main>").unwrap();
+        assert!(custom.contains("<main><h2>Heading</h2>"));
+        assert!(!custom.contains("id=\"heading\""));
+        assert!(!custom.contains("gp-toc"));
     }
 
     #[test]
