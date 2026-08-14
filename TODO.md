@@ -233,13 +233,13 @@ parallel.)
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: loopback-lan-serve   ← high-pri Lane-B writer; hosted-submit-return-broken (read-only) runs in parallel
+GLOBAL HEAD-OF-LINE: (none spawnable — every active item awaits a Jari decision)
 
 LANE B — server/CLI/hosted/space core (cli.rs + server.rs + hosted/* + shell.rs + space.rs + render seam)
-  ▶ loopback-lan-serve   (feature, high, design-first — LAN-reachable loopback serve; keep DNS-rebinding Host-guard via allowlist; /llm-review; security-sensitive)
-
-UNLANED — confirmed no shared hot files (read-only; writes only its own issue), run anytime:
-    hosted-submit-return-broken   (bug, high — READ-ONLY analysis: why hosted form submissions don't reach the creating agent; classify code/deploy/by-design; Jari decides the fix)
+  hosted-submit-return-broken   (bug, high — ANALYZED: by-design/UX gap, submit path is correct; hosted delivery needs a live agent consumer. AWAITING Jari's fix/defer decision (docs+list vs async webhook) — NOT spawnable until decided)
+  prose-page-toc                (feature, normal — worker-filed FR: per-page TOC. PENDING OWNERSHIP decision — space-docsite-nav marked TOC an aggountant-side preprocessor. NOT spawnable until Jari decides keep/close)
+  markdown-diagrams             (feature, normal — worker-filed FR: inline md/SVG diagrams. PENDING same ownership decision — space-docsite-nav marked diagrams aggountant-side)
+  docsite-autolink-convention   (feature, low — worker-filed FR: cross-doc section autolink. PENDING same ownership decision — space-docsite-nav marked autolink aggountant-side)
 ```
 <!-- execution-dag:end -->
 
