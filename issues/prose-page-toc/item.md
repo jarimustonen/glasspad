@@ -8,6 +8,8 @@ priority: normal
 commits:
 - hash: 1baff4f
   summary: per-page H2/H3 TOC rail for prose spaces (approach a, server-side render)
+- hash: af33886
+  summary: apply 4-model review findings (collision-free slugs, break/footnote/text-less handling, PROSE_TEMPLATE const, CSS a11y)
 ---
 
 # Per-page TOC rail (on-this-page H2/H3 navigation) for prose spaces
@@ -53,4 +55,26 @@ still deep-link targets.
 only, also escaped). No `innerHTML`/raw-markup sink. Sandbox, CSP, `connect-src 'none'`,
 `allow-*` set, and the return-channel airlock are all unchanged — the shell is not
 touched at all. Graceful fallback: <2 H2/H3 (or a non-prose / full-document artifact)
-renders exactly as before, no empty rail.
+renders the plain prose fragment, no empty rail (the fallback additionally stamps a
+deep-link `id` on each heading — a deliberate, safe enhancement, not byte-identical).
+
+## Review (4-model /llm-review, applied)
+
+Reviewed by Gemini 3.1 Pro, GPT-5.6, Claude Opus 4.7, DeepSeek v4 — strong consensus.
+Findings applied in `af33886` (report: `history/review-prose-page-toc.md`):
+
+- **Critical (fixed):** `unique_slug` was NOT collision-free — a base-only counter handed
+  the same disambiguated id to two headings (`## Setup / ## Setup / ## Setup 1` →
+  `setup / setup-1 / setup-1`). `SlugSet` now reserves every emitted id → `setup /
+  setup-1 / setup-1-1`.
+- Soft/hard breaks in heading text → space (no glued words); text-less headings get an id
+  but no blank rail entry; footnote-definition headings excluded from the rail; single
+  `PROSE_TEMPLATE` const kills the string-dispatch drift risk; CSS a11y (sticky overflow,
+  `scroll-margin-top`, `:focus-visible`, reduced-motion). Regression tests added for each.
+- **Deferred (recorded):** nested `<ul>` TOC hierarchy for WCAG 1.3.1 (flat list + `nav`
+  landmark is acceptable for a v1 convenience rail); full enum template dispatch (the
+  const covers the real risk); streaming renderer (input bounded by `MAX_FILE_BYTES`);
+  active-section highlight (needs JS/shell — out of scope by sandbox design).
+
+Full gate green: `cargo fmt --all --check`, `cargo clippy --all-targets -D warnings`,
+`cargo test`, `./test-security.sh` (48 checks). Security contract untouched.
