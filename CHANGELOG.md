@@ -13,6 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.10.0] - 2026-08-14
+
+Adds a **per-page "on this page" table of contents** to prose (markdown) spaces —
+the last structural docsite feature, so a grouped, navigable design docsite ports onto
+glasspad without a bespoke generator. The artifact security contract is unchanged: the
+rail lives inside the artifact's own fragment (no trusted-shell surface, no postMessage),
+each page stays a null-origin sandboxed iframe (`./test-security.sh` 48 checks + Wave 2a
+green).
+
+### Added
+
+- **Per-page TOC rail for prose spaces.** A markdown page with ≥2 H2/H3 headings now
+  renders an "on this page" `<nav class="gp-toc">` alongside the prose column: a native
+  collapsible `<details>` (no JavaScript) that CSS hides below a width breakpoint, the
+  way the grouped sidebar stacks. Every heading gets a **server-generated** anchor `id`
+  (heading text slugified, deterministically collision-disambiguated), so the rail's
+  `#anchor` links resolve natively inside the sandbox. A page with fewer than 2 H2/H3
+  headings, or a non-prose / full-document artifact, renders exactly as before (no empty
+  rail). Heading text reaches the rail only server-side HTML-escaped — the CSP, sandbox,
+  and Trusted-Types boundary are untouched.
+
+### Fixed
+
+- Security suite: the Gap-2 "markdown rendered to HTML" probe is now attribute-tolerant,
+  matching the intentional heading `id` from the new TOC rail (no change to any sandbox /
+  CSP / isolation assertion).
+
 ## [0.9.0] - 2026-08-14
 
 Adds an **opt-in, LAN-reachable loopback serve** so another device on your local
