@@ -1266,7 +1266,7 @@ mod tests {
         assert!(html.contains(r#"<script src="/_gp/v1/bridge.js" defer></script>"#));
         // The prose render contract: rendered blocks are children of .gp-prose.
         assert!(html.contains(r#"<article class="gp-prose">"#));
-        assert!(html.contains("<h1>Hello</h1>"));
+        assert!(html.contains(r#"<h1 id="hello">Hello</h1>"#));
     }
 
     #[tokio::test]

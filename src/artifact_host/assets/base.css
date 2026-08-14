@@ -611,11 +611,141 @@ tbody tr:hover {
   line-height: 0;
 }
 
+/* ============================================================================
+ * Per-page "on this page" TOC rail (prose-page-toc)
+ *
+ * When a markdown page has >=2 H2/H3 headings, the prose renderer wraps the
+ * `<article class="gp-prose">` and a sibling `<nav class="gp-toc">` in a `.gp-doc`
+ * grid. The article keeps its own centered reading measure inside the left track;
+ * the rail sits in a fixed right-hand track, sticky so it follows the reader. The
+ * rail is a native `<details open>` (collapsible with no JS). Below the width
+ * breakpoint the grid collapses to one column and the rail is hidden — so a narrow
+ * viewport reads exactly like a rail-less page, and a page with <2 headings never
+ * emits `.gp-doc` at all (no empty rail). Anchors are in-page `#id` links that
+ * resolve natively inside the sandbox; no shell involvement.
+ * ========================================================================== */
+.gp-doc {
+  display: grid;
+  grid-template-columns: minmax(0, var(--gp-prose-measure)) 15rem;
+  gap: 2.5rem;
+  align-items: start;
+  justify-content: center;
+  max-width: calc(var(--gp-prose-measure) + 15rem + 2.5rem);
+  margin-inline: auto;
+}
+
+/* Inside the grid the article fills its (measure-capped) track flush-left against
+   the rail gutter, rather than auto-centering in the viewport. */
+.gp-doc > .gp-prose {
+  margin-inline: 0;
+}
+
+.gp-toc {
+  position: sticky;
+  top: 1.5rem;
+  align-self: start;
+  min-width: 0;
+  font-family: var(--gp-font-sans);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.gp-toc-panel {
+  border-inline-start: 1px solid var(--gp-border); /* logical: honors dir="rtl" */
+  padding-inline-start: 1rem;
+}
+
+.gp-toc-title {
+  cursor: pointer;
+  list-style: none; /* replace the native disclosure triangle with our own marker */
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
+  color: var(--gp-text-muted);
+  margin-bottom: 0.75em;
+  user-select: none;
+}
+
+/* Swap the default <summary> triangle for a rotating caret that reflects state. */
+.gp-toc-title::-webkit-details-marker {
+  display: none;
+}
+
+.gp-toc-title::before {
+  content: "▸";
+  display: inline-block;
+  margin-inline-end: 0.4em;
+  transition: transform 0.15s ease;
+  color: var(--gp-text-faint);
+}
+
+.gp-toc-panel[open] > .gp-toc-title::before {
+  transform: rotate(90deg);
+}
+
+.gp-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gp-toc-list li {
+  margin: 0;
+}
+
+.gp-toc-list a {
+  display: block;
+  padding: 0.2em 0;
+  color: var(--gp-text-secondary);
+  text-decoration: none;
+  overflow-wrap: anywhere; /* a long heading must not blow out the rail track */
+}
+
+.gp-toc-list a:hover {
+  color: var(--gp-accent);
+}
+
+/* H3 entries nest under their H2. */
+.gp-toc-l3 a {
+  padding-inline-start: 1rem;
+  font-size: 0.95em;
+  color: var(--gp-text-muted);
+}
+
+/* Below the breakpoint the rail cannot fit beside the reading column: collapse the
+   grid to a single centered column and drop the rail entirely (matching how the
+   grouped sidebar stacks away on narrow viewports). */
+@media (max-width: 60rem) {
+  .gp-doc {
+    display: block;
+    max-width: var(--gp-prose-measure);
+  }
+
+  .gp-doc > .gp-prose {
+    margin-inline: auto;
+  }
+
+  .gp-toc {
+    display: none;
+  }
+}
+
 /* The `--gp-prose-*` scale is theme-independent, but printing an explicitly dark
    artifact would waste ink and read poorly — force a light, full-width, un-
    decorated reading flow and keep block elements from splitting across pages.
    The hardcoded print colors are a deliberate exception to the token rule. */
 @media print {
+  .gp-doc {
+    display: block;
+    max-width: none;
+  }
+
+  /* The rail is screen navigation — never printed. */
+  .gp-toc {
+    display: none;
+  }
+
   .gp-prose {
     max-width: none;
     color: #111;

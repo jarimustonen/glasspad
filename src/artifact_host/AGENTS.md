@@ -62,6 +62,17 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   `<article class="gp-prose">…</article>` [default], `dashboard` = `.gp-card`) are
   **fragments**, so they inherit `base.css` (incl. the hardened `.gp-prose`
   reading theme) + `bridge.js` for free. `wrap.rs`/`shell.rs` are unchanged.
+  **Per-page TOC rail (prose-page-toc):** the built-in `prose` path stamps a
+  **server-generated** anchor `id` on every heading (slugify heading text +
+  deterministic collision disambiguation — never an attacker-controlled raw id) and,
+  when the page has ≥2 H2/H3 headings, emits an "on this page" `<nav class="gp-toc">`
+  as a **sibling** of `.gp-prose` inside a `.gp-doc` grid (a native `<details>` —
+  collapsible, no JS; CSS hides it below a width breakpoint). This is **approach (a)**:
+  the rail lives inside the artifact's OWN fragment, so `#anchor` links resolve natively
+  inside the null-origin sandbox — **no shell involvement, no postMessage surface, CSP
+  unchanged**. Heading text is untrusted and reaches the rail only server-side
+  HTML-escaped. Fewer than 2 H2/H3 (or a non-prose / full-document artifact) degrades to
+  the plain prose fragment (no empty rail). `dashboard`/custom templates are unchanged.
 - `guards.rs` — control-plane guards (design.md §5): `host_guard` (DNS-rebinding
   defense, all routes, **fail-closed** on missing/foreign/malformed Host; only
   `127.0.0.1`/`localhost` + our port) + `control_origin_guard` (reject

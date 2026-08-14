@@ -2341,7 +2341,7 @@ mod fs_tests {
         // Rendered through the default `prose` fragment template (base.css hardened
         // reading theme), so it is a fragment the serve path wraps + bridges.
         assert!(index.html.contains(r#"<article class="gp-prose">"#));
-        assert!(index.html.contains("<h1>Home</h1>"));
+        assert!(index.html.contains(r#"<h1 id="home">Home</h1>"#));
         // The relative markdown link survives so same-space nav resolves.
         assert!(index.html.contains(r#"href="./guide""#));
         // Title resolves from the rendered first <h1>.
@@ -2376,7 +2376,7 @@ mod fs_tests {
                 .artifact("about")
                 .unwrap()
                 .html
-                .contains("<h1>About Us</h1>")
+                .contains(r#"<h1 id="about-us">About Us</h1>"#)
         );
         assert!(space.asset("assets/data.json").is_some());
         assert_eq!(space.home.as_deref(), Some("index"));
@@ -2593,7 +2593,7 @@ mod fs_tests {
                 .artifact("index")
                 .unwrap()
                 .html
-                .contains("<h1>Home</h1>")
+                .contains(r#"<h1 id="home">Home</h1>"#)
         );
         assert_eq!(bundle.artifact("guide").unwrap().title, "Guide");
     }
