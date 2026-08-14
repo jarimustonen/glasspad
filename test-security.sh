@@ -462,7 +462,7 @@ MB="http://127.0.0.1:$SPACE_PORT"
 [ "$(code "$MB/mdspace/_c/index")" = "200" ]; scheck $? "md: a markdown page renders and serves (200)"
 MDBODY="$(curl -s "$MB/mdspace/_c/index")"
 echo "$MDBODY" | grep -q '<article class="gp-prose">'; scheck $? "md: the page rendered through the prose template"
-echo "$MDBODY" | grep -q '<h1>Home</h1>'; scheck $? "md: markdown was rendered to HTML server-side"
+echo "$MDBODY" | grep -qE '<h1[^>]*>Home</h1>'; scheck $? "md: markdown was rendered to HTML server-side"
 # Cross-page nav: the relative markdown link survives so same-space nav resolves,
 # and the target md page it points at actually serves (functional, not just textual).
 echo "$MDBODY" | grep -q 'href="./guide"'; scheck $? "md: a relative cross-page link is preserved for same-space nav"
