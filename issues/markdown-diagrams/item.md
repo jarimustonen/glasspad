@@ -3,11 +3,14 @@ created: 2026-08-14
 updated: 2026-08-14
 type: feature
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: d68d7a0
   summary: themed inline-SVG diagram pattern (base.css tokens/classes + render regression tests + docs + example)
+- hash: 580b788
+  summary: review fixes — accurate security prose, real HTTP CSP integration test, CSS overflow/label/marker fixes, example HTML-block blank-line bug fixed
+closed: 2026-08-14
 ---
 
 # First-class diagram support in markdown spaces (flow/stack/status-DAG, or documented inline-SVG asset pattern)
