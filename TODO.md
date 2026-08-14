@@ -5,11 +5,45 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**CURRENT: glasspad 0.7.0 is FULLY RELEASED + verified live** (2026-08-13) — crates.io
-`0.7.0`, GitHub Release `v0.7.0` (12 assets), Homebrew `version "0.7.0"`. Ships the
-**publish-first CLI surface** (`publish` = default verb, config-driven loopback|hosted)
-+ **emoji SVG favicon**. Details in _Round 2026-08-13_ below; next up is `space-docsite-nav`
-(see _▶ Start here_). The 0.3.0→0.6.0 release history is preserved below for context.
+**CURRENT: glasspad 0.10.0 is FULLY RELEASED + verified live** (2026-08-14) — crates.io
+`0.10.0` (yanked=false), GitHub Release `v0.10.0` (12 assets), Homebrew `version "0.10.0"`.
+Three releases shipped this session (0.8.0 → 0.9.0 → 0.10.0); see _Round 2026-08-14_ below.
+Next: **`hosted-submit-return-broken`** + **`markdown-diagrams`** in parallel (see _▶ Start
+here_). The 0.3.0→0.7.0 release history is preserved below for context.
+
+## Round 2026-08-14 — 0.8.0, 0.9.0, 0.10.0 shipped (all verified live)
+
+Six consecutive clean tag-releases (mac on hauis). Each: full green gate (fmt + clippy -D
++ cargo test + `./test-security.sh` 48 + Wave 2a) + `ossctl audit` (core complete) +
+`cargo publish --dry-run`, then tag-push → both CI workflows.
+- **0.8.0** (`366a0cf`, `v0.8.0`) — `space-docsite-nav`: grouped/one-level-nested space nav
+  via manifest `groups:`, generated grouped landing index (replaces redirect stub),
+  manifest-level companion mapping. **+ fixed a pre-existing CRITICAL iframe sandbox-escape**
+  (duplicate `title` attr could smuggle `allow-same-origin`) with a regression test.
+- **0.9.0** (`7d39563`, `v0.9.0`) — `loopback-lan-serve`: opt-in `glasspad loopback serve
+  --bind <private-IPv4>` makes a served space LAN-reachable (solves "I'm on another LAN
+  machine"). DNS-rebinding guard KEPT as an allowlist (foreign Host → 421); wildcard/public
+  refused; sandbox/CSP/airlock unchanged. 4-model review + 13 LAN probes. New
+  `src/artifact_host/guards.rs` LanExposure.
+- **0.10.0** (`e5df540`, `v0.10.0`) — `prose-page-toc`: per-page "on this page" H2/H3 TOC
+  rail for prose spaces (native collapsible `<details>`, server-generated slug anchors,
+  inside the artifact fragment — no shell/postMessage surface, CSP unchanged). Last
+  structural docsite feature for the aggountant `project-view` port.
+  - **Process note:** the TOC first landed with a RED gate — the new heading `id`s broke a
+    stale Gap-2 security probe (`set -e` aborted Wave 2a). The release was HALTED, the probe
+    was made attribute-tolerant (`test-security.sh:465`; no security assertion weakened), the
+    full suite re-verified green, THEN 0.10.0 shipped. Worker "48 green" claims must be
+    re-verified against the FULL `./test-security.sh` (Phase 1 + Wave 2a), not Phase 1 alone.
+
+### Two feedback items from Jari this session
+1. **`hosted-submit-return-broken`** (bug, high) — hosted form submissions don't reach the
+   creating agent. **Analyzed (read-only): by-design/UX gap, NOT a code defect** — the submit
+   path is correct and stores durably, but hosted delivery needs a live agent consuming
+   `await-submission`; a published-and-forgotten page has no consumer. Full triage in the
+   issue. Config caveat: confirm live `--public-host` == `https://glasspad.maalla.dev` exactly.
+2. **3 project-view FRs** filed by the parallel project-view agent (`380b9df`, authored Jari),
+   each respecting the space-docsite-nav boundary: `prose-page-toc` (DONE, shipped 0.10.0),
+   `markdown-diagrams`, `docsite-autolink-convention`.
 
 **glasspad 0.4.0 was FULLY RELEASED** (2026-08-10) — crates.io `0.4.0`, GitHub
 Release `v0.4.0` (12 assets: mac `aarch64-apple-darwin` + 2× Linux tarballs,
@@ -190,18 +224,33 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin`, clean tree, nothing in flight, 0.7.0 released + verified live. Tracker
-holds one active scheduled unit + one deferred backlog item.
+`main == origin` @ `51ad905`, clean tree, nothing in flight, 0.10.0 released + verified live.
+Jari's decided agenda: **run `hosted-submit-return-broken` and `markdown-diagrams` in
+parallel** ("samaan aikaan tuleutumaan"). They likely touch disjoint files → two lanes;
+**Phase 1 must confirm file-disjointness before parallel spawn** (only collision risk: if
+the hosted-submit fix slips into `shell.rs`/CSP while markdown-diagrams touches `headers.rs`).
 
-**Head-of-line: `space-docsite-nav`** (normal, **design-first**) — grouped/nested space
-nav + generated landing index so a structured docsite (aggountant's design-v2 shape:
-grouped spec/ADRs/stints + arkkitehdille/kirjanpitajalle companions) ports onto glasspad
-without a bespoke `build_docs.py` index/sidebar. Scope + empirical findings + what's
-OUT-of-scope (glossary autolink / section-TOC / companion discovery / SVG diagrams stay an
-aggountant-side preprocessor) are in `issues/space-docsite-nav/item.md`. Lands on the space
-core (`src/artifact_host/space.rs` + manifest + `bridge.js` + render seam) → **Lane B**,
-design-first, `/llm-review`, keep `./test-security.sh` green (should be untouched). A
-release after it lands would be **0.8.0** (agent decides — release autonomy).
+**1. `hosted-submit-return-broken`** (bug, high — Jari: "tärkeä"). Analyzed = by-design/UX
+gap, submit path correct. **Recommended scope = PRAGMATIC fix first** (confirm with Jari at
+start): `publish` output prints the exact `await-submission` invocation + retention note;
+new **`glasspad submissions <slug>` drain command** (poll route exists) so a returning agent
+gets the backlog; confirm live `--public-host`. The true async/webhook push is a SEPARATE
+large design issue — file it only if Jari wants push-to-a-departed-agent. Lands `src/cli.rs`
++ `src/hosted/submit.rs` + docs → **Lane B (cli/hosted)**. `/llm-review`, keep security green.
+
+**2. `markdown-diagrams`** (feature, normal, **design-first**). Diagrams in markdown; the
+priority case is the **colour-coded status DAG (done/next/blocked/future) = the live
+project-view**. Either (a) a documented/supported inline-SVG-from-`assets/` pattern (confirm
+CSP/sandbox lets a themed inline SVG display) and/or (b) native mermaid fenced-block render in
+the prose template. **CSP/sandbox-sensitive** (inline SVG may need `src/artifact_host/headers.rs`)
+→ **Lane render** (`render.rs` + `headers.rs` + `base.css`). Design-first, `/llm-review`,
+`./test-security.sh` MUST stay green. A release after these land would be **0.11.0**.
+
+**3. `docsite-autolink-convention`** (feature, low) — tracked, no rush. Mostly a DOCS/producer
+convention: document the "preprocess markdown before publish" seam for spaces, and allow a
+small set of author-supplied link classes (e.g. `<a class="xref">`) to survive into rendered
+prose for theming. glasspad does NOT own glossary/xref logic; aggountant keeps a thin
+preprocessor. Not this agenda's priority.
 
 _Older candidates still valid:_ tilictl docsite migration (tracked in tilictl); optional
 polish (below).
@@ -215,7 +264,7 @@ polish (below).
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-13)
+## Execution DAG (2026-08-14)
 
 Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
 (never copied here). Merge each round (drop landed, add active, keep existing order).
@@ -223,22 +272,25 @@ Scheduling PLAN — source of truth for lane + order; issuectl is authoritative 
 `after <slug> (needs …)` = logical blocked_by mirror. `collision: <file>` = touches a
 second lane's hot file (spawn-time exclusion).
 
-Hot files → lanes: `src/artifact_host/assets/base.css` (design system, Lane A);
+Hot files → lanes. **Lane A (design system)** = `src/artifact_host/assets/base.css`.
 **Lane B (server/CLI/hosted core)** = `src/cli.rs` + `src/main.rs` + `src/server.rs` +
-`src/submissions.rs` + `src/hosted/*` + `src/artifact_host/space.rs` +
-`src/artifact_host/render.rs`. `src/skill.md` is docs-only. (Lane B widened after the
-2026-08-11/12 stint: return-channel A2/B2 and the space-ingest/markdown-space work all
-collided across this whole family — treat any two units touching it as sequenced, not
-parallel.)
+`src/submissions.rs` + `src/hosted/*` + `src/artifact_host/{shell.rs,guards.rs,headers.rs}` +
+`src/config.rs`. **Lane render (space/markdown render)** = `src/artifact_host/{space.rs,render.rs}`
++ `base.css`. `src/skill.md` is docs-only. NOTE: `headers.rs` (CSP) is the shared seam
+between Lane B and Lane render — a unit touching the artifact CSP collides across both
+(tag it `collision: headers.rs`). Any two units touching the SAME file are sequenced,
+never parallel (return-channel + space-ingest history showed this family collides easily).
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: (none auto-spawnable — markdown-diagrams is next in line but awaits Jari's go; the other two await decisions)
+GLOBAL HEAD-OF-LINE: hosted-submit-return-broken   ← high, Jari-prioritised; markdown-diagrams runs in a parallel lane
 
-LANE B — server/CLI/hosted/space core (cli.rs + server.rs + hosted/* + shell.rs + space.rs + render seam)
-  markdown-diagrams           (feature, normal, design-first — inline-SVG pattern OR native mermaid; priority = colour-coded status-DAG (the live project-view). CSP/sandbox-sensitive. NEXT docsite unit — awaits Jari's go to start)
-  docsite-autolink-convention (feature, low — mostly docs/producer-convention; aggountant keeps a thin preprocessor. Tracked, no rush)
-  hosted-submit-return-broken   (bug, high — ANALYZED: by-design/UX gap, submit path is correct; hosted delivery needs a live agent consumer. AWAITING Jari's fix/defer decision (docs+list vs async webhook))
+LANE B — cli/hosted/server core (cli.rs + hosted/* + server.rs + shell.rs + config.rs)
+  ▶ hosted-submit-return-broken   (bug, high — pragmatic fix: publish prints await-submission cmd + `glasspad submissions <slug>` drain command + confirm --public-host. Async/webhook = separate future design issue. CONFIRM scope w/ Jari at start)
+
+LANE render — space/markdown render (render.rs + headers.rs + base.css)
+  ▶ markdown-diagrams             (feature, normal, design-first — inline-SVG-from-assets pattern and/or native mermaid; priority = colour-coded status-DAG. CSP/sandbox-sensitive; collision: headers.rs — Phase 1 confirm hosted-submit stays out of shell.rs/CSP before parallel spawn)
+    docsite-autolink-convention   (feature, low — mostly docs/producer-convention + author link-class theming; aggountant keeps a thin preprocessor. Tracked, no rush)
 ```
 <!-- execution-dag:end -->
 
