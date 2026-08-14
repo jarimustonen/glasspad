@@ -3,13 +3,14 @@ created: 2026-08-14
 updated: 2026-08-14
 type: feature
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 commits:
 - hash: 1baff4f
   summary: per-page H2/H3 TOC rail for prose spaces (approach a, server-side render)
 - hash: af33886
   summary: apply 4-model review findings (collision-free slugs, break/footnote/text-less handling, PROSE_TEMPLATE const, CSS a11y)
+closed: 2026-08-14
 ---
 
 # Per-page TOC rail (on-this-page H2/H3 navigation) for prose spaces
