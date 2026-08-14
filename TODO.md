@@ -364,3 +364,7 @@ browser automation.
 - The repo is public now; treat commits/history as public.
 - `/oss-*` skills (over `ossctl`) drive release/readiness work; `ossctl audit` scores gaps.
 - Track all planning under the issue, not as loose files.
+
+## Piialiisan bugiraportit
+
+- [ ] 🐛 Piialiisan bugiraportti: publish: update a published artifact in place (stable slug) instead of … — jari via Telegram ([`intake-feature-glasspad-15de629c511e`](issues/intake-feature-glasspad-15de629c511e/item.md))
