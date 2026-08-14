@@ -75,13 +75,16 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   the plain prose fragment (no empty rail). `dashboard`/custom templates are unchanged.
   **Diagrams (markdown-diagrams):** authored **inline SVG** is the supported diagram
   path — the producer owns SVG generation and embeds it; the `.md`/template renderer
-  passes raw HTML/SVG through verbatim (no strip, no rewrite), so a diagram displays
-  inside the null-origin sandbox with **no CSP change** (pure markup: no script, no
-  network). `base.css` supplies the theming only — a `--gp-*` status palette
-  (done/next/blocked/future) + `.gp-diagram`/`.gp-node`/`.gp-edge`/`.gp-status-*`/
-  `.gp-legend` classes — so a colour-coded status DAG reads in both themes. Full pattern
-  + accessibility notes: [`AGENTS-DIAGRAMS.md`](AGENTS-DIAGRAMS.md); runnable example:
-  `examples/status-dag/`.
+  passes raw HTML/SVG through verbatim (no strip, no rewrite, **no sanitization**), so a
+  diagram displays inside the null-origin sandbox with **no CSP change**. An authored SVG
+  is untrusted content like any markup (it *may* carry `<script>`/`<foreignObject>`/URL
+  refs — SVG is a scripting host); it is safe because of the **existing** boundary
+  (null-origin, no `allow-same-origin`, `connect-src 'none'`), NOT because SVG is inert.
+  This feature grants no new authority. `base.css` supplies the theming only — a `--gp-*`
+  status palette (done/next/blocked/future) + `.gp-diagram`/`.gp-node`/`.gp-edge`/
+  `.gp-status-*`/`.gp-legend` classes — so a colour-coded status DAG reads in both themes.
+  Full pattern + security/accessibility notes: [`AGENTS-DIAGRAMS.md`](AGENTS-DIAGRAMS.md);
+  runnable example: `examples/status-dag/`.
 - `guards.rs` — control-plane guards (design.md §5): `host_guard` (DNS-rebinding
   defense, all routes, **fail-closed** on missing/foreign/malformed Host; only
   `127.0.0.1`/`localhost` + our port) + `control_origin_guard` (reject

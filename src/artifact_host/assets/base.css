@@ -806,44 +806,58 @@ tbody tr:hover {
  * Approach (a) of the markdown-diagrams feature: the producing agent OWNS diagram
  * rendering (e.g. a data-driven SVG generator) and embeds the result as inline
  * `<svg>` — raw HTML in a `.md`/template body passes through the renderer verbatim
- * and displays inside the null-origin artifact sandbox. NOTHING here widens the
- * security boundary: no script, no external fetch, no CSP change. These classes only
- * give an authored SVG (or an HTML legend) theme-aware colours from the `--gp-*`
- * status palette above, so a colour-coded status DAG (done/next/blocked/future) reads
- * correctly in both Glass Light and Glass Dark.
+ * and displays inside the null-origin artifact sandbox. These classes add NO new
+ * capability: no route, no header, no CSP directive. They only give an authored SVG
+ * (or an HTML legend) theme-aware colours from the `--gp-*` status palette above, so a
+ * colour-coded status DAG (done/next/blocked/future) reads correctly in both Glass
+ * Light and Glass Dark.
+ *
+ * SECURITY: an authored SVG is untrusted artifact content, exactly like raw HTML —
+ * it is NOT sanitized and MAY contain <script>, event handlers, <foreignObject>, and
+ * URL-bearing elements. It is safe because it renders inside the EXISTING artifact
+ * boundary (null-origin sandbox, no allow-same-origin, connect-src 'none'), not
+ * because SVG is "just markup". These style rules do not change that boundary.
  *
  * The canonical shape:
  *
  *   <figure class="gp-diagram">
  *     <svg viewBox="0 0 …" role="img" aria-label="…">
  *       <path class="gp-edge" d="…"/>
- *       <g class="gp-node gp-status-done">
- *         <rect …/><text class="gp-node-label">Ship</text>
+ *       <g class="gp-status-done">
+ *         <rect class="gp-node" …/><text class="gp-node-label">Ship</text>
  *       </g>
  *     </svg>
  *     <figcaption>…</figcaption>
  *   </figure>
  *
- * A `.gp-status-*` class sets two custom properties — `--gp-status` (solid) and
- * `--gp-status-bg` (soft) — that `.gp-node`/`.gp-edge`/`.gp-chip` read, so the same
- * status class colours an SVG node, an SVG edge, or an HTML legend chip.
+ * A `.gp-status-*` class sets three custom properties — `--gp-status` (solid stroke),
+ * `--gp-status-bg` (soft fill), `--gp-status-fg` (label/chip text) — that the shape
+ * rules below read, so the same status class colours an SVG node, an SVG edge, or an
+ * HTML legend chip.
  */
 
 .gp-diagram {
   margin: 1.5em 0;
-  /* Wide diagrams scroll inside the figure instead of the page (never a horizontal
-     body scroll); centered otherwise. */
+  /* By default the SVG scales to fit the reading column (`svg { max-width: 100% }`),
+     so a wide diagram is never a horizontal *body* scroll. An author who would rather
+     keep a minimum readable width sets `--gp-diagram-min-width` (see `.gp-diagram svg`
+     below); the figure then scrolls horizontally inside itself, which this
+     `overflow-x: auto` contains. */
   overflow-x: auto;
   text-align: center;
 }
 
 .gp-diagram svg {
-  max-width: 100%;
+  /* Default (`--gp-diagram-min-width` unset → `100%`): scale down to fit, never
+     overflow. Set e.g. `style="--gp-diagram-min-width: 640px"` on the <svg> to hold a
+     minimum width and scroll inside `.gp-diagram` instead of shrinking illegibly. */
+  width: max(100%, var(--gp-diagram-min-width, 100%));
+  max-width: none;
   height: auto;
   display: inline-block;
 }
 
-/* Status classes expose the palette as two custom props; the shape rules below
+/* Status classes expose the palette as three custom props; the shape rules below
    consume them, falling back to neutral chrome when no status class is present. */
 .gp-status-done {
   --gp-status: var(--gp-status-done);
@@ -866,18 +880,23 @@ tbody tr:hover {
   --gp-status-fg: var(--gp-status-future-text);
 }
 
-/* An SVG node: soft body fill, solid status stroke. Defaults to neutral surface
-   chrome when the author omits a status class. */
+/* An SVG node shape: soft body fill, solid status stroke. Put `.gp-node` on the
+   <rect>/<circle>/<path> ITSELF (not the wrapping <g>) so the paint applies to the
+   shape and does not inherit onto the label text; the `.gp-status-*` class goes on
+   either the shape or the group. Defaults to neutral surface chrome when the author
+   omits a status class. */
 .gp-node {
   fill: var(--gp-status-bg, var(--gp-surface-alt));
   stroke: var(--gp-status, var(--gp-border-strong));
   stroke-width: 1.5px;
 }
 
-/* A node label (SVG text) — always the reading foreground so it stays legible on
-   the soft fill in either theme. */
+/* A node label (SVG text) — the reading foreground, kept legible on the soft fill in
+   either theme. `stroke: none` defends against a status stroke inherited from an
+   ancestor <g> that carries `.gp-node`, which would otherwise outline the glyphs. */
 .gp-node-label {
   fill: var(--gp-text);
+  stroke: none;
   font-family: var(--gp-font-sans);
   font-size: 13px;
 }
@@ -889,6 +908,10 @@ tbody tr:hover {
   stroke-width: 1.5px;
 }
 
+/* An arrowhead <path>. A `<marker>` in <defs> does NOT inherit custom properties from
+   the edge that references it (`marker-end="url(#…)"`), so `--gp-status` set on the
+   edge does not reach here — put the status class on the <marker> (or its path) to
+   colour an arrowhead, otherwise it renders in the neutral fallback. */
 .gp-edge-arrow {
   fill: var(--gp-status, var(--gp-border-strong));
   stroke: none;
@@ -922,10 +945,11 @@ tbody tr:hover {
   border: 1.5px solid var(--gp-status, var(--gp-border-strong));
 }
 
-/* A diagram sits happily inside prose too (embedded as raw HTML in a markdown body):
-   drop the default prose figure margin duplication and let the diagram center. */
+/* A `.gp-diagram` embedded in a `.md` body is a `<figure>`, so `.gp-prose figure`
+   (margin: 1.5em 0) already applies; restate the full margin here so the block
+   margins are explicit and the diagram centres regardless of source order. */
 .gp-prose .gp-diagram {
-  margin-inline: auto;
+  margin: 1.5em auto;
 }
 
 /* The `--gp-prose-*` scale is theme-independent, but printing an explicitly dark

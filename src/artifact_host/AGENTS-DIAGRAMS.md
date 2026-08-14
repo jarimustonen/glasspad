@@ -8,46 +8,72 @@ body or an HTML artifact. glasspad's only contribution is a small set of
 theme-aware CSS classes so an authored diagram reads correctly in both Glass Light
 and Glass Dark.
 
-## Why this is the pattern (not mermaid)
+## Security — the sandbox is the boundary, not the format
 
-The `.md`/template render path passes **raw HTML/SVG through verbatim** (see
-`render::render_markdown`), and the artifact is served inside the **null-origin
-sandbox** with the frozen artifact CSP (`headers::artifact_csp_from_origins`):
-`sandbox allow-scripts` (no `allow-same-origin`), `connect-src 'none'`, `img-src`
-naming only the loopback host + `data:`. An inline SVG is pure markup — no script,
-no network — so it displays under that CSP with **no header change at all**. A
-bundled diagram library (mermaid, etc.) would add a large runtime, a new
-`eval`/parse surface, and nothing the producer needs (it already renders its own
-SVG). So the boundary stays exactly as it was: **null-origin, egress closed.**
+An authored SVG is **untrusted artifact content, exactly like raw HTML**. glasspad
+does **not** sanitize it. Inline SVG is *not* "just markup": it can carry
+`<script>`, event handlers (`onload=`), `<foreignObject>` (arbitrary HTML),
+`<a href>`/`<a href="javascript:…">`, and URL-bearing elements (`<image href>`,
+`<use href>`, `<style>` with `@import`/`url(...)`). The `.md`/template render path
+passes all of that through verbatim (`render::render_markdown`), and the artifact
+`script-src` includes `'unsafe-inline' 'unsafe-eval'`, so any script inside an
+authored SVG **will execute**.
+
+That is safe **because of the existing artifact boundary, not because of the SVG
+format** (`headers::artifact_csp_from_origins`):
+
+- `sandbox allow-scripts allow-top-navigation-by-user-activation` — **no
+  `allow-same-origin`**, so the document is null-origin: it cannot read the parent
+  shell, app storage, or same-origin responses. Script executes but confined.
+- `connect-src 'none'` — the automated-exfil boundary: no `fetch`/XHR/WebSocket/
+  `sendBeacon`/`EventSource`, including to self.
+- `img-src <loopback-host> data:`, `default-src 'none'` — external resource loads
+  are blocked; only the named loopback host + `data:` images resolve.
+
+What is **not** fully closed (unchanged by this feature — true for all artifact
+HTML): a script may still issue requests to the *named loopback host* (a same-host
+side channel), and `allow-top-navigation-by-user-activation` permits a
+**user-gesture-gated** top-level navigation (`top.location = …`) that can carry
+data in the URL. So "no *automated, external* egress", not literally "no network".
+This feature adds **no new authority** — inline SVG receives exactly what hostile
+artifact HTML already had. **Do not** treat "it only contains SVG" as a reason to
+relax the sandbox anywhere.
+
+Producers that want a genuinely static diagram should emit a **script-free,
+self-contained SVG** (shapes/paths/text + the classes below, no `<script>`, no
+external `href`).
 
 ## The classes (`base.css`)
 
 | Class | On | Effect |
 |-------|----|--------|
-| `.gp-diagram` | `<figure>` wrapper | centers, wide diagrams scroll inside the figure (never a body scroll); `<svg>` child capped to `max-width:100%` |
-| `.gp-status-done` / `.gp-status-next` / `.gp-status-blocked` / `.gp-status-future` | any node/edge/chip | sets `--gp-status` (solid), `--gp-status-bg` (soft fill), `--gp-status-fg` (label) from the palette |
-| `.gp-node` | SVG `<rect>`/`<g>` | soft status fill + solid status stroke (neutral chrome when no status class) |
-| `.gp-node-label` | SVG `<text>` | reading foreground colour + sans font, legible on the soft fill in either theme |
+| `.gp-diagram` | `<figure>` wrapper | centers; SVG scales to fit the column by default (never a body scroll). Set `--gp-diagram-min-width` on the `<svg>` to hold a minimum width and scroll inside the figure instead. |
+| `.gp-status-done` / `.gp-status-next` / `.gp-status-blocked` / `.gp-status-future` | node/edge/chip (shape, `<g>`, or `<li>`) | sets `--gp-status` (solid stroke), `--gp-status-bg` (soft fill), `--gp-status-fg` (label/chip text) from the palette |
+| `.gp-node` | the SVG **shape** (`<rect>`/`<circle>`/`<path>`) | soft status fill + solid status stroke (neutral chrome when no status class). Put it on the shape, **not** the wrapping `<g>`, so the paint does not inherit onto the label. |
+| `.gp-node-label` | SVG `<text>` | reading foreground colour + sans font; `stroke: none` keeps glyphs un-outlined |
 | `.gp-edge` | SVG `<path>`/`<line>` | solid status stroke, never filled |
-| `.gp-edge-arrow` | SVG arrowhead `<path>` | solid status fill (for `<marker>` arrowheads) |
-| `.gp-legend` / `.gp-chip` | `<ul>`/`<li>` | an HTML colour key; each chip shows its status swatch |
+| `.gp-edge-arrow` | the arrowhead `<path>` inside a `<marker>` | solid status fill — see the marker caveat below |
+| `.gp-legend` / `.gp-chip` | `<ul>`/`<li>` | an HTML colour key; each chip shows its status swatch + `--gp-status-fg` text |
 
-The status palette tokens (`--gp-status-done`, `--gp-status-done-soft`,
-`--gp-status-done-text`, and the `next`/`blocked`/`future` triples) are defined in
-all three theme blocks in `base.css`, so they follow the active theme.
+Node labels use the neutral reading foreground (`--gp-text`), not `--gp-status-fg`,
+so they stay legible on the soft fill; `--gp-status-fg` is the per-status text
+colour used by the legend chips. The status palette tokens (`--gp-status-done`,
+`--gp-status-done-soft`, `--gp-status-done-text`, and the `next`/`blocked`/`future`
+triples) are defined in all three theme blocks in `base.css`.
 
 ## Canonical shape — a colour-coded status DAG
 
 ```html
 <figure class="gp-diagram">
-  <svg viewBox="0 0 300 80" role="img" aria-label="Status DAG: Ship done, Docs next">
+  <svg viewBox="0 0 300 80" role="img"
+       aria-label="Status DAG. Ship: done. Docs: next.">
     <path class="gp-edge" d="M70 40 H130"/>
-    <g class="gp-node gp-status-done">
-      <rect x="10" y="20" width="60" height="40" rx="6"/>
+    <g class="gp-status-done">
+      <rect class="gp-node" x="10" y="20" width="60" height="40" rx="6"/>
       <text class="gp-node-label" x="40" y="44" text-anchor="middle">Ship</text>
     </g>
-    <g class="gp-node gp-status-next">
-      <rect x="130" y="20" width="60" height="40" rx="6"/>
+    <g class="gp-status-next">
+      <rect class="gp-node" x="130" y="20" width="60" height="40" rx="6"/>
       <text class="gp-node-label" x="160" y="44" text-anchor="middle">Docs</text>
     </g>
   </svg>
@@ -56,23 +82,47 @@ all three theme blocks in `base.css`, so they follow the active theme.
 ```
 
 Drop that straight into a `.md` page (or an HTML artifact). A runnable example is
-`examples/status-dag/` — `glasspad serve ./examples/status-dag`.
+`examples/status-dag/` — `glasspad loopback serve ./examples/status-dag`
+(or `glasspad build ./examples/status-dag <out>` for static output).
+
+## Gotchas for data-driven producers
+
+- **No blank lines inside the embedded HTML.** In a `.md` body the diagram is a
+  CommonMark *HTML block*, which ends at the **first blank line** — content after
+  that blank line is parsed as markdown (and indented SVG lines become an escaped
+  `<pre><code>` block, breaking the diagram). Emit the whole `<figure>…</figure>`
+  contiguously, with no blank line between elements. (Full HTML artifacts and the
+  built-in templates are not affected — only inline HTML *inside markdown*.)
+- **Coloured arrowheads need a per-status marker.** A `<marker>` in `<defs>` does
+  **not** inherit `--gp-status` from the edge that references it via
+  `marker-end="url(#…)"` — the marker content is cloned from the `<marker>`
+  ancestor, not the referencing `<path>`. An arrowhead with `.gp-edge-arrow` alone
+  renders in the neutral fallback. For a status-coloured arrowhead, emit one marker
+  per status and put the status class on it: `<marker id="arrow-done" class="gp-status-done">`.
+- **Unique SVG ids per diagram.** Inline SVG ids share the *document's* id
+  namespace. A page with multiple diagrams must use diagram-unique id prefixes
+  (`id="proj-arrow"`, not `id="arrow"`) or `url(#…)` references resolve to the
+  wrong element.
 
 ## Accessibility & responsiveness
 
-- Give the `<svg>` `role="img"` + a descriptive `aria-label` (the visual encoding
-  is not readable otherwise).
-- Do **not** rely on colour alone — pair each status with a text label (node text
-  and/or the `.gp-legend`), since done/next/blocked/future are only distinguished
-  by hue.
-- Use a `viewBox` (not fixed `width`/`height`) so `.gp-diagram svg` can scale to
-  the reading column; wider diagrams scroll horizontally inside the figure.
+- Give the `<svg>` `role="img"` + a descriptive `aria-label` that names each node
+  **and its status** (the visual encoding is not readable otherwise), and keep it in
+  sync with the rendered nodes.
+- **Do not rely on colour alone.** done/next/blocked/future are distinguished only
+  by hue, so put the status in text too — either in each node's label
+  (`Deploy — blocked`) or an adjacent status list — not only in a colour legend.
+- Use a `viewBox` (not a fixed `width`/`height`) so `.gp-diagram svg` can scale to
+  the reading column.
 
-## Security note
+## Security note (implementation)
 
 This feature is **CSS + docs only**. It adds no route, no header, no script, and
 does not change `render.rs`'s output for any existing input — a diagram renders
 through the pre-existing raw-HTML passthrough. The artifact CSP/sandbox is
-unchanged (null-origin, `connect-src 'none'`); the `render.rs` regression tests
-`inline_svg_status_dag_passes_through_prose_render` and
-`diagram_render_does_not_touch_the_artifact_csp_boundary` pin both halves.
+unchanged. Regression coverage: `render.rs`'s
+`inline_svg_status_dag_passes_through_prose_render` (the SVG, incl. a `<script>`,
+survives the render path un-sanitized) and `mod.rs`'s
+`diagram_artifact_serves_under_the_frozen_csp` (the served diagram artifact carries
+the identical frozen CSP header as any other artifact — null-origin, no
+`allow-same-origin`, `connect-src 'none'`).

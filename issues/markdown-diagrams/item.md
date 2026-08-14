@@ -3,8 +3,11 @@ created: 2026-08-14
 updated: 2026-08-14
 type: feature
 reporter: jari
-status: open
+status: in-progress
 priority: normal
+commits:
+- hash: d68d7a0
+  summary: themed inline-SVG diagram pattern (base.css tokens/classes + render regression tests + docs + example)
 ---
 
 # First-class diagram support in markdown spaces (flow/stack/status-DAG, or documented inline-SVG asset pattern)

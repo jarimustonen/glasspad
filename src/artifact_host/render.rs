@@ -741,11 +741,11 @@ mod tests {
 Where we are:
 
 <figure class="gp-diagram">
-  <svg viewBox="0 0 300 80" role="img" aria-label="Status DAG">
+  <svg viewBox="0 0 300 80" role="img" aria-label="Status DAG. Ship: done. Docs: next. Deploy: blocked.">
     <path class="gp-edge" d="M70 40 H130"/>
-    <g class="gp-node gp-status-done"><rect x="10" y="20" width="60" height="40" rx="6"/><text class="gp-node-label" x="40" y="44">Ship</text></g>
-    <g class="gp-node gp-status-next"><rect x="130" y="20" width="60" height="40" rx="6"/><text class="gp-node-label" x="160" y="44">Docs</text></g>
-    <g class="gp-node gp-status-blocked"><rect x="230" y="20" width="60" height="40" rx="6"/><text class="gp-node-label" x="260" y="44">Deploy</text></g>
+    <g class="gp-status-done"><rect class="gp-node gp-status-done" x="10" y="20" width="60" height="40" rx="6"/><text class="gp-node-label" x="40" y="44">Ship</text></g>
+    <g class="gp-status-next"><rect class="gp-node gp-status-next" x="130" y="20" width="60" height="40" rx="6"/><text class="gp-node-label" x="160" y="44">Docs</text></g>
+    <g class="gp-status-blocked"><rect class="gp-node gp-status-blocked" x="230" y="20" width="60" height="40" rx="6"/><text class="gp-node-label" x="260" y="44">Deploy</text></g>
   </svg>
   <figcaption>Implementation DAG</figcaption>
 </figure>
@@ -760,9 +760,9 @@ Where we are:
         assert!(body.contains("<figure class=\"gp-diagram\">"));
         assert!(body.contains("<svg viewBox=\"0 0 300 80\""));
         // Every status class survives so base.css can theme each node…
-        assert!(body.contains("gp-node gp-status-done"));
-        assert!(body.contains("gp-node gp-status-next"));
-        assert!(body.contains("gp-node gp-status-blocked"));
+        assert!(body.contains(r#"<rect class="gp-node gp-status-done""#));
+        assert!(body.contains(r#"<rect class="gp-node gp-status-next""#));
+        assert!(body.contains(r#"<rect class="gp-node gp-status-blocked""#));
         assert!(body.contains(r#"<path class="gp-edge""#));
         assert!(body.contains(r#"<text class="gp-node-label""#));
         // …and it is spliced inside the prose article (the direct-child render contract).
@@ -770,23 +770,18 @@ Where we are:
     }
 
     #[test]
-    fn diagram_render_does_not_touch_the_artifact_csp_boundary() {
-        // The markdown-diagrams feature is CSS + docs only — it renders diagrams through
-        // the EXISTING passthrough path and changes NO header. This regression pins the
-        // frozen artifact boundary so a future "make SVG diagrams work" change can never
-        // silently widen it: the artifact stays null-origin sandboxed with egress closed.
-        let _ = render_to_body(STATUS_DAG_MD, builtin_template("prose").unwrap()).unwrap();
-        let csp = crate::artifact_host::headers::artifact_csp_from_origins(
-            &crate::artifact_host::headers::self_origins(3000),
-            true,
+    fn diagram_svg_is_not_sanitized_the_sandbox_is_the_boundary() {
+        // The documented security contract for authored SVG: the renderer does NOT
+        // sanitize it — a `<script>` inside an SVG passes through verbatim (it is inert
+        // only because it runs in the null-origin sandbox, not because SVG is stripped).
+        // If a future change silently started sanitizing markdown-embedded HTML, this
+        // catches it (and would signal the docs' "not sanitized" claim went stale).
+        let md = "# D\n\n<figure class=\"gp-diagram\"><svg viewBox=\"0 0 10 10\">\
+                  <script>alert(1)</script><rect class=\"gp-node\"/></svg></figure>\n";
+        let body = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
+        assert!(
+            body.contains("<script>alert(1)</script>"),
+            "SVG script was altered — render path must not sanitize: {body}"
         );
-        // Null-origin sandbox — no allow-same-origin (diagrams need none).
-        assert!(csp.starts_with("sandbox allow-scripts"));
-        assert!(!csp.contains("allow-same-origin"));
-        // The exfil boundary stays fully closed — an inline SVG needs no network.
-        assert!(csp.contains("connect-src 'none'"));
-        // No external image/beacon host was opened for diagram assets.
-        assert!(!csp.contains("img-src *"));
-        assert!(csp.contains("frame-ancestors http://127.0.0.1:3000 http://localhost:3000"));
     }
 }

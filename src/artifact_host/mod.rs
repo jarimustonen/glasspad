@@ -1328,6 +1328,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn diagram_artifact_serves_under_the_frozen_csp() {
+        // markdown-diagrams regression: an inline-SVG diagram page must serve through the
+        // IDENTICAL artifact path/policy as any other artifact — no diagram-specific
+        // header exemption. Render a status-DAG markdown body, route it through the real
+        // snapshot builder + content route, and assert the response CSP is the frozen
+        // artifact policy (null-origin sandbox, no allow-same-origin, egress closed) AND
+        // that the SVG survived into the served body.
+        let md = "# Project view\n\n<figure class=\"gp-diagram\">\
+                  <svg viewBox=\"0 0 120 40\" role=\"img\" aria-label=\"Ship: done\">\
+                  <rect class=\"gp-node gp-status-done\" x=\"0\" y=\"0\" width=\"60\" height=\"40\"/>\
+                  <text class=\"gp-node-label\" x=\"30\" y=\"24\">Ship</text></svg></figure>\n";
+        let body = render::render_to_body(md, render::builtin_template("prose").unwrap()).unwrap();
+        let snap = crate::server::one_artifact_snapshot("dag", body);
+        let host = Arc::new(ArtifactHost::new(3000));
+        host.swap(snap);
+
+        let resp = get_on(host.clone(), "/dag/_c/index").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let csp = header(&resp, "content-security-policy");
+        // The frozen artifact boundary, served for a diagram page exactly as for any
+        // other artifact — this is what proves the feature widened nothing.
+        assert!(
+            csp.starts_with("sandbox allow-scripts"),
+            "sandbox missing: {csp}"
+        );
+        assert!(
+            !csp.contains("allow-same-origin"),
+            "null origin lost: {csp}"
+        );
+        assert!(csp.contains("connect-src 'none'"), "egress opened: {csp}");
+        assert!(!csp.contains("img-src *"), "img wildcard: {csp}");
+
+        // The diagram (with its themed classes) actually reached the served body.
+        let served = body_string(resp).await;
+        assert!(
+            served.contains("<figure class=\"gp-diagram\">"),
+            "no diagram: {served}"
+        );
+        assert!(
+            served.contains(r#"<rect class="gp-node gp-status-done""#),
+            "status class lost: {served}"
+        );
+    }
+
+    #[tokio::test]
     async fn reload_endpoint_is_event_stream() {
         let resp = get("/_gp/reload").await;
         assert_eq!(resp.status(), StatusCode::OK);
