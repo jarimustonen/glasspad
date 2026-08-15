@@ -326,10 +326,10 @@ never parallel (return-channel + space-ingest history showed this family collide
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: publish-update-in-place   ← stable-slug in-place publish update
+GLOBAL HEAD-OF-LINE: materialize-space-durability   ← review follow-up for hosted store durability
 
 LANE B — cli/hosted/server core (cli.rs + hosted/* + server.rs + shell.rs + config.rs)
-  ▶ publish-update-in-place       (feature, normal — stable-slug in-place publish update; --idempotency-key returns the FIRST page so can't update. Lands cli.rs + hosted/* + docs. Coupled to the 0.11.0 publish/submissions surface)
+  ▶ materialize-space-durability  (task, normal — review follow-up from publish-update-in-place: materialize_space fsync-divergence / generation-pointer durability + optional PUT If-Match concurrency)
 
 LANE render — space/markdown render (space.rs + render.rs + headers.rs + base.css)
   ▶ docsite-autolink-convention   (feature, low — mostly docs/producer-convention + author link-class theming; aggountant keeps a thin preprocessor. Tracked, no rush)
