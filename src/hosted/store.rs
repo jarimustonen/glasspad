@@ -1240,6 +1240,89 @@ impl Store {
         })
     }
 
+    /// Replace an **existing** space's content in place, addressed by its capability
+    /// `slug` (the `/p/<slug>/` the caller already holds) rather than by a stable
+    /// key. Owner-scoped and **fail-if-missing**: unlike [`Store::publish_space`]'s
+    /// `space_key` (which falls through to a fresh mint when the key is
+    /// absent/dangling/foreign), naming a slug that is not a live space **owned by
+    /// this tenant** is an opaque [`UpdateError::NoSuchSpace`] — you are targeting a
+    /// specific existing resource, so a miss is an error, never a create. This gives
+    /// the "I published, got a link, now update THAT link" flow a durable path
+    /// without forethought (no `space_key` had to be set at first publish).
+    ///
+    /// Reuses the exact atomic staged-replace ([`Store::materialize_space`] with
+    /// `replace = true`) + snapshot-swap the keyed update path uses, so an existing
+    /// page never blanks and a crash leaves either the old or the new tree intact.
+    /// The retention clock is preserved: `created_at` stays the first publish's,
+    /// `updated_at` advances (so an actively-updated doc keeps its lease exactly like
+    /// a keyed re-publish). No cross-tenant existence oracle: a missing slug and a
+    /// foreign-owned slug return the identical error.
+    pub fn update_space(
+        &self,
+        tenant: &str,
+        slug: &str,
+        space: Space,
+    ) -> Result<PublishedSpace, UpdateError> {
+        // Same critical section as publish / round push / GC.
+        let _guard = self.lock_mutation();
+        let current = self.host.snapshot();
+
+        // Authoritative owner-scope under the lock (TOCTOU-safe): the target must be a
+        // currently-served space whose own on-disk meta records THIS tenant. A slug
+        // that is absent, a single-artifact page (no `spaces/<slug>/meta.json`), or
+        // owned by another tenant all fail closed with the one opaque error.
+        if !current.spaces.contains_key(slug) || !self.space_owned_by(slug, tenant) {
+            return Err(UpdateError::NoSuchSpace);
+        }
+
+        let now = Utc::now();
+        // Preserve the original `created_at` so the retention window still measures
+        // from first publish; only `updated_at` advances on an in-place update.
+        let created_at = self
+            .read_space_created_at(&self.spaces_dir.join(slug))
+            .unwrap_or(now);
+        let meta = SpaceMeta {
+            schema: SPACE_META_SCHEMA,
+            slug: slug.to_string(),
+            tenant: tenant.to_string(),
+            title: space.title.clone(),
+            nav: space.nav.clone(),
+            nav_groups: space.nav_groups.clone(),
+            home: space.home.clone(),
+            favicon: space.favicon.clone(),
+            created_at,
+            updated_at: now,
+        };
+
+        // Atomic staged replace (backup the current tree, swing the new one in).
+        self.materialize_space(slug, &space, &meta, true)
+            .map_err(UpdateError::Io)?;
+
+        let pages: Vec<PublishedPage> = space
+            .nav
+            .iter()
+            .filter_map(|s| {
+                space.artifacts.get(s).map(|a| PublishedPage {
+                    slug: s.clone(),
+                    title: a.title.clone(),
+                })
+            })
+            .collect();
+
+        // Clone-modify-swap the served snapshot (readers in flight keep the old Arc).
+        let mut spaces = current.spaces.clone();
+        spaces.insert(slug.to_string(), space.clone());
+        self.host.swap(Snapshot { spaces });
+
+        Ok(PublishedSpace {
+            slug: slug.to_string(),
+            title: space.title,
+            home: space.home,
+            pages,
+            created: false,
+        })
+    }
+
     /// Scan the `spaces/` tree into `snap`. Each subdirectory is one multi-artifact
     /// space; unreadable/corrupt/invalid spaces are skipped + logged (one bad space
     /// never stops the server serving the rest).
@@ -1648,6 +1731,21 @@ impl Store {
         Ok(Some(rec.slug))
     }
 
+    /// The owner tenant recorded in the **space**-tree `meta.json` for `slug`, or
+    /// `None` (absent/unreadable/foreign-slug/wrong-schema). Used by the update-in-
+    /// place handler to owner-scope EARLY — a non-owner does no build work and learns
+    /// nothing (a miss and a foreign-owned slug are the same `None`). Distinct from
+    /// [`Store::page_tenant`], which fuses the page + space trees for the shared
+    /// submit endpoint; update targets a space specifically. Reuses the same
+    /// defensively-validated [`Store::owner_from_meta`] read the loaders use.
+    pub fn space_tenant(&self, slug: &str) -> Option<String> {
+        self.owner_from_meta::<SpaceMeta, _>(
+            &self.spaces_dir.join(slug).join(META_FILE),
+            slug,
+            |m| (m.schema == SPACE_META_SCHEMA).then_some((m.slug, m.tenant)),
+        )
+    }
+
     /// True iff `spaces/<slug>/meta.json` records `tenant` as owner (and its own
     /// slug). A missing/unreadable/corrupt meta returns `false` (fail-closed).
     fn space_owned_by(&self, slug: &str, tenant: &str) -> bool {
@@ -1810,6 +1908,26 @@ impl std::fmt::Display for RoundError {
         match self {
             RoundError::NoSuchPage => write!(f, "no such page for this tenant"),
             RoundError::Io(e) => write!(f, "storage error: {e}"),
+        }
+    }
+}
+
+/// Failures the update-in-place handler (`PUT /api/v1/spaces/{slug}`) maps to HTTP
+/// status.
+#[derive(Debug)]
+pub enum UpdateError {
+    /// The addressed slug is not a live space owned by the requesting tenant —
+    /// missing, a single-artifact page, or owned by someone else (opaque, no
+    /// cross-tenant existence oracle). Maps to `404`.
+    NoSuchSpace,
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpdateError::NoSuchSpace => write!(f, "no such space for this tenant"),
+            UpdateError::Io(e) => write!(f, "storage error: {e}"),
         }
     }
 }
@@ -2680,6 +2798,116 @@ mod tests {
         assert_eq!(store.page_count(), 1, "no duplicate space");
         // The served home body reflects the NEW content.
         let sp = h.snapshot().space(&first.slug).cloned().unwrap();
+        assert!(sp.artifact("index").unwrap().html.contains("V2"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn update_space_replaces_in_place_by_slug_preserving_created_at() {
+        // The `--update <slug>` path: publish a space (no key), then replace its
+        // content addressed by the returned slug. Same slug/URL, body swaps, the
+        // retention clock (`created_at`) is preserved while `updated_at` advances.
+        let root = tmp_root("update-inplace");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish_space("acme", sample_space("V1"), None)
+            .unwrap();
+        let slug = first.slug.clone();
+        let meta_path = root.join("spaces").join(&slug).join("meta.json");
+        let created_before: SpaceMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+
+        // A tiny sleep so `updated_at` can strictly advance past `created_at`.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let updated = store
+            .update_space("acme", &slug, sample_space("V2"))
+            .unwrap();
+        assert_eq!(updated.slug, slug, "URL/slug preserved");
+        assert!(!updated.created, "an update is never a create");
+        assert_eq!(store.page_count(), 1, "no duplicate space minted");
+
+        // Served body now reflects V2.
+        let sp = h.snapshot().space(&slug).cloned().unwrap();
+        assert!(sp.artifact("index").unwrap().html.contains("V2"));
+
+        // created_at preserved, updated_at advanced.
+        let meta_after: SpaceMeta =
+            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        assert_eq!(
+            meta_after.created_at, created_before.created_at,
+            "retention clock (created_at) must be preserved on update"
+        );
+        assert!(
+            meta_after.updated_at > created_before.updated_at,
+            "updated_at must advance on an in-place update"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn update_space_is_owner_scoped_and_fail_if_missing() {
+        // Foreign-owned, unknown, and page-tree-only slugs all return the same opaque
+        // NoSuchSpace — never a fresh create, no cross-tenant existence oracle.
+        let root = tmp_root("update-owner");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let owned = store
+            .publish_space("acme", sample_space("mine"), None)
+            .unwrap();
+
+        // Another tenant cannot update acme's space (and learns nothing).
+        assert!(matches!(
+            store.update_space("globex", &owned.slug, sample_space("evil")),
+            Err(UpdateError::NoSuchSpace)
+        ));
+        // acme's space is untouched by the refused foreign update.
+        assert!(
+            h.snapshot()
+                .space(&owned.slug)
+                .unwrap()
+                .artifact("index")
+                .unwrap()
+                .html
+                .contains("mine")
+        );
+
+        // An entirely unknown slug is the same opaque error, NOT a create.
+        assert!(matches!(
+            store.update_space("acme", "aaaaaaaaaaaaaaaaaaaaaaaaaa", sample_space("x")),
+            Err(UpdateError::NoSuchSpace)
+        ));
+        assert_eq!(store.page_count(), 1, "a missing-slug update never creates");
+
+        // A single-artifact PAGE slug (pages/ tree, not spaces/) is not a space →
+        // NoSuchSpace, so `--update` can't clobber the immutable page path.
+        let page = store
+            .publish("acme", "<h1>page</h1>".into(), None, None)
+            .unwrap();
+        assert!(matches!(
+            store.update_space("acme", &page.slug, sample_space("x")),
+            Err(UpdateError::NoSuchSpace)
+        ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn update_space_survives_reopen() {
+        // The replaced content is durable: a fresh store reload serves V2.
+        let root = tmp_root("update-reopen");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish_space("acme", sample_space("V1"), None)
+            .unwrap();
+        store
+            .update_space("acme", &first.slug, sample_space("V2"))
+            .unwrap();
+
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(store2.page_count(), 1);
+        let sp = h2.snapshot().space(&first.slug).cloned().unwrap();
         assert!(sp.artifact("index").unwrap().html.contains("V2"));
         std::fs::remove_dir_all(&root).ok();
     }

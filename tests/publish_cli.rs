@@ -189,6 +189,68 @@ fn config_default_template_does_not_break_html_publish() {
 }
 
 #[test]
+fn update_and_space_key_together_are_rejected_by_clap() {
+    // `--update` and `--space-key` are two ways to say "update in place"; clap's
+    // `conflicts_with` rejects passing both (exit 2, argument error).
+    let dir = tmp_dir("update-conflict");
+    let home = tmp_dir("update-conflict-home");
+    let md = write(&dir, "page.md", "# Hi\n");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&md)
+        .args([
+            "--target",
+            "hosted",
+            "--update",
+            "abcdef",
+            "--space-key",
+            "k",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "clap arg conflict → exit 2");
+}
+
+#[test]
+fn update_flag_on_loopback_target_is_rejected() {
+    // `--update` is hosted-only; on a loopback-resolved publish it is a usage error.
+    let dir = tmp_dir("update-loopback");
+    let home = tmp_dir("update-loopback-home");
+    let md = write(&dir, "page.md", "# Hi\n");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&md)
+        .args(["--update", "abcdef"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = parse(&out.stderr);
+    assert_eq!(v["error"]["code"], "option_not_applicable");
+}
+
+#[test]
+fn update_empty_slug_is_rejected() {
+    // A whitespace-only `--update` value is a caller bug, rejected strictly.
+    let dir = tmp_dir("update-empty");
+    let home = tmp_dir("update-empty-home");
+    write(
+        &dir,
+        ".glasspad.yaml",
+        "target: hosted\nserver: https://pad.example\n",
+    );
+    let md = write(&dir, "page.md", "# Hi\n");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&md)
+        .args(["--api-key", "sk", "--update", "   "])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = parse(&out.stderr);
+    assert_eq!(v["error"]["code"], "invalid_update_slug");
+}
+
+#[test]
 fn hosted_only_flag_on_loopback_target_is_rejected() {
     // `--server` on a loopback-resolved publish is a usage error, not a silent no-op.
     let dir = tmp_dir("opt");

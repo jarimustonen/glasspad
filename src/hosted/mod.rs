@@ -21,6 +21,12 @@
 //!   `spaces/<slug>/`; a stable `space_key` updates the space in place. Both surfaces
 //!   are API-key + per-tenant scoped; the space read path stays a null-origin
 //!   sandboxed iframe per page (no new grant, `connect-src 'none'`).
+//! * `PUT /api/v1/spaces/{slug}` (publish-update-in-place) — replace an **existing**
+//!   space's content in place, addressed by the capability slug the caller already
+//!   holds (rather than a stable key). Owner-scoped + **fail-if-missing**: a slug not
+//!   owned by the tenant is an opaque `404 no_such_space`, never a fresh create — the
+//!   deliberate contrast with the `space_key` create-or-update on POST. Reuses the
+//!   same atomic staged-replace + frozen sandbox read seam.
 //!
 //! ## Host handling (plan §8)
 //! The loopback `host_guard` is a *rebinding* defense for a server a browser might
@@ -179,6 +185,13 @@ pub fn build_router(state: HostedState, host: Arc<ArtifactHost>, keys: Arc<KeyTa
         + 1024 * 1024;
     let space_ingest = Router::new()
         .route("/api/v1/spaces", post(ingest::publish_space))
+        // Update-in-place by capability slug (owner-scoped, fail-if-missing). Same
+        // auth + body limit as the create surface; a `PUT` to a resource URL cleanly
+        // expresses "replace this exact space, which must exist".
+        .route(
+            "/api/v1/spaces/{slug}",
+            axum::routing::put(ingest::update_space),
+        )
         .route_layer(middleware::from_fn_with_state(
             keys.clone(),
             auth::ingest_auth,
@@ -995,6 +1008,182 @@ mod tests {
             html.contains("V2"),
             "in-place update did not swap the served body"
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A `PUT /api/v1/spaces/{slug}` update-in-place request carrying the configured
+    /// Host + bearer.
+    fn put_space_req(
+        slug: &str,
+        bearer: Option<&str>,
+        json_body: serde_json::Value,
+    ) -> Request<Body> {
+        let mut b = Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/api/v1/spaces/{slug}"))
+            .header("host", TEST_HOST)
+            .header("content-type", "application/json");
+        if let Some(t) = bearer {
+            b = b.header("authorization", format!("Bearer {t}"));
+        }
+        b.body(Body::from(json_body.to_string())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn update_in_place_by_slug_swaps_body_and_preserves_url() {
+        let root = tmp_root("update-http");
+        let (app, _, _) = app_with(&root);
+        // Publish a fresh space (no key) → 201, capture its slug/url.
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({ "pages": [ { "slug": "index", "html": "<h1>V1</h1>" } ] }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let j = body_json(r).await;
+        let slug = j["slug"].as_str().unwrap().to_string();
+        let url = j["url"].as_str().unwrap().to_string();
+
+        // PUT new content to the same slug → 200 OK, created:false, SAME url.
+        let r = send(
+            &app,
+            put_space_req(
+                &slug,
+                Some(KEY),
+                serde_json::json!({ "pages": [ { "slug": "index", "html": "<h1>V2</h1>" } ] }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK, "update must be 200, not 201");
+        let j = body_json(r).await;
+        assert_eq!(j["slug"].as_str().unwrap(), slug, "slug preserved");
+        assert_eq!(j["url"].as_str().unwrap(), url, "URL preserved");
+        assert!(!j["created"].as_bool().unwrap());
+
+        // The served body now reflects V2, under the SAME frozen sandbox CSP.
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let csp = r
+            .headers()
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(csp.starts_with("sandbox allow-scripts"), "csp: {csp}");
+        assert!(csp.contains("connect-src 'none'"), "egress open: {csp}");
+        let html = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(html.contains("V2"), "in-place update did not swap the body");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn update_in_place_owner_scoped_and_fail_shapes() {
+        let root = tmp_root("update-http-fail");
+        let key2 = "fedcba9876543210fedcba9876543210";
+        let host = Arc::new(ArtifactHost::new_public(
+            "https://pad.example.com".into(),
+            MOUNT.to_string(),
+        ));
+        let store = Arc::new(Store::open(&root, host.clone()).unwrap());
+        let submissions = SubmissionStore::open(&root.join("submissions")).unwrap();
+        let keys = Arc::new(KeyTable::parse(&format!("acme:{KEY}\nglobex:{key2}")).unwrap());
+        let state = HostedState {
+            store: store.clone(),
+            submissions,
+            public_origin: "https://pad.example.com".into(),
+            mount: MOUNT.to_string(),
+            retention_days: 90,
+        };
+        let app = build_router(state, host, keys);
+
+        // acme publishes a space.
+        let slug = body_json(
+            send(
+                &app,
+                space_req(
+                    Some(KEY),
+                    serde_json::json!({ "pages": [ { "slug": "index", "html": "<h1>acme</h1>" } ] }),
+                ),
+            )
+            .await,
+        )
+        .await["slug"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let update_body =
+            serde_json::json!({ "pages": [ { "slug": "index", "html": "<h1>hijacked</h1>" } ] });
+
+        // Unauthenticated → 401.
+        let r = send(&app, put_space_req(&slug, None, update_body.clone())).await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+
+        // A DIFFERENT tenant → opaque 404 no_such_space (no existence oracle), and the
+        // content is NOT modified.
+        let r = send(&app, put_space_req(&slug, Some(key2), update_body.clone())).await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_json(r).await["error"]["code"], "no_such_space");
+
+        // An unknown (well-formed) slug → same opaque 404, never a create.
+        let r = send(
+            &app,
+            put_space_req("aaaaaaaaaaaaaaaaaaaaaaaaaa", Some(KEY), update_body.clone()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_json(r).await["error"]["code"], "no_such_space");
+
+        // A grammar-invalid slug (uppercase — a valid URI segment, but not a valid
+        // space name) → same opaque 404 (grammar rejected at the boundary).
+        let r = send(
+            &app,
+            put_space_req("Upperslug", Some(KEY), update_body.clone()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_json(r).await["error"]["code"], "no_such_space");
+
+        // A stray `space_key` in the update body is rejected (deny_unknown_fields) —
+        // the two addressing modes never mix in one request.
+        let r = send(
+            &app,
+            put_space_req(
+                &slug,
+                Some(KEY),
+                serde_json::json!({
+                    "pages": [ { "slug": "index", "html": "<h1>x</h1>" } ],
+                    "space_key": "k"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+
+        // The owner's content survived every refused/invalid attempt.
+        let r = send(&app, get_req(format!("/p/{slug}/_c/index"))).await;
+        let html = String::from_utf8_lossy(
+            &axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .into_owned();
+        assert!(html.contains("acme"), "owner content must be intact");
+        assert!(!html.contains("hijacked"));
+
+        // The owner CAN update it (200), proving the failures above were auth, not a
+        // broken endpoint.
+        let r = send(&app, put_space_req(&slug, Some(KEY), update_body)).await;
+        assert_eq!(r.status(), StatusCode::OK);
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -131,6 +131,14 @@ enum Commands {
         /// the config `space_key:` value. Absent → a fresh slug each publish.
         #[arg(long)]
         space_key: Option<String>,
+        /// Update an EXISTING published space in place by its capability slug (the
+        /// `<slug>` in the `/p/<slug>/` URL you already hold), keeping the same URL.
+        /// Hosted target, owner-scoped: a slug your key does not own (or one that no
+        /// longer exists) fails with `no_such_space` — it never creates a new page.
+        /// Use this to keep a shared link live when you have no `--space-key` set.
+        /// Mutually exclusive with `--space-key`.
+        #[arg(long, conflicts_with = "space_key")]
+        update: Option<String>,
         /// Loopback TCP port (loopback target). Precedence (AI-first §8): this flag >
         /// $GLASSPAD_PORT > the built-in default (3000).
         #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
@@ -371,11 +379,13 @@ async fn main() {
             template,
             title,
             space_key,
+            update,
             port,
             no_open,
         }) => {
             cli::publish(
-                path, target, server, api_key, template, title, space_key, port, no_open, json,
+                path, target, server, api_key, template, title, space_key, update, port, no_open,
+                json,
             )
             .await
         }

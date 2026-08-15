@@ -425,6 +425,32 @@ GSLUG="$(printf '%s' "$GPUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
 # acme's space is unchanged by globex's publish.
 curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v2"; scheck $? "space: a cross-tenant publish left the owner's space untouched"
 
+# UPDATE-IN-PLACE BY SLUG (publish-update-in-place): PUT /api/v1/spaces/{slug}
+# replaces an existing space addressed by its capability slug — owner-scoped and
+# fail-if-missing (the new write surface). This is the cross-tenant-write gate: a
+# foreign key must NOT be able to update, or even learn the existence of, the slug.
+cat > "$WORK/space_put.json" <<JSON
+{ "pages": [ { "slug": "index", "html": "<title>Home</title><h1>Home v3</h1>" } ] }
+JSON
+# The owner (acme) updates its space in place → 200, same slug, new content served.
+SPUT="$(curl -s -w '\n%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/$SPSLUG" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d @"$WORK/space_put.json")"
+echo "$SPUT" | tail -1 | grep -q '200'; scheck $? "space: PUT update-in-place by slug returns 200 (owner)"
+curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v3"; scheck $? "space: PUT update-in-place swapped the served content"
+# A DIFFERENT tenant (globex) PUT to acme's slug → opaque 404 no_such_space (no
+# cross-tenant existence oracle), and the content is NOT modified.
+cat > "$WORK/space_put_evil.json" <<JSON
+{ "pages": [ { "slug": "index", "html": "<h1>hijacked</h1>" } ] }
+JSON
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/$SPSLUG" -H "Authorization: Bearer $KEYB" \
+  -H 'content-type: application/json' -d @"$WORK/space_put_evil.json")" = "404" ]; scheck $? "space: a cross-tenant PUT update is refused (404 no_such_space)"
+curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -vq "hijacked"; scheck $? "space: the refused cross-tenant PUT left the owner's content intact"
+# A PUT to an unknown slug is the same opaque 404 — never a create.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/aaaaaaaaaaaaaaaaaaaaaaaaaa" -H "Authorization: Bearer $KEYA" \
+  -H 'content-type: application/json' -d @"$WORK/space_put.json")" = "404" ]; scheck $? "space: a PUT to an unknown slug is 404 (fail-if-missing, never a create)"
+# An unauthenticated PUT is rejected fail-closed.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/$SPSLUG" -H 'content-type: application/json' -d @"$WORK/space_put.json")" = "401" ]; scheck $? "space: an unauthenticated PUT update is rejected (401)"
+
 # Space ingest requires auth (fail-closed), same as single-page ingest.
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/spaces" -H 'content-type: application/json' -d '{"pages":[{"slug":"index","html":"x"}]}')" = "401" ]; scheck $? "space: an unauthenticated space publish is rejected (401)"
 

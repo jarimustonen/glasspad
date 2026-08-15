@@ -39,7 +39,7 @@ use crate::server::enforce_body_cap;
 
 use super::HostedState;
 use super::auth::Tenant;
-use super::store::PublishError;
+use super::store::{PublishError, UpdateError};
 
 /// Upper bound on an `idempotency_key` (characters). Keys are short deterministic
 /// caller-chosen strings; a longer value is rejected (AI-first §strict validation)
@@ -351,17 +351,6 @@ pub async fn publish_space(
         }
     };
 
-    // Bound the optional space title (same cap as a page title).
-    if let Some(t) = &req.title
-        && t.chars().count() > space::MAX_TITLE_CHARS
-    {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "title_too_long",
-            &format!("title exceeds {} characters", space::MAX_TITLE_CHARS),
-        );
-    }
-
     // Validate the optional stable space key (non-empty, bounded) — same rules as an
     // idempotency key.
     let space_key = match &req.space_key {
@@ -385,53 +374,19 @@ pub async fn publish_space(
         }
     };
 
-    // Decode assets (base64) and shape the bundle inputs. The per-file / per-space
-    // byte caps are enforced by `build_space_bundle`; here we only reject an asset
-    // whose base64 is malformed (a caller bug, not silently dropped).
-    let pages: Vec<BundlePage> = req
-        .pages
-        .into_iter()
-        .map(|p| BundlePage {
-            slug: p.slug,
-            html: p.html,
-        })
-        .collect();
-    let mut assets: Vec<BundleAsset> = Vec::with_capacity(req.assets.len());
-    for a in req.assets {
-        let bytes =
-            match base64::engine::general_purpose::STANDARD.decode(a.content_base64.as_bytes()) {
-                Ok(b) => b,
-                Err(e) => {
-                    return err(
-                        StatusCode::BAD_REQUEST,
-                        "bad_asset_base64",
-                        &format!("asset {:?} has invalid base64 content: {e}", a.path),
-                    );
-                }
-            };
-        assets.push(BundleAsset {
-            path: a.path,
-            bytes,
-        });
-    }
-
-    // Validate the optional favicon at the untrusted API boundary — a non-emoji /
-    // injection value is rejected here (never stored / rendered), the authoritative
-    // check on top of the producer's own CLI-side validation (AI-first §1).
-    let favicon = match &req.favicon {
-        None => None,
-        Some(raw) => match crate::favicon::validate(raw) {
-            Ok(v) => Some(v),
-            Err(msg) => return err(StatusCode::BAD_REQUEST, "invalid_favicon", &msg),
-        },
-    };
-
-    // Build + validate the space with the SAME rules the filesystem scanner applies.
-    let mut space = match build_space_bundle(pages, assets, req.nav, req.groups, req.title) {
+    // Build + validate the space (title/favicon caps, asset base64, the shared
+    // `build_space_bundle` grammar) — the identical seam the update path uses.
+    let space = match assemble_space(
+        req.pages,
+        req.assets,
+        req.nav,
+        req.groups,
+        req.title,
+        req.favicon,
+    ) {
         Ok(sp) => sp,
-        Err(e) => return err(StatusCode::BAD_REQUEST, "invalid_space", &e.to_string()),
+        Err((code, msg)) => return err(StatusCode::BAD_REQUEST, code, &msg),
     };
-    space.favicon = favicon;
 
     // Blocking filesystem I/O + store mutation lock → off the async worker.
     let store = state.store.clone();
@@ -500,6 +455,225 @@ pub async fn publish_space(
         ),
         Err(e @ PublishError::Io(_)) => {
             eprintln!("glasspad host: space ingest storage error: {e}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the space",
+            )
+        }
+    }
+}
+
+/// Assemble + validate a [`space::Space`] from the raw space-bundle inputs the
+/// ingest surface accepts — the SINGLE seam shared by `publish_space` (create /
+/// create-or-update-by-key) and [`update_space`] (replace-existing-by-slug), so both
+/// go through identical validation (title/favicon caps, asset base64, the
+/// `build_space_bundle` grammar). Returns the built space (favicon reattached) or a
+/// `(code, message)` pair the caller turns into a `400` [`Response`] (every failure
+/// here is a bad request). The favicon is validated at this untrusted API boundary
+/// (a non-emoji / injection value is rejected, never stored / rendered).
+fn assemble_space(
+    pages_in: Vec<SpacePageInput>,
+    assets_in: Vec<SpaceAssetInput>,
+    nav: Vec<String>,
+    groups: Vec<space::NavGroup>,
+    title: Option<String>,
+    favicon_in: Option<String>,
+) -> Result<space::Space, (&'static str, String)> {
+    // Bound the optional space title (same cap as a page title).
+    if let Some(t) = &title
+        && t.chars().count() > space::MAX_TITLE_CHARS
+    {
+        return Err((
+            "title_too_long",
+            format!("title exceeds {} characters", space::MAX_TITLE_CHARS),
+        ));
+    }
+
+    // Decode assets (base64) and shape the bundle inputs. The per-file / per-space
+    // byte caps are enforced by `build_space_bundle`; here we only reject an asset
+    // whose base64 is malformed (a caller bug, not silently dropped).
+    let pages: Vec<BundlePage> = pages_in
+        .into_iter()
+        .map(|p| BundlePage {
+            slug: p.slug,
+            html: p.html,
+        })
+        .collect();
+    let mut assets: Vec<BundleAsset> = Vec::with_capacity(assets_in.len());
+    for a in assets_in {
+        let bytes =
+            match base64::engine::general_purpose::STANDARD.decode(a.content_base64.as_bytes()) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Err((
+                        "bad_asset_base64",
+                        format!("asset {:?} has invalid base64 content: {e}", a.path),
+                    ));
+                }
+            };
+        assets.push(BundleAsset {
+            path: a.path,
+            bytes,
+        });
+    }
+
+    // Validate the optional favicon at the untrusted API boundary — the authoritative
+    // check on top of the producer's own CLI-side validation (AI-first §1).
+    let favicon = match &favicon_in {
+        None => None,
+        Some(raw) => match crate::favicon::validate(raw) {
+            Ok(v) => Some(v),
+            Err(msg) => return Err(("invalid_favicon", msg)),
+        },
+    };
+
+    // Build + validate the space with the SAME rules the filesystem scanner applies.
+    let mut space = match build_space_bundle(pages, assets, nav, groups, title) {
+        Ok(sp) => sp,
+        Err(e) => return Err(("invalid_space", e.to_string())),
+    };
+    space.favicon = favicon;
+    Ok(space)
+}
+
+/// `PUT /api/v1/spaces/{slug}` request: the same space bundle as the POST surface,
+/// **minus** `space_key` — the target is named by the URL slug, not a stable key.
+/// `deny_unknown_fields` so a stray `space_key` (or any mistyped field) is a `400`,
+/// never silently dropped (the update path deliberately does not consult the keyed
+/// mapping — mixing the two addressing modes in one request is a caller error).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpaceUpdateRequest {
+    pages: Vec<SpacePageInput>,
+    #[serde(default)]
+    assets: Vec<SpaceAssetInput>,
+    #[serde(default)]
+    nav: Vec<String>,
+    #[serde(default)]
+    groups: Vec<space::NavGroup>,
+    title: Option<String>,
+    #[serde(default)]
+    favicon: Option<String>,
+}
+
+/// `PUT /api/v1/spaces/{slug}` — replace an **existing** space's content in place,
+/// addressed by the capability slug the caller already holds. Owner-scoped and
+/// **fail-if-missing**: a slug that is not a live space owned by this tenant is an
+/// opaque `404 no_such_space` (no cross-tenant existence oracle), NOT a fresh create
+/// — that is the deliberate contrast with the `space_key` create-or-update on POST.
+/// The URL/slug is preserved; the served body swaps atomically. Reuses the exact
+/// sandbox/CSP read seam (every page stays a null-origin sandboxed iframe).
+pub async fn update_space(
+    State(state): State<HostedState>,
+    Extension(tenant): Extension<Tenant>,
+    axum::extract::Path(slug): axum::extract::Path<String>,
+    body: Result<axum::Json<SpaceUpdateRequest>, JsonRejection>,
+) -> Response {
+    let axum::Json(req) = match body {
+        Ok(b) => b,
+        Err(rej) => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "invalid_json",
+                &format!("request body is not valid JSON for this endpoint: {rej}"),
+            );
+        }
+    };
+
+    // Validate the slug grammar at the HTTP boundary before any filesystem join
+    // (defense-in-depth). An ill-formed slug is the same opaque 404 as an unknown one.
+    if !crate::artifact_host::valid_space(&slug) {
+        return err(
+            StatusCode::NOT_FOUND,
+            "no_such_space",
+            "no such space for this tenant",
+        );
+    }
+
+    // Owner-scope EARLY (before building/validating the bundle) so a non-owner does
+    // no work and learns nothing: a missing space and a space owned by another tenant
+    // both 404 here. `update_space` re-checks authoritatively under the lock.
+    match state.store.space_tenant(&slug) {
+        Some(owner) if owner == tenant.0 => {}
+        _ => {
+            return err(
+                StatusCode::NOT_FOUND,
+                "no_such_space",
+                "no such space for this tenant",
+            );
+        }
+    }
+
+    let space = match assemble_space(
+        req.pages,
+        req.assets,
+        req.nav,
+        req.groups,
+        req.title,
+        req.favicon,
+    ) {
+        Ok(sp) => sp,
+        Err((code, msg)) => return err(StatusCode::BAD_REQUEST, code, &msg),
+    };
+
+    // Blocking filesystem I/O + store mutation lock → off the async worker.
+    let store = state.store.clone();
+    let tenant_id = tenant.0.clone();
+    let target = slug.clone();
+    let result =
+        tokio::task::spawn_blocking(move || store.update_space(&tenant_id, &target, space)).await;
+    let result = match result {
+        Ok(r) => r,
+        Err(join) => {
+            eprintln!("glasspad host: update_space task panicked: {join}");
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not persist the space",
+            );
+        }
+    };
+
+    match result {
+        Ok(published) => {
+            let space_url = format!("{}{}/{}/", state.public_origin, state.mount, published.slug);
+            let pages_json: Vec<serde_json::Value> = published
+                .pages
+                .iter()
+                .map(|p| {
+                    json!({
+                        "slug": p.slug,
+                        "title": p.title,
+                        "url": format!(
+                            "{}{}/{}/{}",
+                            state.public_origin, state.mount, published.slug, p.slug
+                        ),
+                    })
+                })
+                .collect();
+            // An update always replaces an existing resource → `200 OK`, `created:false`.
+            let payload = json!({
+                "schema_version": SCHEMA_VERSION,
+                "slug": published.slug,
+                "url": space_url,
+                "title": published.title,
+                "home": published.home,
+                "pages": pages_json,
+                "page_count": published.pages.len(),
+                "created": published.created,
+                "retention_days": state.retention_days,
+                "warnings": [],
+            });
+            (StatusCode::OK, axum::Json(payload)).into_response()
+        }
+        Err(UpdateError::NoSuchSpace) => err(
+            StatusCode::NOT_FOUND,
+            "no_such_space",
+            "no such space for this tenant",
+        ),
+        Err(e @ UpdateError::Io(_)) => {
+            eprintln!("glasspad host: space update storage error: {e}");
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "storage_error",

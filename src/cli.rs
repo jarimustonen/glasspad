@@ -2042,6 +2042,7 @@ pub async fn publish(
     template: Option<String>,
     title: Option<String>,
     space_key: Option<String>,
+    update: Option<String>,
     port: Option<u16>,
     no_open: bool,
     json: bool,
@@ -2078,7 +2079,7 @@ pub async fn publish(
         Target::Loopback => {
             // Hosted-only options on a loopback target are a usage error, not a
             // silent no-op (AI-first strict validation).
-            reject_hosted_flags_on_loopback(&server, &api_key, &title, &space_key, json);
+            reject_hosted_flags_on_loopback(&server, &api_key, &title, &space_key, &update, json);
             let port = resolve_port(port, json);
             publish_loopback(path, kind, md_template, port, !no_open, json).await;
         }
@@ -2091,6 +2092,7 @@ pub async fn publish(
                 md_template,
                 title,
                 space_key,
+                update,
                 &cfg,
                 no_open,
                 json,
@@ -2107,6 +2109,7 @@ fn reject_hosted_flags_on_loopback(
     api_key: &Option<String>,
     title: &Option<String>,
     space_key: &Option<String>,
+    update: &Option<String>,
     json: bool,
 ) {
     let mut offenders = Vec::new();
@@ -2121,6 +2124,9 @@ fn reject_hosted_flags_on_loopback(
     }
     if space_key.is_some() {
         offenders.push("--space-key");
+    }
+    if update.is_some() {
+        offenders.push("--update");
     }
     if !offenders.is_empty() {
         exit_error(
@@ -2176,6 +2182,7 @@ async fn publish_hosted(
     template: Option<String>,
     title: Option<String>,
     space_key: Option<String>,
+    update: Option<String>,
     cfg: &config::ResolvedConfig,
     no_open: bool,
     json: bool,
@@ -2203,6 +2210,31 @@ async fn publish_hosted(
     let api_key = resolve_api_key(api_key, cfg, json);
     // `space_key`: flag > $GLASSPAD_SPACE_KEY > config `space_key:`.
     let space_key = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", cfg.space_key.clone());
+
+    // `--update <slug>` targets an EXISTING space by its capability slug — a
+    // per-invocation target, not a persistent identity, so it is flag-only (never
+    // config/env). It supersedes any resolved `space_key`: naming a slug to replace
+    // means addressing by URL, not by the keyed create-or-update mapping. clap already
+    // rejects `--update` + `--space-key` together; here we additionally drop a
+    // config-derived `space_key` so the two addressing modes never mix on the wire.
+    let update = match &update {
+        None => None,
+        Some(raw) => {
+            let slug = raw.trim();
+            if slug.is_empty() {
+                exit_error(
+                    json,
+                    1,
+                    "invalid_update_slug",
+                    "--update requires a non-empty capability slug (the <slug> in /p/<slug>/)",
+                    None,
+                    None,
+                );
+            }
+            Some(slug.to_string())
+        }
+    };
+    let space_key = if update.is_some() { None } else { space_key };
 
     // Cross-trust credential guard (defense-in-depth): warn loudly when a hosted
     // publish would send an API key that came from the home config / environment to a
@@ -2265,7 +2297,10 @@ async fn publish_hosted(
         );
     }
 
-    post_space_bundle(&space, &server, &api_key, space_key, title, no_open, json).await;
+    post_space_bundle(
+        &space, &server, &api_key, space_key, update, title, no_open, json,
+    )
+    .await;
 }
 
 /// Build a one-page [`space::Space`] from a single file — the hosted analogue of the
@@ -2316,11 +2351,18 @@ fn build_single_page_space(
 /// single-file hosted publish paths (a single file is just a one-page space). A
 /// `space_key` makes the publish idempotent (updates in place at the same slug);
 /// `title_override` wins over the scanned space title. The API key is never printed.
+///
+/// When `update` is `Some(slug)`, the bundle is sent as `PUT /api/v1/spaces/<slug>`
+/// instead — an in-place replace of an EXISTING space at that capability slug. That
+/// path never carries `space_key` (the URL slug is the target); the caller has
+/// already cleared `space_key` when `update` is set, and the two are clap-exclusive.
+#[allow(clippy::too_many_arguments)]
 async fn post_space_bundle(
     space: &space::Space,
     server: &str,
     api_key: &str,
     space_key: Option<String>,
+    update: Option<String>,
     title_override: Option<String>,
     no_open: bool,
     json: bool,
@@ -2364,7 +2406,11 @@ async fn post_space_bundle(
     if let Some(f) = &space.favicon {
         body.insert("favicon".into(), json!(f));
     }
-    if let Some(k) = &space_key {
+    // `--update <slug>` addresses by URL (PUT /api/v1/spaces/<slug>); it never carries
+    // a `space_key`. The keyed create-or-update stays on POST /api/v1/spaces.
+    if update.is_none()
+        && let Some(k) = &space_key
+    {
         body.insert("space_key".into(), json!(k));
     }
 
@@ -2375,7 +2421,11 @@ async fn post_space_bundle(
         );
     }
 
-    let url = format!("{}/api/v1/spaces", server.trim_end_matches('/'));
+    let base = server.trim_end_matches('/');
+    let url = match &update {
+        Some(slug) => format!("{base}/api/v1/spaces/{slug}"),
+        None => format!("{base}/api/v1/spaces"),
+    };
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -2385,8 +2435,12 @@ async fn post_space_bundle(
         Ok(c) => c,
         Err(e) => exit_error(json, 2, "client_init_failed", &e.to_string(), None, None),
     };
-    let resp = client
-        .post(&url)
+    let request = if update.is_some() {
+        client.put(&url)
+    } else {
+        client.post(&url)
+    };
+    let resp = request
         .bearer_auth(api_key)
         .json(&serde_json::Value::Object(body))
         .send()

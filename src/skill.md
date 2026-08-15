@@ -77,15 +77,26 @@ working directory. Keep credentials in your **home** config: if a repo's
   Runs until killed — start it backgrounded. The private "show me while I work" view.
 - **`target: hosted`** → uploads the space and returns a public capability-slug URL
   (`/p/<slug>/…`, `noindex` — "hold the link"). A snapshot; re-run `publish` to
-  update it. With a `space_key` the re-publish updates **in place** at the same URL
-  (idempotent). The "let a colleague / another machine open it" path.
+  update it. Two ways to keep the **same URL** across edits (a "living" doc shared by
+  link):
+  - `--space-key <k>` (or config `space_key:`) — set once; every publish with that
+    key updates **in place**. Create-or-update: the first publish mints the slug,
+    later ones replace it. Best when you plan the living doc up front.
+  - `--update <slug>` — you already published and have the `/p/<slug>/` link; replace
+    that exact space in place, keeping the URL. Owner-scoped and **fail-if-missing**:
+    a slug your key does not own (or one that expired) is `no_such_space`, never a new
+    page. Best when no `space_key` was set at first publish. Mutually exclusive with
+    `--space-key`.
+
+  The "let a colleague / another machine open it" path.
 
 The loopback↔hosted asymmetry is intended: loopback is live, hosted is a snapshot.
 
 **Overrides** (flag > env > config): `--target loopback|hosted` / `$GLASSPAD_TARGET`;
 `--server` / `$GLASSPAD_SERVER`; `--api-key` / `$GLASSPAD_API_KEY`; `--template`;
-`--space-key` / `$GLASSPAD_SPACE_KEY`; `--title`; `--port` (loopback); `--no-open`.
-The API key is never printed.
+`--space-key` / `$GLASSPAD_SPACE_KEY`; `--update <slug>` (hosted, flag-only —
+replace an existing space by its capability slug); `--title`; `--port` (loopback);
+`--no-open`. The API key is never printed.
 
 ## Authoring
 
