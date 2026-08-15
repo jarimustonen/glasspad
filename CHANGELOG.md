@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.13.0] - 2026-08-15
+
+Fixes the hosted-store durability honesty gap found during the stable-URL update review.
+A post-commit parent-directory fsync failure no longer leaves disk and the in-memory served
+snapshot disagreeing about which space version is live.
+
+### Fixed
+- **Hosted space materialization is now commit-honest**: the atomic rename is treated as the
+  commit point, and all callers distinguish a durable commit from an unconfirmed post-commit
+  durability warning. Replace/create paths now swap the served snapshot whenever disk already
+  contains the new tree, so a reported error cannot secretly mean "the next restart serves
+  different content." Deterministic fault-injection tests pin the fsync-after-swap window.
+- **Hosted atomic-publish paths share the same committed-vs-durable outcome handling** across
+  `materialize_space`, page writes, live-round writes, stable `--space-key` publish, and
+  `PUT /api/v1/spaces/{slug}` update. Review follow-up work for immutable generation
+  directories + a current pointer is tracked as `hosted-store-generation-pointer`.
+
+
 ## [0.12.0] - 2026-08-15
 
 Adds stable-URL hosted republishing: `glasspad publish --update <slug>` can replace a
