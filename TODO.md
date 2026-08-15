@@ -276,7 +276,7 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin` @ `b591037`, clean tree, nothing in flight, 0.12.0 released + verified live.
+`main == origin` @ `e031115`, clean tree, nothing in flight, 0.12.0 released + verified live.
 Agenda: **run `materialize-space-durability` next** unless Jari redirects to template design.
 It is the review follow-up from `publish-update-in-place`: fix/settle hosted store durability
 around `materialize_space` fsync-divergence and the generation-pointer/richer-outcome design,
