@@ -20,8 +20,15 @@ tap = "jarimustonen/homebrew-glasspad"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax).
-# macOS Apple Silicon + Linux (arm64 + x86_64). gnu (not musl) because glasspad
-# pulls reqwest→native-tls (OpenSSL), which is painful to statically link on musl.
+# macOS Apple Silicon + Linux (arm64 + x86_64). The Linux targets build on the
+# GitHub-hosted ubuntu runners (only the mac target is routed to hauis, below), and
+# they use gnu, not musl: gnu is the proven low-friction default on those runners,
+# whereas musl would need musl-tools set up in CI plus per-target compatibility
+# work — for a glibc-independent static binary this project doesn't need. (reqwest
+# is configured with rustls-tls, not native-tls, so OpenSSL is NOT part of this
+# rationale — a musl build would in fact link fine here; it's simply not worth the
+# CI setup.) Unlike the pure-Rust ossctl (which uses musl for exactly that
+# glibc-independence), glasspad stays on gnu.
 #
 # x86_64-apple-darwin is intentionally NOT built: the only always-on macOS release
 # runner is `hauis` (Apple Silicon, Homebrew Rust = no rustup / no x86_64 std), so
