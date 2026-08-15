@@ -3,13 +3,16 @@ created: 2026-08-14
 updated: 2026-08-15
 type: feature
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 labels:
 - via:agent-homebase-wrapup
 commits:
 - hash: 79a6a2b
   summary: 'feat(hosted): publish --update <slug> in-place update by capability slug'
+- hash: 0adf9fd
+  summary: 'fix(hosted): apply review — harden update path (collision fail-closed, single validated meta read, CLI grammar, rollback)'
+closed: 2026-08-15
 ---
 
 # publish: update a published artifact in place (stable slug) instead of …
