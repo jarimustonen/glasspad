@@ -5,12 +5,29 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**CURRENT: glasspad 0.12.0 is FULLY RELEASED + verified live** (2026-08-15) — crates.io
-`0.12.0` (yanked=false, sparse index authoritative), GitHub Release `v0.12.0` (12 assets,
-not draft), Homebrew `version "0.12.0"`. Clean tag-triggered release, mac built clean on
-hauis, no re-runs. Next: **`materialize-space-durability`** (hosted-store durability follow-up
-from the publish-update review) unless Jari wants to switch to template design. The 0.3.0→0.11.0
-release history is preserved below for context.
+**CURRENT: glasspad 0.13.0 is FULLY RELEASED + verified live** (2026-08-15): crates.io
+`0.13.0` (sparse index via `cargo search`), GitHub Release `v0.13.0` (12 assets, not draft),
+Homebrew `version "0.13.0"`. Clean tag-triggered release, mac built clean on hauis. Next:
+**`hosted-store-generation-pointer`** (immutable generation dirs + current-pointer durability)
+unless Jari redirects to template design. The 0.3.0→0.12.0 release history is preserved below
+for context.
+
+## Round 2026-08-15 — 0.13.0 shipped (hosted store durability honesty)
+
+One Lane-B hosted-core spinoff landed on `main`, then shipped as **0.13.0** (`7daf1e2`, tag
+`v0.13.0`). Integrated/release gate: `cargo fmt --all --check` + `cargo clippy --all-targets
+-- -D warnings` + `cargo test` (after the documented build-script clean for the local
+`version_cli` false-fail) + `./test-security.sh` (48 checks + Wave 2a) + localhost loopback
+render smoke + `ossctl audit` (core complete, 0 gaps) + `cargo publish --dry-run`; CI, crates
+publish, cargo-dist Release, and Homebrew formula update all green.
+- ✅ `materialize-space-durability` (`84fc491` + `c522e88`, status **done**) fixed the
+  fsync-after-swap honesty gap in `materialize_space`: the atomic rename is now the commit
+  point, callers distinguish `Durable` vs `Unconfirmed`, and served memory is swapped when
+  disk already contains the new tree. Deterministic fault-injection tests pin create/replace
+  post-commit fsync failures and keep stable-key mappings honest.
+- 🌱 Review follow-up filed and folded into the DAG: `hosted-store-generation-pointer`
+  (normal, Lane B) for immutable generation directories + atomically-swapped current pointers
+  across spaces, stable-key mappings, and live overlays.
 
 ## Round 2026-08-15 — 0.12.0 shipped (stable URL updates + hosted sidebar triage)
 
@@ -276,16 +293,15 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin`, clean tree, nothing in flight, 0.12.0 released + verified live.
-Agenda: **run `materialize-space-durability` next** unless Jari redirects to template design.
-It is the review follow-up from `publish-update-in-place`: fix/settle hosted store durability
-around `materialize_space` fsync-divergence and the generation-pointer/richer-outcome design,
-with optional PUT optimistic concurrency if it fits the same unit. Lane B (`src/hosted/*`),
-so sequence it with any other hosted-core work. `/llm-review`, keep `./test-security.sh` green.
+`main == origin`, clean tree, nothing in flight, 0.13.0 released + verified live.
+Agenda: **run `hosted-store-generation-pointer` next** unless Jari redirects to template
+design. It is the review follow-up from `materialize-space-durability`: immutable generation
+directories + an atomically-swapped current pointer for spaces, stable-key mappings, and live
+overlays. Lane B (`src/hosted/*`), so sequence it with any other hosted-core work. Use
+`/llm-review`, keep `./test-security.sh` green.
 
-**Done this round:** `hosted-nav-loses-sidebar` closed `cannot-reproduce` with regression
-coverage + maalla.dev upgrade/republish ops note; `publish-update-in-place` shipped in 0.12.0
-as `glasspad publish --update <slug>`.
+**Done this round:** `materialize-space-durability` closed `done`; 0.13.0 shipped and verified
+on crates.io, GitHub Release, and Homebrew.
 
 **2. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
 NOT a ready head). Whole-space **branded** template (sidebar/landing/prose as a unit), beyond
