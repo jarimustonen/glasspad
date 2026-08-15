@@ -17,11 +17,24 @@
 //!
 //! **B2 multi-round live overlay.** A page's *served* body can advance round by round
 //! ([`Store::push_round`], owner-scoped) without touching the immutable baseline: a
-//! re-render is persisted as the `live.html` + `live.json` overlay sidecars and the
-//! served snapshot body is swapped in place. `load_page` serves the overlay when a
-//! valid one is present (else the baseline), so the current round survives restart and
-//! the hourly GC-rescan; page retention GC reaps the whole directory (baseline +
-//! overlay) together, so the live "session" is bounded by the same retention window.
+//! re-render is persisted as a new **immutable generation** under the generation-pointed
+//! subtree `pages/<slug>/live/` (an atomically-swapped `current` pointer names the live
+//! round) and the served snapshot body is swapped in place. `load_page` serves the
+//! current generation when a valid one is present (else the baseline), so the current
+//! round survives restart and the hourly GC-rescan — and, because the pointer flip is a
+//! single atomic rename, a crash during round N+1 leaves round N still current (a
+//! committed round can no longer be lost to a torn write). Page retention GC reaps the
+//! whole directory (baseline + overlay) together, so the live "session" is bounded by
+//! the same retention window. A store written by a pre-generation build (the two-file
+//! `live.html`+`live.json` overlay) is still read on upgrade.
+//!
+//! **Generation-pointer storage.** Both multi-artifact spaces (`spaces/<slug>/`) and the
+//! live overlay above store their mutable content as immutable generation directories
+//! (`generations/<gen-id>/`) plus an atomically-swapped `current` pointer — see
+//! [`GENERATIONS_DIR`]. A publish/update/round writes a complete new generation, fsyncs
+//! it, then flips `current` with one rename; a crash before the flip preserves the prior
+//! committed generation, recovery/GC reap every non-current generation. Legacy flat-space
+//! and two-file-overlay stores are read transparently for upgrade compatibility.
 //!
 //! Retention/GC removes page directories older than the retention window and swaps
 //! a rebuilt snapshot so an expired page is promptly **no longer served**.
@@ -109,12 +122,36 @@ pub struct SpaceMeta {
 }
 
 const SPACE_META_SCHEMA: u32 = 1;
-/// The subdirectory of a `spaces/<slug>/` dir holding the per-page artifact bodies
+/// The subdirectory of a generation dir holding the per-page artifact bodies
 /// (`artifacts/<page>.html`). Kept separate from the page's flat `artifact.html`.
 const SPACE_ARTIFACTS_DIR: &str = "artifacts";
 /// The subdirectory holding a space's static assets, mirroring the scanned asset
 /// keys (`assets/<rel...>`).
 const SPACE_ASSETS_SUBDIR: &str = "assets";
+
+/// **Generation-pointer layout** (`hosted-store-generation-pointer`). A space's
+/// (and a page's live overlay's) mutable content is stored as a set of **immutable
+/// generation directories** under `<base>/generations/<gen-id>/` plus a single
+/// **current-generation pointer** file `<base>/current` naming the live generation.
+/// A publish/update/round writes a *complete* new generation, fsyncs it, then flips
+/// `current` with **one atomic rename** — so a crash before the flip leaves the prior
+/// committed generation live (never a torn half-write) and a crash after it leaves the
+/// new one; recovery/GC reap every non-current generation. This replaces the old
+/// in-place staged-replace (`.<slug>.tmp`/`.<slug>.old`) for spaces and the two-file
+/// (`live.html`+`live.json`) overlay protocol, both of which could lose a committed
+/// generation across the wrong crash window.
+const GENERATIONS_DIR: &str = "generations";
+/// The current-generation pointer filename inside a generation-pointed `<base>` dir.
+/// Holds the id of the live generation (one line); replaced atomically by a rename.
+const CURRENT_FILE: &str = "current";
+/// Staging sibling for the atomic pointer swap (`write .current.tmp → rename → current`).
+const CURRENT_TMP: &str = ".current.tmp";
+/// The `pages/<slug>/live/` generation-pointed subdir holding a page's live-overlay
+/// generations + `current` pointer. Parallel to the immutable baseline
+/// (`artifact.html`/`meta.json`), which is never rewritten.
+const LIVE_DIR: &str = "live";
+/// The artifact-body filename inside one live-overlay generation dir.
+const LIVE_BODY_FILE: &str = "body.html";
 
 /// B2 multi-round **live overlay** sidecars (a page's *current round* of content).
 /// The immutable baseline `artifact.html` is **never** rewritten — a multi-round
@@ -280,10 +317,11 @@ impl Store {
             host,
             mutation: std::sync::Mutex::new(()),
         };
-        // Recover any space directory left mid-replace by a crash BEFORE scanning, so
-        // an interrupted in-place update never disappears (its only copy may be in a
-        // `.<slug>.old` backup that GC would otherwise reap).
-        if let Err(e) = store.recover_space_staging() {
+        // Reconcile the `spaces/` tree's generation pointers BEFORE scanning, so an
+        // interrupted publish never serves a torn generation and unpointed orphans are
+        // reaped. Also honours the pre-generation `.<slug>.old` backup format so an
+        // in-place update interrupted under an OLDER build survives the upgrade.
+        if let Err(e) = store.recover_spaces() {
             eprintln!("glasspad host: space staging recovery failed: {e}");
         }
         let snap = store.scan_disk();
@@ -291,20 +329,29 @@ impl Store {
         Ok(store)
     }
 
-    /// Reconcile the `spaces/` tree's crash-staging directories (`materialize_space`'s
-    /// two-phase replace). For a `.<slug>.old` backup: if the live `spaces/<slug>` is
-    /// **missing** (a crash between the two renames left the space only in the backup),
-    /// restore it (`rename(.old → final)`) — never lose the last committed generation;
-    /// otherwise the backup is a completed-replace remnant and is reclaimed. A
-    /// `.<slug>.tmp` is an incomplete stage and is always dropped. Idempotent, so it is
-    /// safe to run at startup and inside GC. Fsyncs `spaces/` when it restored anything.
-    fn recover_space_staging(&self) -> std::io::Result<()> {
+    /// Reconcile the `spaces/` tree after a crash, in two parts:
+    ///
+    /// 1. **Legacy staging (upgrade-safe).** A `.<slug>.old` backup from the
+    ///    pre-generation in-place-replace format: if the live `spaces/<slug>` is
+    ///    **missing** (a crash between the old two renames left the space only in the
+    ///    backup), restore it (`rename(.old → final)`) — never lose the last committed
+    ///    generation of a store written by an older build; otherwise it is a
+    ///    completed-replace remnant and is reclaimed. Any other top-level `.` entry
+    ///    (`.<slug>.tmp`) is an incomplete legacy stage and is dropped.
+    /// 2. **Generation pointers (current format).** For each real `spaces/<slug>/`,
+    ///    [`Store::reconcile_space_generations`] resolves `current` and reaps every
+    ///    non-current / staged generation, dropping a never-committed orphan space.
+    ///
+    /// Idempotent — safe at startup and inside GC. Fsyncs `spaces/` when it restored a
+    /// legacy backup (so the restore is itself durable).
+    fn recover_spaces(&self) -> std::io::Result<()> {
         let rd = match std::fs::read_dir(&self.spaces_dir) {
             Ok(rd) => rd,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e),
         };
         let mut restored = false;
+        let mut spaces: Vec<PathBuf> = Vec::new();
         for entry in rd.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
@@ -312,22 +359,61 @@ impl Store {
             if let Some(slug) = name.strip_prefix('.').and_then(|s| s.strip_suffix(".old")) {
                 let final_dir = self.spaces_dir.join(slug);
                 if final_dir.exists() {
-                    // The replace completed; the backup is dead weight.
+                    // The legacy replace completed; the backup is dead weight.
                     let _ = std::fs::remove_dir_all(&path);
                 } else {
-                    // The replace was interrupted; the backup IS the live space.
+                    // The legacy replace was interrupted; the backup IS the live space.
                     std::fs::rename(&path, &final_dir)?;
                     restored = true;
                 }
             } else if name.starts_with('.') {
-                // A `.tmp` stage (or any other dotfile) is an incomplete write remnant.
+                // A legacy `.tmp` stage (or any other stray dotdir) is a write remnant.
                 let _ = std::fs::remove_dir_all(&path);
+            } else if path.is_dir() {
+                spaces.push(path);
             }
         }
         if restored {
             fsync_dir(&self.spaces_dir)?;
         }
+        // A restored `.old` (or any real space dir) may itself carry generation staging
+        // to reconcile — do it after the legacy pass so both formats are handled.
+        for space_dir in spaces {
+            self.reconcile_space_generations(&space_dir);
+        }
         Ok(())
+    }
+
+    /// Reconcile one `spaces/<slug>/` dir's generation pointer: drop staged `.tmp`
+    /// generations + a stray `.current.tmp`, then keep only the generation `current`
+    /// names (reaping the prior + any orphan). When `current` is absent/invalid AND the
+    /// dir has no legacy flat `meta.json`, the space is a never-committed first-create
+    /// orphan — its generations are reclaimed and the empty shell removed. A legacy
+    /// flat space (no `generations/`, a top-level `meta.json`) is left untouched for the
+    /// loader's backward-compatible read path. Best-effort (recovery must not abort the
+    /// whole server on one unreadable dir).
+    fn reconcile_space_generations(&self, space_dir: &Path) {
+        let gens_dir = space_dir.join(GENERATIONS_DIR);
+        if !gens_dir.is_dir() {
+            // No generations subtree → a legacy flat space (or empty). Nothing to do;
+            // the loader reads the flat layout, GC dates it by its flat meta.
+            return;
+        }
+        match read_pointer(space_dir) {
+            Some(id) if gens_dir.join(&id).is_dir() => {
+                // Committed: keep the live generation, reap the prior + any orphan.
+                reap_generations_except(space_dir, &gens_dir, Some(&id));
+            }
+            _ => {
+                // No resolvable committed generation. Reap every (orphan) generation.
+                reap_generations_except(space_dir, &gens_dir, None);
+                // A first-create that never committed its pointer leaves nothing
+                // servable; drop the empty shell unless a legacy flat meta is present.
+                if !space_dir.join(META_FILE).is_file() {
+                    let _ = std::fs::remove_dir_all(space_dir);
+                }
+            }
+        }
     }
 
     /// Acquire the mutation lock, recovering the guard if a previous holder panicked
@@ -366,11 +452,16 @@ impl Store {
             slug,
             |m| (m.schema == META_SCHEMA).then_some((m.slug, m.tenant)),
         );
-        let space_owner = self.owner_from_meta::<SpaceMeta, _>(
-            &self.spaces_dir.join(slug).join(META_FILE),
-            slug,
-            |m| (m.schema == SPACE_META_SCHEMA).then_some((m.slug, m.tenant)),
-        );
+        // The space's meta lives in its current generation (or, on upgrade, the legacy
+        // flat layout) — resolve it, falling back to the flat path (which won't exist,
+        // so `owner_from_meta` reads no owner) when there is no committed generation.
+        let space_meta_path = self
+            .resolve_space_content_dir(&self.spaces_dir.join(slug))
+            .unwrap_or_else(|| self.spaces_dir.join(slug))
+            .join(META_FILE);
+        let space_owner = self.owner_from_meta::<SpaceMeta, _>(&space_meta_path, slug, |m| {
+            (m.schema == SPACE_META_SCHEMA).then_some((m.slug, m.tenant))
+        });
         // Fail closed under ambiguity: `fresh_slug` keeps the page and space trees
         // from ever sharing a slug, so a slug present in BOTH is corrupt/tampered
         // state where the two metas could name different owners and the served
@@ -536,15 +627,26 @@ impl Store {
         )))
     }
 
-    /// Read a page directory's live overlay, if a **consistent** one is present:
-    /// `live.json` parses with the right schema, `live.html` reads within the per-file
-    /// cap, **and** the body's recomputed content-version matches the meta's — so a
-    /// crash-torn pair (body and meta from different rounds) is rejected. Any
+    /// Read a page's live overlay, if a **consistent** one is present. The overlay is a
+    /// generation-pointed subtree `pages/<slug>/live/`: resolve `live/current` to the
+    /// current generation, then read its `meta.json` (schema-checked [`LiveMeta`]) +
+    /// `body.html` (within the per-file cap). The body's recomputed content-version must
+    /// match the meta's (defense-in-depth — the atomic pointer flip already makes a
+    /// torn body/meta pair impossible, but a hand-tampered generation is still
+    /// rejected). For upgrade compatibility, when there is no generation pointer this
+    /// falls back to the pre-generation two-file overlay (`live.html`+`live.json`),
+    /// whose crash-torn pair the same content-version cross-check rejects. Any
     /// absence/corruption/mismatch returns `None`, so the caller reverts to the
     /// immutable baseline; a half-written or hand-tampered overlay can never blank a
     /// page or serve a body under the wrong round label.
     fn read_live_overlay(&self, dir: &Path) -> Option<(LiveMeta, String)> {
-        let lm_bytes = read_capped(&dir.join(LIVE_META_FILE), MAX_META_BYTES).ok()?;
+        let live_base = dir.join(LIVE_DIR);
+        let (meta_path, body_path) = match current_gen_dir(&live_base) {
+            Some(g) => (g.join(META_FILE), g.join(LIVE_BODY_FILE)),
+            // Legacy two-file overlay (a store written by a pre-generation build).
+            None => (dir.join(LIVE_META_FILE), dir.join(LIVE_FILE)),
+        };
+        let lm_bytes = read_capped(&meta_path, MAX_META_BYTES).ok()?;
         if lm_bytes.len() as u64 > MAX_META_BYTES {
             return None;
         }
@@ -552,9 +654,9 @@ impl Store {
         if lm.schema != LIVE_SCHEMA {
             return None;
         }
-        let body = read_capped_utf8(&dir.join(LIVE_FILE)).ok()?;
-        // Consistency gate: the meta must describe THIS body (else a crash between the
-        // two renames left a mismatched pair — ignore it, revert to baseline).
+        let body = read_capped_utf8(&body_path).ok()?;
+        // Consistency gate: the meta must describe THIS body (rejects a hand-tampered
+        // generation, or a legacy crash-torn pair — revert to baseline).
         if crate::submissions::content_version(&body) != lm.content_version {
             return None;
         }
@@ -740,21 +842,20 @@ impl Store {
         })
     }
 
-    /// Durably materialize the live overlay for a page: write `live.html` (fsync +
-    /// atomic rename), then `live.json` **after** it, so the meta's presence implies a
-    /// matching body. Both land under the (already-durable) page directory, which is
-    /// fsync'd after each rename. `.live.*.tmp` staging siblings are cleaned on error;
-    /// they live under the page dir (not `pages/`), so the top-level GC tmp-reaper
-    /// never touches them, and `load_page` only reads the two exact filenames.
+    /// Durably materialize a **new live-overlay generation** for a page and flip the
+    /// overlay's `current` pointer to it. The overlay is a generation-pointed subtree
+    /// `pages/<slug>/live/` (parallel to — never touching — the immutable baseline
+    /// `artifact.html`). One generation dir holds `body.html` + `meta.json`
+    /// ([`LiveMeta`]); staged in `generations/.<gen-id>.tmp/`, fsync'd, renamed to its
+    /// immutable name, then pointed at with a single atomic rename. This is the F13
+    /// fix: because the pointer flip is atomic, a crash during round N+1 leaves round N
+    /// still current — a committed round can no longer be lost to a torn two-file pair.
     ///
-    /// Same commit invariant as [`Store::materialize_space`], with the **meta rename**
-    /// as the overlay's commit point (that is when a consistent `(body, meta)` pair
-    /// first exists). An error before it is a plain `Err` (nothing usable committed — a
-    /// torn body-only state is discarded on load, reverting to baseline). After it the
-    /// fn returns [`Committed`]: a failed post-commit fsync becomes
-    /// `Committed::Unconfirmed`, so `push_round` still swaps the served body + notifies
-    /// shells (memory == disk) and surfaces the durability error, rather than returning
-    /// `Err` and leaving the new round on disk while the snapshot stays old.
+    /// Same commit invariant as [`Store::write_space_generation`] — the pointer flip is
+    /// the commit point. A failure before it is a plain `Err` (round N stays current);
+    /// after it a failed post-commit fsync becomes `Committed::Unconfirmed`, so
+    /// `push_round` still swaps the served body + notifies shells (memory == disk) and
+    /// surfaces the durability error rather than stranding the new round on disk.
     fn write_live(&self, dir: &Path, html: &str, round: u64) -> std::io::Result<Committed> {
         // Body cap (defense-in-depth; the handler already bounds it to the per-file
         // cap): never persist an overlay larger than a baseline artifact.
@@ -764,19 +865,18 @@ impl Store {
                 "live round body exceeds the per-file limit",
             ));
         }
+        let base = dir.join(LIVE_DIR);
+        let base_is_new = !base.exists();
+        let gens_dir = base.join(GENERATIONS_DIR);
+        std::fs::create_dir_all(&gens_dir)?;
+        let gen_id = mint_gen_id(&gens_dir)?;
+        let gen_final = gens_dir.join(&gen_id);
+        let gen_tmp = gens_dir.join(format!(".{gen_id}.tmp"));
+        let _ = std::fs::remove_dir_all(&gen_tmp);
+
         let staged = (|| -> std::io::Result<Committed> {
-            // 1. Body first.
-            let body_final = dir.join(LIVE_FILE);
-            let body_tmp = dir.join(".live.html.tmp");
-            write_file_synced(&body_tmp, html.as_bytes())?;
-            std::fs::rename(&body_tmp, &body_final)?;
-            // Pre-commit: a new body with no matching meta yet is a torn state that load
-            // discards (reverts to baseline), so a failure here is truthfully `Err`.
-            fsync_dir(dir)?;
-            // 2. Meta after the body is durable, stamped with the body's digest so a
-            //    crash between the two renames yields a mismatched pair that load
-            //    detects and rejects (reverting to baseline) instead of serving a body
-            //    under the wrong round label.
+            std::fs::create_dir_all(&gen_tmp)?;
+            write_file_synced(&gen_tmp.join(LIVE_BODY_FILE), html.as_bytes())?;
             let lm = LiveMeta {
                 schema: LIVE_SCHEMA,
                 round,
@@ -785,22 +885,30 @@ impl Store {
             };
             let json = serde_json::to_vec(&lm)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            let meta_final = dir.join(LIVE_META_FILE);
-            let meta_tmp = dir.join(".live.json.tmp");
-            write_file_synced(&meta_tmp, &json)?;
-            std::fs::rename(&meta_tmp, &meta_final)?;
-            // COMMIT POINT: a consistent (body, meta) pair now exists on disk. The
-            // parent flush reports durability rather than gating the commit.
-            Ok(match self.commit_fsync(dir) {
-                Ok(()) => Committed::Durable,
-                Err(e) => Committed::Unconfirmed(e),
-            })
+            write_file_synced(&gen_tmp.join(META_FILE), &json)?;
+            fsync_tree(&gen_tmp)?;
+            self.commit_generation(&base, dir, &gens_dir, &gen_id, &gen_tmp, base_is_new)
         })();
         if staged.is_err() {
-            let _ = std::fs::remove_file(dir.join(".live.html.tmp"));
-            let _ = std::fs::remove_file(dir.join(".live.json.tmp"));
+            let _ = std::fs::remove_dir_all(&gen_tmp);
+            let _ = std::fs::remove_dir_all(&gen_final);
         }
         staged
+    }
+
+    /// Reap every non-current / staged live-overlay generation under `pages/<slug>/live/`
+    /// (the prior generation retained by an unconfirmed push, an orphan from a crashed
+    /// push, a `.tmp` stage, a stray `.current.tmp`). No live subtree → nothing to do.
+    /// Best-effort; called from GC for surviving pages so the overlay stays bounded to
+    /// its current generation.
+    fn reconcile_live_generations(&self, page_dir: &Path) {
+        let base = page_dir.join(LIVE_DIR);
+        let gens_dir = base.join(GENERATIONS_DIR);
+        if !gens_dir.is_dir() {
+            return;
+        }
+        let keep = read_pointer(&base).filter(|id| gens_dir.join(id).is_dir());
+        reap_generations_except(&base, &gens_dir, keep.as_deref());
     }
 
     /// Resolve an idempotency key to an already-published page for `tenant`, or
@@ -976,7 +1084,7 @@ impl Store {
     /// `.<slug>.tmp` staging dir, fsync the staging dir, `rename` it into place, then
     /// fsync `pages_dir` so the rename survives a crash. A reader never sees a page dir
     /// that exists but lacks its artifact/meta. Same commit invariant as
-    /// [`Store::materialize_space`]: `Err` ⟺ nothing changed (pre-commit); once the
+    /// [`Store::write_space_generation`]: `Err` ⟺ nothing changed (pre-commit); once the
     /// publishing rename lands it returns [`Committed`], so a post-commit parent-dir
     /// fsync failure becomes `Committed::Unconfirmed` (the caller swaps + surfaces it)
     /// rather than an `Err` that would strand the page on disk while the snapshot stays
@@ -1058,16 +1166,21 @@ impl Store {
                     continue;
                 }
                 removed += 1;
+            } else {
+                // A surviving page keeps only its current live-overlay generation:
+                // reap the prior + any orphan/staged generation left by a crashed or
+                // unconfirmed round push, bounding the overlay subtree to one generation.
+                self.reconcile_live_generations(&dir);
             }
         }
         // Same pass over the multi-artifact `spaces/` tree (Gap 1). First reconcile
-        // crash-staging dirs — a `.<slug>.old` whose live space is missing is RESTORED
-        // (never reaped), so an interrupted in-place update is not lost; other dotdirs
-        // are incomplete-write remnants. Then remove any space positively dated as
-        // expired. Retention for a space is measured from its **last update**
-        // (`updated_at`), so an actively-maintained docsite keeps its lease and an
-        // abandoned one still expires a window after the final publish.
-        if let Err(e) = self.recover_space_staging() {
+        // generation pointers — reap every non-current / staged generation and drop a
+        // never-committed orphan, and restore any pre-generation `.<slug>.old` legacy
+        // backup whose live space is missing (upgrade-safe). Then remove any space
+        // positively dated as expired. Retention for a space is measured from its
+        // **last update** (`updated_at`), so an actively-maintained docsite keeps its
+        // lease and an abandoned one still expires a window after the final publish.
+        if let Err(e) = self.recover_spaces() {
             eprintln!("glasspad host: GC space staging recovery failed: {e}");
         }
         for entry in std::fs::read_dir(&self.spaces_dir)?.flatten() {
@@ -1249,7 +1362,7 @@ impl Store {
         };
 
         let committed = self
-            .materialize_space(&slug, &space, &meta, !created)
+            .write_space_generation(&slug, &space, &meta)
             .map_err(PublishError::Io)?;
 
         let pages: Vec<PublishedPage> = space
@@ -1305,9 +1418,10 @@ impl Store {
     /// the "I published, got a link, now update THAT link" flow a durable path
     /// without forethought (no `space_key` had to be set at first publish).
     ///
-    /// Reuses the exact atomic staged-replace ([`Store::materialize_space`] with
-    /// `replace = true`) + snapshot-swap the keyed update path uses, so an existing
-    /// page never blanks and a crash leaves either the old or the new tree intact.
+    /// Reuses the exact generation write + pointer flip
+    /// ([`Store::write_space_generation`]) and snapshot-swap the keyed update path uses,
+    /// so an existing page never blanks and a crash before the pointer flip leaves the
+    /// prior committed generation intact.
     /// The retention clock is preserved: `created_at` stays the first publish's,
     /// `updated_at` advances (so an actively-updated doc keeps its lease exactly like
     /// a keyed re-publish). No cross-tenant existence oracle: a missing slug and a
@@ -1378,9 +1492,9 @@ impl Store {
             updated_at: now,
         };
 
-        // Atomic staged replace (backup the current tree, swing the new one in).
+        // Write a new immutable generation + flip the pointer (atomic replace).
         let committed = self
-            .materialize_space(slug, &space, &meta, true)
+            .write_space_generation(slug, &space, &meta)
             .map_err(UpdateError::Io)?;
 
         let pages: Vec<PublishedPage> = space
@@ -1460,12 +1574,17 @@ impl Store {
     }
 
     /// Load one `spaces/<slug>/` directory back into `(meta, Space)`, re-validating
-    /// every field. The raw artifact/asset bytes are re-run through
-    /// [`space::build_space_bundle`] — the **same** validation the ingest path uses —
-    /// so a hand-tampered store can never smuggle a bad slug/oversize/traversal entry
-    /// into the router. Symlinks (dir or any file) are rejected. Returns `Ok(None)`
-    /// for a dir that is absent-meta / mismatched / fails validation (skipped, not
-    /// fatal).
+    /// every field. `dir` is the space dir; its **content directory** (the one holding
+    /// `meta.json` + `artifacts/` + `assets/`) is resolved by
+    /// [`Store::resolve_space_content_dir`] — the current generation
+    /// (`generations/<gen-id>/`) when a valid `current` pointer is present, else the
+    /// legacy flat layout (`meta.json` written directly under the space dir by a
+    /// pre-generation build) for upgrade compatibility. The raw artifact/asset bytes are
+    /// re-run through [`space::build_space_bundle`] — the **same** validation the ingest
+    /// path uses — so a hand-tampered store can never smuggle a bad slug/oversize/
+    /// traversal entry into the router. Symlinks (dir or any file) are rejected. Returns
+    /// `Ok(None)` for a dir with no resolvable content / mismatched / failing-validation
+    /// meta (skipped, not fatal).
     fn load_space(&self, dir: &Path) -> std::io::Result<Option<(SpaceMeta, Space)>> {
         if std::fs::symlink_metadata(dir)?.file_type().is_symlink() {
             eprintln!(
@@ -1474,7 +1593,15 @@ impl Store {
             );
             return Ok(None);
         }
-        let meta_path = dir.join(META_FILE);
+        // The slug is the SPACE dir name (authoritative), not the content dir's — a
+        // generation dir is named by its opaque gen-id, so the identity check below
+        // compares meta.slug against the space dir name, never the generation id.
+        let slug_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let content = match self.resolve_space_content_dir(dir) {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        let meta_path = content.join(META_FILE);
         if !meta_path.is_file() {
             return Ok(None);
         }
@@ -1482,7 +1609,7 @@ impl Store {
         if meta_bytes.len() as u64 > MAX_META_BYTES {
             eprintln!(
                 "glasspad host: space meta.json in {} exceeds {MAX_META_BYTES} bytes; skipping",
-                dir.display()
+                content.display()
             );
             return Ok(None);
         }
@@ -1491,19 +1618,18 @@ impl Store {
             Err(e) => {
                 eprintln!(
                     "glasspad host: bad space meta.json in {}: {e}",
-                    dir.display()
+                    content.display()
                 );
                 return Ok(None);
             }
         };
-        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let title_ok = meta
             .title
             .as_ref()
             .is_none_or(|t| t.chars().count() <= space::MAX_TITLE_CHARS);
         if meta.schema != SPACE_META_SCHEMA
             || !valid_space(&meta.slug)
-            || meta.slug != dir_name
+            || meta.slug != slug_name
             || !valid_space(&meta.tenant)
             || !title_ok
         {
@@ -1518,11 +1644,11 @@ impl Store {
         // (bounded reads; symlinks — including the subdir roots — rejected), so a
         // hand-tampered store can never force an unbounded allocation on startup / GC.
         let mut budget = LoadBudget::new();
-        let pages = match self.read_space_pages(dir, &mut budget)? {
+        let pages = match self.read_space_pages(&content, &mut budget)? {
             Some(p) => p,
             None => return Ok(None),
         };
-        let assets = match self.read_space_assets(dir, &mut budget)? {
+        let assets = match self.read_space_assets(&content, &mut budget)? {
             Some(a) => a,
             None => return Ok(None),
         };
@@ -1706,54 +1832,56 @@ impl Store {
         Ok(Some(out))
     }
 
-    /// Atomically materialize a `spaces/<slug>/` directory from a validated
-    /// [`Space`] + [`SpaceMeta`] — and durably, when the final parent-dir fsync
-    /// succeeds (the return value reports this; see the commit invariant below).
-    /// Stages the whole tree in `.<slug>.tmp/`, fsyncs it, then publishes it with a
-    /// single rename (fresh create) or an atomic replace (rename final → `.<slug>.old`,
-    /// rename tmp → final, remove backup) so a reader never sees a half-written or
-    /// missing space and a crash leaves either the old or the new tree intact.
+    /// Materialize a validated [`Space`] + [`SpaceMeta`] as a **new immutable
+    /// generation** under `spaces/<slug>/generations/<gen-id>/` and flip the space's
+    /// `current` pointer to it — one write path for both a fresh create and an
+    /// in-place update (the two differ only in slug/meta resolution the callers do
+    /// beforehand). Stages the whole tree in `generations/.<gen-id>.tmp/`, fsyncs it,
+    /// renames it to its final immutable name, fsyncs `generations/`, then swings
+    /// `current` over with a single atomic rename. A reader never sees a half-written
+    /// generation, and a crash before the pointer flip leaves the **prior committed
+    /// generation** live (never a torn tree).
     ///
-    /// **Commit invariant (what `Ok`/`Err` mean to the caller).** The publishing
-    /// rename (`tmp → final`) is the single **commit point**, and the return value
-    /// distinguishes the three states a caller must tell apart:
+    /// **Commit invariant (what `Ok`/`Err` mean to the caller).** The pointer flip
+    /// (`rename → current`) is the single **commit point**:
     ///
-    /// - `Err(io::Error)` — a failure *before* the publishing rename landed. Nothing
-    ///   was swapped into `spaces/<slug>/` (a replace restored its prior tree, a create
-    ///   left no final), so the on-disk truth is unchanged and the caller must **not**
-    ///   swap its served snapshot.
-    /// - `Ok(Committed::Durable)` — the rename landed and the parent-dir fsync
-    ///   confirmed it. The caller **must** swap its snapshot; the write is durable.
-    /// - `Ok(Committed::Unconfirmed(e))` — the rename landed (the new tree **is** the
-    ///   on-disk truth) but the parent-dir fsync failed, so durability is unconfirmed.
-    ///   The caller **must still** swap its snapshot (memory has to match what a restart
-    ///   would serve — this is the divergence this design prevents), then surface `e` so
-    ///   a client is never told a possibly-non-durable write succeeded.
-    ///
-    /// So the caller swaps iff `Ok(_)` — never on `Err` — which is what keeps the
-    /// served snapshot and the on-disk tree from diverging, while durability is reported
-    /// honestly rather than swallowed. On `Unconfirmed` a replace **keeps** its `.old`
-    /// backup (the last confirmed-durable generation); recovery reconciles it.
-    fn materialize_space(
+    /// - `Err(io::Error)` — a failure *before* the pointer flip. `current` still names
+    ///   the prior generation (or none, on a first create), so the on-disk truth is
+    ///   unchanged and the caller must **not** swap its served snapshot. The unpointed
+    ///   new generation is a reclaimable orphan (reaped here on error / by recovery).
+    /// - `Ok(Committed::Durable)` — the flip landed and its fsync confirmed it. The
+    ///   caller **must** swap its snapshot; the write is durable. The prior generation
+    ///   (and any stray non-current generation) is reaped.
+    /// - `Ok(Committed::Unconfirmed(e))` — the flip landed (the new generation **is**
+    ///   current) but the post-commit fsync failed, so durability is unconfirmed. The
+    ///   caller **must still** swap its snapshot (memory must match what a restart would
+    ///   serve — the divergence this design prevents), then surface `e`. The prior
+    ///   generation is **retained** as the last confirmed-durable copy — so if a crash
+    ///   then loses the unflushed pointer flip, recovery reads the prior pointer and the
+    ///   prior generation is still there. Recovery reaps it once the flip is confirmed.
+    fn write_space_generation(
         &self,
         slug: &str,
         space: &Space,
         meta: &SpaceMeta,
-        replace: bool,
     ) -> std::io::Result<Committed> {
-        let final_dir = self.spaces_dir.join(slug);
-        let tmp_dir = self.spaces_dir.join(format!(".{slug}.tmp"));
-        let backup_dir = self.spaces_dir.join(format!(".{slug}.old"));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
+        let base = self.spaces_dir.join(slug);
+        let base_is_new = !base.exists();
+        let gens_dir = base.join(GENERATIONS_DIR);
+        std::fs::create_dir_all(&gens_dir)?;
+        let gen_id = mint_gen_id(&gens_dir)?;
+        let gen_final = gens_dir.join(&gen_id);
+        let gen_tmp = gens_dir.join(format!(".{gen_id}.tmp"));
+        let _ = std::fs::remove_dir_all(&gen_tmp);
 
         let staged = (|| -> std::io::Result<Committed> {
-            std::fs::create_dir_all(&tmp_dir)?;
+            std::fs::create_dir_all(&gen_tmp)?;
             // meta.json
             let meta_json = serde_json::to_vec_pretty(meta)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            write_file_synced(&tmp_dir.join(META_FILE), &meta_json)?;
+            write_file_synced(&gen_tmp.join(META_FILE), &meta_json)?;
             // artifacts/<page>.html
-            let art_dir = tmp_dir.join(SPACE_ARTIFACTS_DIR);
+            let art_dir = gen_tmp.join(SPACE_ARTIFACTS_DIR);
             std::fs::create_dir_all(&art_dir)?;
             for (page_slug, artifact) in &space.artifacts {
                 write_file_synced(
@@ -1762,84 +1890,86 @@ impl Store {
                 )?;
             }
             // assets/<rel...> — the key already begins with `assets/`, so joining it
-            // onto the space dir reproduces the `assets/<rel>` layout.
+            // onto the generation dir reproduces the `assets/<rel>` layout.
             for (key, asset) in &space.assets {
-                let dest = tmp_dir.join(key);
+                let dest = gen_tmp.join(key);
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
                 write_file_synced(&dest, &asset.bytes)?;
             }
-            // Flush every directory in the staged tree so its entries are durable
-            // before the publishing rename.
-            fsync_tree(&tmp_dir)?;
-
-            if replace {
-                let _ = std::fs::remove_dir_all(&backup_dir);
-                // Move the current tree aside, swing the new one in, then drop the
-                // backup. A crash between the renames leaves a reclaimable `.old`.
-                let moved_aside = final_dir.exists();
-                if moved_aside {
-                    std::fs::rename(&final_dir, &backup_dir)?;
-                }
-                // If swinging the new tree in fails (an ordinary, non-crash I/O error),
-                // restore the backup so the live space is never left MISSING — crash
-                // recovery (`recover_space_staging`) only runs at startup / hourly GC,
-                // so a runtime failure has to self-heal synchronously here rather than
-                // stranding the only committed generation in `.old`. This is a
-                // PRE-COMMIT failure: nothing was swapped into `final_dir`, so the
-                // returned `Err` truthfully means "nothing changed" and the caller
-                // must not swap its snapshot.
-                if let Err(e) = std::fs::rename(&tmp_dir, &final_dir) {
-                    if moved_aside && !final_dir.exists() {
-                        let _ = std::fs::rename(&backup_dir, &final_dir);
-                        let _ = fsync_dir(&self.spaces_dir);
-                    }
-                    return Err(e);
-                }
-                // COMMIT POINT reached: the new tree is now `spaces/<slug>/`, the
-                // on-disk truth. Past here the function never returns `Err` — the caller
-                // must swap its snapshot — but it DOES report whether the commit was
-                // confirmed durable so the caller can honestly surface an fsync failure.
-                match self.commit_fsync(&self.spaces_dir) {
-                    Ok(()) => {
-                        // Durable: the prior generation's backup is now safe to reclaim.
-                        let _ = std::fs::remove_dir_all(&backup_dir);
-                        Ok(Committed::Durable)
-                    }
-                    Err(e) => {
-                        // Unconfirmed: the publishing rename is NOT confirmed durable, so
-                        // RETAIN `.old` as the last durable generation. Deleting it here
-                        // (as an unconditional cleanup would) could lose BOTH generations
-                        // if a crash then persisted `final -> .old` + the deletion but
-                        // not `tmp -> final`. Recovery reconciles the retained backup
-                        // (final present -> drop `.old`; final lost on a crash ->
-                        // restore `.old`).
-                        Ok(Committed::Unconfirmed(e))
-                    }
-                }
-            } else {
-                std::fs::rename(&tmp_dir, &final_dir)?;
-                // COMMIT POINT: the fresh tree is now `spaces/<slug>/`. As in the replace
-                // branch, the caller must swap on commit; the parent-dir flush reports
-                // durability rather than gating the commit.
-                Ok(match self.commit_fsync(&self.spaces_dir) {
-                    Ok(()) => Committed::Durable,
-                    Err(e) => Committed::Unconfirmed(e),
-                })
-            }
+            // Flush the staged generation tree so its entries are durable before it is
+            // renamed to its immutable name and pointed at.
+            fsync_tree(&gen_tmp)?;
+            self.commit_generation(
+                &base,
+                &self.spaces_dir,
+                &gens_dir,
+                &gen_id,
+                &gen_tmp,
+                base_is_new,
+            )
         })();
         if staged.is_err() {
-            let _ = std::fs::remove_dir_all(&tmp_dir);
+            // Reclaim the staged / just-renamed-but-unpointed generation. The prior
+            // `current` is untouched, so a pre-commit error truly means "nothing
+            // changed" — the caller does not swap.
+            let _ = std::fs::remove_dir_all(&gen_tmp);
+            let _ = std::fs::remove_dir_all(&gen_final);
         }
         staged
     }
 
-    /// fsync a parent directory after a **committed** publishing rename. This is the
-    /// durability flush for the rename, run *past the point of no return*: the new tree
-    /// is already the on-disk truth, so its callers ([`Store::materialize_space`],
-    /// [`Store::write_page`], [`Store::write_live`]) never revert a committed publish to
-    /// `Err` on its failure — they map it to a `Committed::Unconfirmed` outcome, swap
+    /// Publish an already-staged generation as the new `current` for a pointed `base`
+    /// dir, then report durability. Shared by [`Store::write_space_generation`] and
+    /// [`Store::write_live`]: rename the staging dir to its immutable name, fsync
+    /// `generations/`, flip the pointer (the commit point), then run the post-commit
+    /// durability flush. On `Durable` the prior + any stray non-current generation is
+    /// reaped (keeping only `gen_id`); on `Unconfirmed` nothing is reaped, so the prior
+    /// generation is retained as the last confirmed-durable copy (see the commit
+    /// invariant on the callers). `base_is_new` additionally flushes `parent` so a first
+    /// generation's `base` dir entry is itself durable.
+    fn commit_generation(
+        &self,
+        base: &Path,
+        parent: &Path,
+        gens_dir: &Path,
+        gen_id: &str,
+        gen_tmp: &Path,
+        base_is_new: bool,
+    ) -> std::io::Result<Committed> {
+        // The generation becomes immutable + complete (renamed off its `.tmp` staging
+        // name), and its dir entry durable, BEFORE anything points at it.
+        std::fs::rename(gen_tmp, gens_dir.join(gen_id))?;
+        fsync_dir(gens_dir)?;
+        // COMMIT POINT: a single atomic rename flips `current` to the new generation.
+        write_pointer(base, gen_id)?;
+        // Post-commit durability flush of the pointer (and, on a first generation, the
+        // base dir entry). A failure here is an unconfirmed — never a torn — commit.
+        let durable = self.commit_fsync(base).and_then(|()| {
+            if base_is_new {
+                fsync_dir(parent)
+            } else {
+                Ok(())
+            }
+        });
+        Ok(match durable {
+            Ok(()) => {
+                // Confirmed durable: reap the prior + any stray non-current generation.
+                reap_generations_except(base, gens_dir, Some(gen_id));
+                Committed::Durable
+            }
+            // Retain the prior generation (the last confirmed-durable copy).
+            Err(e) => Committed::Unconfirmed(e),
+        })
+    }
+
+    /// fsync a parent directory after a **committed** publishing rename/pointer flip.
+    /// This is the durability flush run *past the point of no return*: the new tree/
+    /// pointer is already the on-disk truth, so its callers ([`Store::commit_generation`]
+    /// for spaces + live overlays, [`Store::write_page`]) never revert a committed
+    /// publish to `Err` on its failure — they map it to a `Committed::Unconfirmed`
+    /// outcome, swap
     /// their snapshot regardless, and surface the error afterwards. Split into its own
     /// method so a test can deterministically simulate the flush failing and prove the
     /// caller still commits + swaps.
@@ -1900,38 +2030,51 @@ impl Store {
         Ok(Some(rec.slug))
     }
 
-    /// True iff `spaces/<slug>/meta.json` records `tenant` as owner (and its own
-    /// slug). A missing/unreadable/corrupt meta returns `false` (fail-closed).
+    /// True iff the current generation of `spaces/<slug>/` records `tenant` as owner
+    /// (and its own slug). A missing/unreadable/corrupt meta returns `false`
+    /// (fail-closed).
     fn space_owned_by(&self, slug: &str, tenant: &str) -> bool {
-        let meta_path = self.spaces_dir.join(slug).join(META_FILE);
-        let bytes = match read_capped(&meta_path, MAX_META_BYTES) {
-            Ok(b) if b.len() as u64 <= MAX_META_BYTES => b,
-            _ => return false,
-        };
-        serde_json::from_slice::<SpaceMeta>(&bytes)
+        self.read_space_meta(&self.spaces_dir.join(slug))
             .map(|m| m.tenant == tenant && m.slug == slug)
             .unwrap_or(false)
     }
 
-    /// The `created_at` recorded in a space directory's `meta.json`, or `None`.
+    /// The `created_at` recorded in a space's current-generation `meta.json`, or `None`.
     fn read_space_created_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
         self.read_space_meta(dir).map(|m| m.created_at)
     }
 
-    /// The `updated_at` recorded in a space directory's `meta.json`, or `None`. This
-    /// is the retention clock for a space (activity-based lease — a re-publish extends
-    /// it), distinct from the immutable single-page path which expires by `created_at`.
+    /// The `updated_at` recorded in a space's current-generation `meta.json`, or `None`.
+    /// This is the retention clock for a space (activity-based lease — a re-publish
+    /// extends it), distinct from the immutable single-page path which expires by
+    /// `created_at`.
     fn read_space_updated_at(&self, dir: &Path) -> Option<DateTime<Utc>> {
         self.read_space_meta(dir).map(|m| m.updated_at)
     }
 
-    /// Parse a space directory's `meta.json` (bounded read), or `None`.
+    /// Parse a space's `meta.json` (bounded read) from its resolved **content
+    /// directory** — the current generation when a valid `current` pointer is present,
+    /// else the legacy flat layout — or `None`. `dir` is the space dir.
     fn read_space_meta(&self, dir: &Path) -> Option<SpaceMeta> {
-        let bytes = read_capped(&dir.join(META_FILE), MAX_META_BYTES).ok()?;
+        let content = self.resolve_space_content_dir(dir)?;
+        let bytes = read_capped(&content.join(META_FILE), MAX_META_BYTES).ok()?;
         if bytes.len() as u64 > MAX_META_BYTES {
             return None;
         }
         serde_json::from_slice::<SpaceMeta>(&bytes).ok()
+    }
+
+    /// Resolve a space dir to the directory that holds its `meta.json` + `artifacts/` +
+    /// `assets/`: the current generation (`generations/<gen-id>/`) when a valid
+    /// `current` pointer resolves to an existing, non-symlink generation; else — for
+    /// backward compatibility with a store written by a pre-generation build — the
+    /// space dir itself when it carries a top-level flat `meta.json`. `None` when
+    /// neither is present (a never-committed orphan, or an unrelated dir).
+    fn resolve_space_content_dir(&self, dir: &Path) -> Option<PathBuf> {
+        if let Some(g) = current_gen_dir(dir) {
+            return Some(g);
+        }
+        dir.join(META_FILE).is_file().then(|| dir.to_path_buf())
     }
 
     /// Filesystem path of the stable-space-key mapping sidecar for `(tenant, key)`
@@ -2010,10 +2153,93 @@ fn fsync_tree(dir: &Path) -> std::io::Result<()> {
     fsync_dir(dir)
 }
 
-/// Outcome of a **committed** atomic publish (the publishing rename landed, so the new
-/// tree/overlay IS the on-disk truth and the caller MUST advance its served snapshot).
-/// Returned by [`Store::materialize_space`], [`Store::write_page`], and
-/// [`Store::write_live`]; a pre-commit failure is a plain `Err` (nothing changed) and
+// --- Generation-pointer mechanics ----------------------------------------
+//
+// A generation-pointed `<base>` dir holds `generations/<gen-id>/` (immutable
+// payload dirs) and a `current` file naming the live one. The pointer flip is a
+// single atomic rename, so `current` is never torn; recovery reads it and reaps
+// every other generation. See [`GENERATIONS_DIR`].
+
+/// Mint a fresh, unique generation id under `gens_dir`. Reuses the 128-bit
+/// capability-slug generator (path-safe base32, satisfies [`valid_name`]), so an id
+/// is never guessable, never sequential, and — being 128-bit random — collides with
+/// an existing generation only with negligible probability (the bounded loop is
+/// belt-and-braces against a leftover staging sibling of the same name).
+fn mint_gen_id(gens_dir: &Path) -> std::io::Result<String> {
+    for _ in 0..8 {
+        let id = slug::generate();
+        if !gens_dir.join(&id).exists() && !gens_dir.join(format!(".{id}.tmp")).exists() {
+            return Ok(id);
+        }
+    }
+    Err(std::io::Error::other(
+        "could not mint a unique generation id",
+    ))
+}
+
+/// Read + validate the committed generation id from `<base>/current`. Returns `None`
+/// when the pointer is absent, unreadable, oversize, or names anything but a single
+/// safe path component — a hand-tampered pointer can never name `..`, an absolute
+/// path, or another tree (defense-in-depth: the id is re-checked against the slug
+/// grammar even though it is minted from it).
+fn read_pointer(base: &Path) -> Option<String> {
+    let bytes = read_capped(&base.join(CURRENT_FILE), MAX_META_BYTES).ok()?;
+    if bytes.len() as u64 > MAX_META_BYTES {
+        return None;
+    }
+    let id = std::str::from_utf8(&bytes).ok()?.trim();
+    crate::artifact_host::valid_name(id).then(|| id.to_string())
+}
+
+/// Atomically point `<base>/current` at `gen_id` (write `.current.tmp` fsync'd, then
+/// `rename` it over `current`). The rename is the **commit point** of a generation
+/// publish; it does NOT fsync `base` — the caller does that as the post-commit
+/// durability flush (so a fsync failure becomes `Committed::Unconfirmed`, not a torn
+/// pointer). A stale `.current.tmp` from a prior crash is truncated by `create`.
+fn write_pointer(base: &Path, gen_id: &str) -> std::io::Result<()> {
+    let tmp = base.join(CURRENT_TMP);
+    write_file_synced(&tmp, gen_id.as_bytes())?;
+    std::fs::rename(&tmp, base.join(CURRENT_FILE))
+}
+
+/// The current generation's payload directory for a pointed `<base>`, or `None` when
+/// the pointer is absent/invalid or names a missing / symlinked generation (symlinks
+/// are rejected so a tampered store can't redirect the loader outside the tree).
+fn current_gen_dir(base: &Path) -> Option<PathBuf> {
+    let id = read_pointer(base)?;
+    let dir = base.join(GENERATIONS_DIR).join(&id);
+    match std::fs::symlink_metadata(&dir) {
+        Ok(md) if md.file_type().is_dir() => Some(dir),
+        _ => None,
+    }
+}
+
+/// Reap every generation directory (and any `.<id>.tmp` staging sibling) under
+/// `gens_dir` except `keep`, plus a stray `.current.tmp` under `base`. Best-effort:
+/// a generation-pointer publish retains exactly one live generation, so this bounds a
+/// space/overlay to its current generation after each commit + on recovery. `keep`
+/// is `None` when there is no committed pointer (every generation is an uncommitted
+/// orphan and is reclaimed).
+fn reap_generations_except(base: &Path, gens_dir: &Path, keep: Option<&str>) {
+    let _ = std::fs::remove_file(base.join(CURRENT_TMP));
+    let rd = match std::fs::read_dir(gens_dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in rd.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if keep.is_some_and(|k| *name == *k) {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
+}
+
+/// Outcome of a **committed** atomic publish (the publishing rename / pointer flip
+/// landed, so the new tree/overlay IS the on-disk truth and the caller MUST advance its
+/// served snapshot). Returned by [`Store::write_space_generation`], [`Store::write_page`],
+/// and [`Store::write_live`]; a pre-commit failure is a plain `Err` (nothing changed) and
 /// the caller must NOT swap. The variant distinguishes durability so the caller can
 /// report it honestly rather than pretend an unflushed write is durable.
 enum Committed {
@@ -2123,9 +2349,10 @@ impl std::fmt::Display for PublishError {
 }
 
 /// Test-only deterministic fault injection for the post-commit durability flush
-/// ([`Store::commit_fsync`]). Thread-local so parallel tests don't interfere; a
-/// direct call chain (test → `publish_space`/`update_space` → `materialize_space`
-/// → `commit_fsync`) stays on one thread, so arming here reaches the intended flush.
+/// ([`Store::commit_fsync`]). Thread-local so parallel tests don't interfere; a direct
+/// call chain (test → `publish_space`/`update_space`/`push_round` → `write_*` →
+/// `commit_generation` → `commit_fsync`) stays on one thread, so arming here reaches
+/// the intended flush.
 #[cfg(test)]
 mod fault {
     use std::cell::Cell;
@@ -2191,6 +2418,23 @@ mod tests {
             "https://pad.example.com".into(),
             "/p".into(),
         ))
+    }
+
+    /// The on-disk content directory (current generation) of a published space under
+    /// `root`, for tests that read/tamper the persisted `meta.json`/artifacts directly.
+    /// Re-resolves the `current` pointer, so it is re-called after each update (the
+    /// pointer names a fresh generation every publish).
+    fn space_content_dir(root: &Path, slug: &str) -> PathBuf {
+        let base = root.join("spaces").join(slug);
+        let id = std::fs::read_to_string(base.join(CURRENT_FILE)).unwrap();
+        base.join(GENERATIONS_DIR).join(id.trim())
+    }
+
+    /// The current live-overlay generation directory of a page under `root`.
+    fn live_gen_dir(root: &Path, slug: &str) -> PathBuf {
+        let base = root.join("pages").join(slug).join(LIVE_DIR);
+        let id = std::fs::read_to_string(base.join(CURRENT_FILE)).unwrap();
+        base.join(GENERATIONS_DIR).join(id.trim())
     }
 
     #[test]
@@ -2789,8 +3033,8 @@ mod tests {
 
     #[test]
     fn corrupt_live_overlay_falls_back_to_baseline() {
-        // A hand-tampered `live.json` (bad schema) must not blank or break the page —
-        // it reverts to the immutable baseline.
+        // A hand-tampered current-generation `meta.json` (bad schema/json) must not blank
+        // or break the page — it reverts to the immutable baseline.
         let root = tmp_root("round-corrupt");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
@@ -2800,12 +3044,8 @@ mod tests {
         store
             .push_round("acme", &p.slug, "<h1>live</h1>".into())
             .unwrap();
-        // Corrupt the overlay meta on disk, then reopen.
-        std::fs::write(
-            root.join("pages").join(&p.slug).join("live.json"),
-            b"not json",
-        )
-        .unwrap();
+        // Corrupt the current generation's overlay meta on disk, then reopen.
+        std::fs::write(live_gen_dir(&root, &p.slug).join(META_FILE), b"not json").unwrap();
         let h2 = host();
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(
@@ -2817,11 +3057,12 @@ mod tests {
     }
 
     #[test]
-    fn crash_torn_overlay_is_rejected_not_served_under_wrong_round() {
-        // Simulate a crash between the live.html and live.json renames: live.html holds
-        // a NEW body but live.json still describes the OLD round/content-version. The
-        // digest cross-check must reject the mismatched pair and revert to baseline —
-        // never serve the new body under the stale round label.
+    fn tampered_overlay_body_is_rejected_not_served_under_wrong_round() {
+        // A generation whose body.html no longer matches its meta's recorded
+        // content-version (a hand-tampered generation) must be rejected by the digest
+        // cross-check and revert to baseline — never serve the wrong body under a stale
+        // round label. (The atomic pointer flip makes a *crash-torn* body/meta pair
+        // impossible; this pins the surviving defense-in-depth against tampering.)
         let root = tmp_root("round-torn");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
@@ -2831,10 +3072,10 @@ mod tests {
         store
             .push_round("acme", &p.slug, "<h1>committed round</h1>".into())
             .unwrap();
-        // Overwrite ONLY live.html with a different body (live.json still points at the
-        // committed round's digest) — the torn state a crash-after-body-rename leaves.
+        // Overwrite the current generation's body only (its meta still records the
+        // committed round's digest) — the mismatch a tampered generation would show.
         std::fs::write(
-            root.join("pages").join(&p.slug).join("live.html"),
+            live_gen_dir(&root, &p.slug).join(LIVE_BODY_FILE),
             b"<h1>uncommitted body</h1>",
         )
         .unwrap();
@@ -2843,7 +3084,7 @@ mod tests {
         assert_eq!(
             store2.page_body(&p.slug, None).as_deref(),
             Some("<h1>baseline</h1>"),
-            "a torn overlay (body≠meta digest) must revert to baseline"
+            "a mismatched overlay (body≠meta digest) must revert to baseline"
         );
         // A subsequent push recovers cleanly (round re-derived over the baseline).
         let r = store2
@@ -2933,8 +3174,15 @@ mod tests {
         assert!(sp.asset("assets/logo.svg").is_some());
         assert_eq!(sp.home.as_deref(), Some("index"));
 
-        // On-disk layout.
-        let dir = root.join("spaces").join(&pubd.slug);
+        // On-disk layout: a `current` pointer + one immutable generation holding the
+        // meta + artifacts + assets.
+        assert!(
+            root.join("spaces")
+                .join(&pubd.slug)
+                .join("current")
+                .is_file()
+        );
+        let dir = space_content_dir(&root, &pubd.slug);
         assert!(dir.join("meta.json").is_file());
         assert!(dir.join("artifacts/index.html").is_file());
         assert!(dir.join("artifacts/guide.html").is_file());
@@ -2963,8 +3211,8 @@ mod tests {
             h.snapshot().space(&pubd.slug).unwrap().favicon.as_deref(),
             Some("🚀")
         );
-        // Persisted to meta.json.
-        let meta_path = root.join("spaces").join(&pubd.slug).join("meta.json");
+        // Persisted to the current generation's meta.json.
+        let meta_path = space_content_dir(&root, &pubd.slug).join("meta.json");
         let meta: SpaceMeta = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
         assert_eq!(meta.favicon.as_deref(), Some("🚀"));
 
@@ -3031,9 +3279,12 @@ mod tests {
             .publish_space("acme", sample_space("V1"), None)
             .unwrap();
         let slug = first.slug.clone();
-        let meta_path = root.join("spaces").join(&slug).join("meta.json");
-        let created_before: SpaceMeta =
-            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        // Each publish writes a FRESH generation, so the content dir (and its meta path)
+        // is re-resolved from the `current` pointer before and after the update.
+        let created_before: SpaceMeta = serde_json::from_slice(
+            &std::fs::read(space_content_dir(&root, &slug).join("meta.json")).unwrap(),
+        )
+        .unwrap();
 
         // A tiny sleep so `updated_at` can strictly advance past `created_at`.
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -3048,9 +3299,11 @@ mod tests {
         let sp = h.snapshot().space(&slug).cloned().unwrap();
         assert!(sp.artifact("index").unwrap().html.contains("V2"));
 
-        // created_at preserved, updated_at advanced.
-        let meta_after: SpaceMeta =
-            serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        // created_at preserved, updated_at advanced (read from the NEW generation).
+        let meta_after: SpaceMeta = serde_json::from_slice(
+            &std::fs::read(space_content_dir(&root, &slug).join("meta.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             meta_after.created_at, created_before.created_at,
             "retention clock (created_at) must be preserved on update"
@@ -3268,7 +3521,7 @@ mod tests {
             .unwrap();
         // Backdate the space meta past retention (updated_at is the space retention
         // clock — a fresh publish sets it to now, so backdate it, not just created_at).
-        let meta_path = root.join("spaces").join(&p.slug).join("meta.json");
+        let meta_path = space_content_dir(&root, &p.slug).join("meta.json");
         let mut meta: SpaceMeta =
             serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
         meta.created_at = Utc::now() - Duration::days(100);
@@ -3318,11 +3571,11 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_replace_is_recovered_from_backup_on_reopen() {
-        // Simulate a crash BETWEEN the two renames of an in-place update: the live
-        // `spaces/<slug>` is gone and the only copy is in `.<slug>.old`. Reopening the
-        // store must RESTORE it (never lose the last committed generation), and GC must
-        // not reap the backup before recovery.
+    fn legacy_interrupted_replace_is_recovered_from_backup_on_reopen() {
+        // Upgrade compatibility: a store crashed mid-replace under a PRE-generation build
+        // left the live `spaces/<slug>` only in a `.<slug>.old` backup. Reopening under
+        // the generation build must still RESTORE it (never lose the last committed
+        // generation), and GC must not reap the backup before recovery.
         let root = tmp_root("space-recover");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
@@ -3346,6 +3599,322 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    // --- Generation-pointer crash-consistency (hosted-store-generation-pointer) ------
+    //
+    // These simulate a crash by leaving the ON-DISK state a real interrupted publish
+    // would leave: a fully-written new generation whose `current` pointer was never
+    // flipped. Recovery + the pointer-based load path must keep the prior committed
+    // generation and reap the orphan.
+
+    /// Recursively copy `src` dir → `dst` (test helper for staging an orphan generation
+    /// that mirrors a real one on disk).
+    fn copy_dir(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).unwrap();
+        for entry in std::fs::read_dir(src).unwrap().flatten() {
+            let from = entry.path();
+            let to = dst.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir(&from, &to);
+            } else {
+                std::fs::copy(&from, &to).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn space_crash_before_pointer_flip_keeps_prior_generation() {
+        // F14: a space update that wrote a new generation but crashed BEFORE flipping
+        // `current` must leave the prior committed generation live — never a torn or
+        // lost space — and recovery reaps the unpointed orphan generation.
+        let root = tmp_root("space-gen-crash");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish_space("acme", sample_space("V1"), Some("k"))
+            .unwrap();
+        let base = root.join("spaces").join(&p.slug);
+        let committed_id = std::fs::read_to_string(base.join("current")).unwrap();
+        let committed_id = committed_id.trim().to_string();
+
+        // Stage an orphan "V2" generation on disk WITHOUT flipping the pointer (the state
+        // a crash between the generation rename and the pointer flip leaves).
+        let orphan_id = slug::generate();
+        let orphan = base.join("generations").join(&orphan_id);
+        copy_dir(&base.join("generations").join(&committed_id), &orphan);
+        std::fs::write(
+            orphan.join("artifacts").join("index.html"),
+            b"<title>V2</title><h1>V2 uncommitted</h1>",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_dir(base.join("generations")).unwrap().count(),
+            2,
+            "two generations staged (committed + orphan)"
+        );
+
+        // Reopen: recovery keeps the pointed generation, reaps the orphan; the served
+        // body is still V1 (the prior committed generation), never the orphan's V2.
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(store2.page_count(), 1);
+        let sp = h2.snapshot().space(&p.slug).cloned().unwrap();
+        assert!(
+            sp.artifact("index").unwrap().html.contains("V1"),
+            "the prior committed generation must survive an interrupted update"
+        );
+        assert!(!sp.artifact("index").unwrap().html.contains("uncommitted"));
+        assert_eq!(
+            std::fs::read_dir(base.join("generations")).unwrap().count(),
+            1,
+            "recovery reaps the unpointed orphan generation"
+        );
+        assert_eq!(
+            std::fs::read_to_string(base.join("current"))
+                .unwrap()
+                .trim(),
+            committed_id,
+            "the pointer still names the prior committed generation"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn space_first_create_crash_before_pointer_is_not_served() {
+        // A FIRST create that wrote its generation but never flipped `current` (so there
+        // is no prior generation) must serve nothing on reopen — the never-committed
+        // orphan is reaped and the empty shell removed, so the slug is not resurrected.
+        let root = tmp_root("space-gen-orphan-create");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish_space("acme", sample_space("V1"), None)
+            .unwrap();
+        let base = root.join("spaces").join(&p.slug);
+        // Drop the pointer, leaving only the (now uncommitted-looking) generation.
+        std::fs::remove_file(base.join("current")).unwrap();
+
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_count(),
+            0,
+            "a pointer-less space serves nothing"
+        );
+        assert!(h2.snapshot().space(&p.slug).is_none());
+        assert!(
+            !base.exists(),
+            "the empty, never-committed space shell is reclaimed"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn live_crash_before_pointer_flip_keeps_prior_round() {
+        // F13: a live-overlay round that wrote its generation but crashed BEFORE flipping
+        // `live/current` must leave the PRIOR committed round live — the round-loss bug of
+        // the old two-file overlay is gone. Recovery reaps the orphan; the next push is
+        // the correct monotonic round over the surviving prior round.
+        let root = tmp_root("live-gen-crash");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>baseline</h1>".into(), None, None)
+            .unwrap();
+        store
+            .push_round("acme", &p.slug, "<h1>round one</h1>".into())
+            .unwrap();
+        let live_base = root.join("pages").join(&p.slug).join("live");
+        let committed_id = std::fs::read_to_string(live_base.join("current")).unwrap();
+        let committed_id = committed_id.trim().to_string();
+
+        // Stage an orphan "round two" generation WITHOUT flipping the pointer.
+        let orphan_id = slug::generate();
+        let orphan = live_base.join("generations").join(&orphan_id);
+        copy_dir(&live_base.join("generations").join(&committed_id), &orphan);
+        std::fs::write(orphan.join("body.html"), b"<h1>round two uncommitted</h1>").unwrap();
+
+        // Reopen: the served body is still round one (the prior committed round), never
+        // the orphan; the orphan generation is reaped.
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_body(&p.slug, None).as_deref(),
+            Some("<h1>round one</h1>"),
+            "a committed round must survive an interrupted next round (F13)"
+        );
+        // GC bounds the overlay to its current generation (reaps the orphan).
+        store2.gc(Duration::days(3650)).unwrap();
+        assert_eq!(
+            std::fs::read_dir(live_base.join("generations"))
+                .unwrap()
+                .count(),
+            1,
+            "the orphan round generation is reaped"
+        );
+        // The next push is round two over the surviving round one (monotonic, no reset).
+        let r = store2
+            .push_round("acme", &p.slug, "<h1>round two</h1>".into())
+            .unwrap();
+        assert_eq!(
+            r.round, 2,
+            "round counter continues from the surviving round one"
+        );
+        assert_eq!(
+            store2.page_body(&p.slug, None).as_deref(),
+            Some("<h1>round two</h1>")
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn legacy_flat_space_is_read_on_upgrade() {
+        // Upgrade compatibility: a space written in the PRE-generation flat layout
+        // (`spaces/<slug>/meta.json` + `artifacts/` directly, no `generations/`/`current`)
+        // must still load + serve so an upgrade never drops existing hosted spaces.
+        let root = tmp_root("legacy-flat-space");
+        std::fs::create_dir_all(root.join("spaces")).unwrap();
+        let slug = slug::generate();
+        let dir = root.join("spaces").join(&slug);
+        std::fs::create_dir_all(dir.join("artifacts")).unwrap();
+        let now = Utc::now();
+        std::fs::write(
+            dir.join("meta.json"),
+            serde_json::to_vec(&SpaceMeta {
+                schema: SPACE_META_SCHEMA,
+                slug: slug.clone(),
+                tenant: "acme".into(),
+                title: Some("Legacy".into()),
+                nav: vec!["index".into()],
+                nav_groups: vec![],
+                home: Some("index".into()),
+                favicon: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("artifacts").join("index.html"),
+            b"<title>Legacy</title><h1>legacy flat body</h1>",
+        )
+        .unwrap();
+
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        assert_eq!(store.page_count(), 1, "a legacy flat space must load");
+        let sp = h.snapshot().space(&slug).cloned().unwrap();
+        assert!(
+            sp.artifact("index")
+                .unwrap()
+                .html
+                .contains("legacy flat body")
+        );
+        assert_eq!(store.page_tenant(&slug).as_deref(), Some("acme"));
+
+        // An update migrates it forward to the generation layout (same slug/URL).
+        store
+            .update_space("acme", &slug, sample_space("Migrated"))
+            .unwrap();
+        assert!(
+            dir.join("current").is_file(),
+            "update writes a generation pointer"
+        );
+        assert!(
+            h.snapshot()
+                .space(&slug)
+                .unwrap()
+                .artifact("index")
+                .unwrap()
+                .html
+                .contains("Migrated")
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn legacy_two_file_overlay_is_read_on_upgrade() {
+        // Upgrade compatibility: a live overlay written in the PRE-generation two-file
+        // format (`live.html` + `live.json` under the page dir) must still be served so an
+        // upgrade preserves an in-flight round.
+        let root = tmp_root("legacy-live");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>baseline</h1>".into(), None, None)
+            .unwrap();
+        // Hand-write a legacy two-file overlay (no `live/` generation subtree).
+        let page_dir = root.join("pages").join(&p.slug);
+        let body = "<h1>legacy round</h1>";
+        std::fs::write(page_dir.join("live.html"), body.as_bytes()).unwrap();
+        std::fs::write(
+            page_dir.join("live.json"),
+            serde_json::to_vec(&LiveMeta {
+                schema: LIVE_SCHEMA,
+                round: 1,
+                content_version: crate::submissions::content_version(body),
+                updated_at: Utc::now(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_body(&p.slug, None).as_deref(),
+            Some("<h1>legacy round</h1>"),
+            "a legacy two-file overlay must still be served on upgrade"
+        );
+        // The next push migrates forward to a generation (round continues monotonically).
+        let r = store2
+            .push_round("acme", &p.slug, "<h1>next</h1>".into())
+            .unwrap();
+        assert_eq!(
+            r.round, 2,
+            "round counter recovered from the legacy overlay"
+        );
+        assert!(page_dir.join("live").join("current").is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn live_round_push_commits_and_swaps_then_surfaces_post_commit_fsync_failure() {
+        // The live-overlay analogue of the space durability tests: when the round's
+        // pointer flip has committed but the post-commit fsync fails, push_round still
+        // swaps the served body to the new round (memory == disk) AND surfaces the
+        // durability error — the new round is durable on reopen, not stranded.
+        let root = tmp_root("live-fsync");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let p = store
+            .publish("acme", "<h1>baseline</h1>".into(), None, None)
+            .unwrap();
+
+        let guard = fault::arm_commit_fsync_faults(1);
+        let pushed = store.push_round("acme", &p.slug, "<h1>round one</h1>".into());
+        drop(guard);
+        assert!(
+            matches!(pushed, Err(RoundError::Io(_))),
+            "an unconfirmed round push is surfaced as an I/O error"
+        );
+        // Divergence closed: the served body is round one even though durability was
+        // unconfirmed (memory matches what a restart would load).
+        assert_eq!(
+            store.page_body(&p.slug, None).as_deref(),
+            Some("<h1>round one</h1>")
+        );
+        // Durable on reopen.
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            store2.page_body(&p.slug, None).as_deref(),
+            Some("<h1>round one</h1>"),
+            "the committed round is durable on reopen"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn space_retention_is_measured_from_last_update_not_first_publish() {
         // An actively re-published space keeps its lease: even though created_at is
@@ -3356,7 +3925,7 @@ mod tests {
         let p = store
             .publish_space("acme", sample_space("v1"), Some("k"))
             .unwrap();
-        let meta_path = root.join("spaces").join(&p.slug).join("meta.json");
+        let meta_path = space_content_dir(&root, &p.slug).join("meta.json");
         // First published long ago, updated moments ago (an active docsite).
         let mut meta: SpaceMeta =
             serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
@@ -3391,13 +3960,13 @@ mod tests {
 
     #[test]
     fn replace_commits_and_swaps_then_surfaces_post_commit_fsync_failure() {
-        // The fsync-after-swap divergence window (issue: materialize-space-durability).
-        // The publishing rename has already put the new tree in `spaces/<slug>/`, then
-        // the parent-dir fsync fails. The update must: (1) swap the served snapshot to
-        // the new content (no divergence), (2) surface the durability error to the
-        // caller, and (3) RETAIN the `.old` backup (the last confirmed-durable copy),
-        // which recovery then reconciles. Before the fix this returned Err with the
-        // snapshot left on V1 while disk held V2 — divergence until restart.
+        // The fsync-after-swap divergence window under the generation-pointer model.
+        // The pointer has already flipped to the V2 generation, then the post-commit
+        // fsync fails. The update must: (1) swap the served snapshot to V2 (no
+        // divergence), (2) surface the durability error to the caller, and (3) RETAIN
+        // the PRIOR generation (V1, the last confirmed-durable copy) — so if a crash then
+        // loses the unflushed pointer flip, recovery reads the prior pointer and V1 is
+        // still on disk. Recovery reaps the prior once the flip is confirmed on reopen.
         let root = tmp_root("materialize-fsync-replace");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
@@ -3421,17 +3990,26 @@ mod tests {
         let sp = h.snapshot().space(&slug).cloned().unwrap();
         assert!(
             sp.artifact("index").unwrap().html.contains("V2"),
-            "served snapshot must be swapped to the committed new tree even on an unconfirmed commit"
+            "served snapshot must be swapped to the committed new generation even on an unconfirmed commit"
         );
-        // The backup is RETAINED (the durable-copy safety property); the tmp is gone.
+        // The prior generation is RETAINED (the durable-copy safety property): there are
+        // TWO generations on disk, `current` names V2, and no `.tmp` staging is left.
+        let gens_dir = root.join("spaces").join(&slug).join("generations");
+        let gen_count = std::fs::read_dir(&gens_dir).unwrap().count();
+        assert_eq!(
+            gen_count, 2,
+            "the prior generation must be kept when durability is unconfirmed"
+        );
         assert!(
-            root.join("spaces").join(format!(".{slug}.old")).exists(),
-            "the last durable generation (.old) must be kept when durability is unconfirmed"
+            std::fs::read_dir(&gens_dir)
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().starts_with('.')),
+            "no staging generation should remain"
         );
-        assert!(!root.join("spaces").join(format!(".{slug}.tmp")).exists());
 
-        // Reopen: recovery reconciles the retained backup (final exists → drop `.old`)
-        // and serves V2 — no lost generation, no leftover staging dir.
+        // Reopen: recovery keeps only the current (V2) generation, reaps the prior, and
+        // serves V2 — no lost generation, no leftover staging dir.
         let h2 = host();
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(store2.page_count(), 1);
@@ -3444,9 +4022,10 @@ mod tests {
                 .html
                 .contains("V2")
         );
-        assert!(
-            !root.join("spaces").join(format!(".{slug}.old")).exists(),
-            "recovery reclaims the backup once final is present"
+        assert_eq!(
+            std::fs::read_dir(&gens_dir).unwrap().count(),
+            1,
+            "recovery reaps the prior generation once the current is confirmed"
         );
         std::fs::remove_dir_all(&root).ok();
     }

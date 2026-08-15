@@ -213,9 +213,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   defense-in-depth on top). Loopback
   multi-round = rewrite the served file (the watcher fires the full reload). Hosted =
   `POST /api/v1/pages/{slug}/rounds` (`hosted::rounds`, API-key + owner-scoped): the
-  re-render is a durable **live overlay** (`live.html`/`live.json`) over the immutable
-  baseline `artifact.html`, the served snapshot body is swapped, and `notify_round`
-  pushes the SSE swap. Cross-round binding is the existing content-version check — a
+  re-render is a durable **live overlay** stored as an immutable generation under
+  `pages/<slug>/live/generations/<id>/` with an atomically-swapped `current` pointer
+  (so a crash during round N+1 keeps round N — see `hosted::store`'s generation-pointer
+  model; a pre-generation `live.html`/`live.json` overlay is still read on upgrade) over
+  the immutable baseline `artifact.html`, the served snapshot body is swapped, and
+  `notify_round` pushes the SSE swap. Cross-round binding is the existing content-version check — a
   submission answering a stale round is rejected `409`. Client surface: `glasspad
   push-round`.
 
