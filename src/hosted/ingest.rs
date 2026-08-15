@@ -591,20 +591,14 @@ pub async fn update_space(
         );
     }
 
-    // Owner-scope EARLY (before building/validating the bundle) so a non-owner does
-    // no work and learns nothing: a missing space and a space owned by another tenant
-    // both 404 here. `update_space` re-checks authoritatively under the lock.
-    match state.store.space_tenant(&slug) {
-        Some(owner) if owner == tenant.0 => {}
-        _ => {
-            return err(
-                StatusCode::NOT_FOUND,
-                "no_such_space",
-                "no such space for this tenant",
-            );
-        }
-    }
-
+    // Ownership is decided ONLY by `Store::update_space`, authoritatively under the
+    // mutation lock (a missing / foreign-owned / page-collision slug all → an opaque
+    // `NoSuchSpace` → 404). We deliberately do NOT pre-check ownership here: an early
+    // read off the async worker would be blocking I/O, and — worse — it would race the
+    // in-place replace's rename-aside window and spuriously 404 a legitimate concurrent
+    // update. The bundle build below is bounded by the ingest body limit and is the
+    // same cost any authenticated tenant can already trigger via the create surface,
+    // so building before the ownership decision leaks nothing and adds no new DoS.
     let space = match assemble_space(
         req.pages,
         req.assets,

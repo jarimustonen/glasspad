@@ -136,7 +136,9 @@ enum Commands {
         /// Hosted target, owner-scoped: a slug your key does not own (or one that no
         /// longer exists) fails with `no_such_space` — it never creates a new page.
         /// Use this to keep a shared link live when you have no `--space-key` set.
-        /// Mutually exclusive with `--space-key`.
+        /// REPLACES the whole space: title/favicon/nav come from THIS publish's
+        /// bundle (a `<path>` with no title clears the old one) — same as a keyed
+        /// re-publish. Mutually exclusive with `--space-key`.
         #[arg(long, conflicts_with = "space_key")]
         update: Option<String>,
         /// Loopback TCP port (loopback target). Precedence (AI-first §8): this flag >

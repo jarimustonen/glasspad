@@ -2187,6 +2187,31 @@ async fn publish_hosted(
     no_open: bool,
     json: bool,
 ) {
+    // `--update <slug>` targets an EXISTING space by its capability slug — a
+    // per-invocation target, not a persistent identity, so it is flag-only (never
+    // config/env). Validate it against the SAME slug grammar the server enforces, and
+    // do it FIRST (before server/key resolution) so a malformed value is a deterministic
+    // local `invalid_update_slug`, never a misleading `missing_server` or a surprising
+    // URL path/query/fragment interpolated into the request (AI-first strict validation).
+    let update = match &update {
+        None => None,
+        Some(raw) => {
+            let slug = raw.trim();
+            if !crate::artifact_host::valid_space(slug) {
+                exit_error(
+                    json,
+                    1,
+                    "invalid_update_slug",
+                    "--update requires a valid capability slug (the <slug> in /p/<slug>/): \
+                     lowercase [a-z0-9-], starting alphanumeric, at most 64 chars, not reserved",
+                    Some(slug),
+                    None,
+                );
+            }
+            Some(slug.to_string())
+        }
+    };
+
     // Capture credential provenance BEFORE resolving (which consumes the flags): a
     // server/key that comes from an explicit flag or env var is user-directed and
     // safe; one that comes from config is subject to the cross-trust check below.
@@ -2211,29 +2236,16 @@ async fn publish_hosted(
     // `space_key`: flag > $GLASSPAD_SPACE_KEY > config `space_key:`.
     let space_key = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", cfg.space_key.clone());
 
-    // `--update <slug>` targets an EXISTING space by its capability slug — a
-    // per-invocation target, not a persistent identity, so it is flag-only (never
-    // config/env). It supersedes any resolved `space_key`: naming a slug to replace
-    // means addressing by URL, not by the keyed create-or-update mapping. clap already
-    // rejects `--update` + `--space-key` together; here we additionally drop a
-    // config-derived `space_key` so the two addressing modes never mix on the wire.
-    let update = match &update {
-        None => None,
-        Some(raw) => {
-            let slug = raw.trim();
-            if slug.is_empty() {
-                exit_error(
-                    json,
-                    1,
-                    "invalid_update_slug",
-                    "--update requires a non-empty capability slug (the <slug> in /p/<slug>/)",
-                    None,
-                    None,
-                );
-            }
-            Some(slug.to_string())
-        }
-    };
+    // `--update` supersedes any resolved `space_key`: naming a slug to replace means
+    // addressing by URL, not by the keyed create-or-update mapping. clap already rejects
+    // `--update` + an explicit `--space-key`; here we additionally drop a config/env
+    // `space_key` so the two addressing modes never mix on the wire.
+    if update.is_some() && space_key.is_some() {
+        eprintln!(
+            "note: --update names the target space directly, so the configured space_key is \
+             ignored for this publish"
+        );
+    }
     let space_key = if update.is_some() { None } else { space_key };
 
     // Cross-trust credential guard (defense-in-depth): warn loudly when a hosted

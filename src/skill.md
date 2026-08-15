@@ -88,6 +88,11 @@ working directory. Keep credentials in your **home** config: if a repo's
     page. Best when no `space_key` was set at first publish. Mutually exclusive with
     `--space-key`.
 
+  Both are **whole-space replace** (like re-uploading): the title, favicon, nav, and
+  page set come from the publish you run — a `<path>` that no longer declares a title
+  clears it, and a page dropped from the bundle 404s at its old sub-URL. Publish the
+  complete space each time, not a partial diff.
+
   The "let a colleague / another machine open it" path.
 
 The loopback↔hosted asymmetry is intended: loopback is live, hosted is a snapshot.

@@ -1269,18 +1269,47 @@ impl Store {
 
         // Authoritative owner-scope under the lock (TOCTOU-safe): the target must be a
         // currently-served space whose own on-disk meta records THIS tenant. A slug
-        // that is absent, a single-artifact page (no `spaces/<slug>/meta.json`), or
-        // owned by another tenant all fail closed with the one opaque error.
-        if !current.spaces.contains_key(slug) || !self.space_owned_by(slug, tenant) {
+        // that is absent, a single-artifact page, or owned by another tenant all fail
+        // closed with the one opaque error — no cross-tenant existence oracle.
+        if !current.spaces.contains_key(slug) {
+            return Err(UpdateError::NoSuchSpace);
+        }
+        // Fail closed on a page/space slug collision (a corrupt/tampered store —
+        // `fresh_slug` keeps the two trees disjoint at mint). The served snapshot loads
+        // pages first, so under a collision the served body is the page while a
+        // hand-planted `spaces/<slug>/meta.json` could still name the caller; replacing
+        // `spaces/<slug>` here would leave the page shadowing it on the next rescan.
+        // Refuse to write into an ambiguous slug — parity with `page_tenant`'s
+        // fail-closed-on-collision stance.
+        if self.pages_dir.join(slug).exists() {
             return Err(UpdateError::NoSuchSpace);
         }
 
+        // ONE validated meta read under the lock — the authoritative ownership check AND
+        // the source of the preserved `created_at`. Full validation (schema, own slug,
+        // owning tenant, name grammar) matches the loaders' defense-in-depth: a foreign,
+        // wrong-schema, or hand-tampered meta fails closed (`NoSuchSpace`), and an
+        // unreadable meta for a supposedly-live space is never silently turned into a
+        // fresh-timestamp update. (Replaces the previous `space_owned_by` +
+        // `read_space_created_at` double read of the same file.)
+        let existing = match self.read_space_meta(&self.spaces_dir.join(slug)) {
+            Some(m)
+                if m.schema == SPACE_META_SCHEMA
+                    && m.slug == slug
+                    && m.tenant == tenant
+                    && valid_space(&m.slug)
+                    && valid_space(&m.tenant) =>
+            {
+                m
+            }
+            _ => return Err(UpdateError::NoSuchSpace),
+        };
+
         let now = Utc::now();
-        // Preserve the original `created_at` so the retention window still measures
-        // from first publish; only `updated_at` advances on an in-place update.
-        let created_at = self
-            .read_space_created_at(&self.spaces_dir.join(slug))
-            .unwrap_or(now);
+        // `created_at` is carried over from the first publish (provenance). It does NOT
+        // by itself preserve the retention lease: GC dates a space by `updated_at` (an
+        // activity lease), so a successful update — like a keyed re-publish — advances
+        // `updated_at` and thereby extends the lease. Intended and matches `publish_space`.
         let meta = SpaceMeta {
             schema: SPACE_META_SCHEMA,
             slug: slug.to_string(),
@@ -1290,7 +1319,7 @@ impl Store {
             nav_groups: space.nav_groups.clone(),
             home: space.home.clone(),
             favicon: space.favicon.clone(),
-            created_at,
+            created_at: existing.created_at,
             updated_at: now,
         };
 
@@ -1664,10 +1693,22 @@ impl Store {
                 let _ = std::fs::remove_dir_all(&backup_dir);
                 // Move the current tree aside, swing the new one in, then drop the
                 // backup. A crash between the renames leaves a reclaimable `.old`.
-                if final_dir.exists() {
+                let moved_aside = final_dir.exists();
+                if moved_aside {
                     std::fs::rename(&final_dir, &backup_dir)?;
                 }
-                std::fs::rename(&tmp_dir, &final_dir)?;
+                // If swinging the new tree in fails (an ordinary, non-crash I/O error),
+                // restore the backup so the live space is never left MISSING — crash
+                // recovery (`recover_space_staging`) only runs at startup / hourly GC,
+                // so a runtime failure has to self-heal synchronously here rather than
+                // stranding the only committed generation in `.old`.
+                if let Err(e) = std::fs::rename(&tmp_dir, &final_dir) {
+                    if moved_aside && !final_dir.exists() {
+                        let _ = std::fs::rename(&backup_dir, &final_dir);
+                        let _ = fsync_dir(&self.spaces_dir);
+                    }
+                    return Err(e);
+                }
                 fsync_dir(&self.spaces_dir)?;
                 let _ = std::fs::remove_dir_all(&backup_dir);
             } else {
@@ -1729,21 +1770,6 @@ impl Store {
             return Ok(None);
         }
         Ok(Some(rec.slug))
-    }
-
-    /// The owner tenant recorded in the **space**-tree `meta.json` for `slug`, or
-    /// `None` (absent/unreadable/foreign-slug/wrong-schema). Used by the update-in-
-    /// place handler to owner-scope EARLY — a non-owner does no build work and learns
-    /// nothing (a miss and a foreign-owned slug are the same `None`). Distinct from
-    /// [`Store::page_tenant`], which fuses the page + space trees for the shared
-    /// submit endpoint; update targets a space specifically. Reuses the same
-    /// defensively-validated [`Store::owner_from_meta`] read the loaders use.
-    pub fn space_tenant(&self, slug: &str) -> Option<String> {
-        self.owner_from_meta::<SpaceMeta, _>(
-            &self.spaces_dir.join(slug).join(META_FILE),
-            slug,
-            |m| (m.schema == SPACE_META_SCHEMA).then_some((m.slug, m.tenant)),
-        )
     }
 
     /// True iff `spaces/<slug>/meta.json` records `tenant` as owner (and its own
@@ -2888,6 +2914,95 @@ mod tests {
             store.update_space("acme", &page.slug, sample_space("x")),
             Err(UpdateError::NoSuchSpace)
         ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn update_space_fails_closed_on_page_space_slug_collision() {
+        // A corrupt/tampered store where the SAME slug exists in both trees: the
+        // snapshot serves the page (pages load first), but a hand-planted
+        // `spaces/<slug>/meta.json` names the requesting tenant. `update_space` must
+        // refuse (NoSuchSpace) rather than replace `spaces/<slug>` and leave the page
+        // shadowing it — parity with `page_tenant`'s fail-closed stance.
+        let root = tmp_root("update-collision");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let page = store
+            .publish("acme", "<h1>page</h1>".into(), None, None)
+            .unwrap();
+        let slug = page.slug.clone();
+        // Hand-plant a spaces/<slug>/meta.json owned by acme (a state the API prevents).
+        let now = Utc::now();
+        let space_dir = root.join("spaces").join(&slug);
+        std::fs::create_dir_all(&space_dir).unwrap();
+        std::fs::write(
+            space_dir.join(META_FILE),
+            serde_json::to_vec(&SpaceMeta {
+                schema: SPACE_META_SCHEMA,
+                slug: slug.clone(),
+                tenant: "acme".into(),
+                title: None,
+                nav: vec![],
+                nav_groups: vec![],
+                home: None,
+                favicon: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            store.update_space("acme", &slug, sample_space("x")),
+            Err(UpdateError::NoSuchSpace)
+        ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn concurrent_update_space_serialize_last_writer_wins_no_duplicate() {
+        // Two concurrent PUTs to the same slug are serialized by the mutation lock:
+        // both succeed, the store never duplicates the space, and the served body is
+        // one of the two writers' (last-writer-wins). No torn/lost snapshot.
+        let root = tmp_root("update-concurrent");
+        let h = host();
+        let store = Arc::new(Store::open(&root, h.clone()).unwrap());
+        let first = store
+            .publish_space("acme", sample_space("V0"), None)
+            .unwrap();
+        let slug = first.slug.clone();
+
+        let mut handles = Vec::new();
+        for tag in ["A", "B", "C", "D"] {
+            let store = store.clone();
+            let slug = slug.clone();
+            handles.push(std::thread::spawn(move || {
+                store
+                    .update_space("acme", &slug, sample_space(tag))
+                    .map(|p| p.created)
+            }));
+        }
+        for hd in handles {
+            // Every concurrent update succeeds and is an update (never a create).
+            assert!(!hd.join().unwrap().unwrap());
+        }
+        assert_eq!(
+            store.page_count(),
+            1,
+            "no duplicate space from concurrent PUTs"
+        );
+        let served = h
+            .snapshot()
+            .space(&slug)
+            .unwrap()
+            .artifact("index")
+            .unwrap()
+            .html
+            .clone();
+        assert!(
+            ["A", "B", "C", "D"].iter().any(|t| served.contains(t)),
+            "served body must be one writer's content, got: {served}"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

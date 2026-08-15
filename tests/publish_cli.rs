@@ -251,6 +251,32 @@ fn update_empty_slug_is_rejected() {
 }
 
 #[test]
+fn update_invalid_grammar_slug_is_rejected_locally_before_network() {
+    // `--update` is validated against the capability-slug grammar CLIENT-SIDE, and
+    // BEFORE server/key resolution — an uppercase/reserved/traversal value is a
+    // deterministic local `invalid_update_slug`, never a `missing_server` or a network
+    // round-trip. No server is configured, so reaching `invalid_update_slug` proves the
+    // grammar gate runs first.
+    let dir = tmp_dir("update-badgrammar");
+    let home = tmp_dir("update-badgrammar-home");
+    let md = write(&dir, "page.md", "# Hi\n");
+    for bad in ["Upperslug", "../pages", "has/slash", "api"] {
+        let out = hermetic(&dir, &home)
+            .args(["--json", "publish"])
+            .arg(&md)
+            .args(["--target", "hosted", "--update", bad])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "slug {bad:?} must be rejected");
+        let v = parse(&out.stderr);
+        assert_eq!(
+            v["error"]["code"], "invalid_update_slug",
+            "slug {bad:?} must fail local grammar validation, not reach the network"
+        );
+    }
+}
+
+#[test]
 fn hosted_only_flag_on_loopback_target_is_rejected() {
     // `--server` on a loopback-resolved publish is a usage error, not a silent no-op.
     let dir = tmp_dir("opt");

@@ -7,6 +7,9 @@ status: in-progress
 priority: normal
 labels:
 - via:agent-homebase-wrapup
+commits:
+- hash: 79a6a2b
+  summary: 'feat(hosted): publish --update <slug> in-place update by capability slug'
 ---
 
 # publish: update a published artifact in place (stable slug) instead of …
