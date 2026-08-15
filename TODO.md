@@ -5,11 +5,32 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**CURRENT: glasspad 0.13.0 is FULLY RELEASED + verified live** (2026-08-15): crates.io
-`0.13.0` (sparse index via `cargo search`), GitHub Release `v0.13.0` (12 assets, not draft),
-Homebrew `version "0.13.0"`. Clean tag-triggered release, mac built clean on hauis.
-`hosted-store-generation-pointer` has now landed on `main` after 0.13.0 and is in the
-integration/release gate. The 0.3.0→0.12.0 release history is preserved below for context.
+**CURRENT: glasspad 0.14.0 is FULLY RELEASED + verified live** (2026-08-15): crates.io
+`0.14.0` (sparse index via `cargo search`), GitHub Release `v0.14.0` (12 assets, not draft),
+Homebrew `version "0.14.0"`. Clean tag-triggered release, mac built clean on hauis.
+Next: Lane B hosted-store follow-ups, starting with `hosted-idem-sweep-robustness` unless
+Jari redirects to template design. The 0.3.0→0.13.0 release history is preserved below for
+context.
+
+## Round 2026-08-15 — 0.14.0 shipped (generation-pointer hosted store)
+
+One Lane-B hosted-core spinoff landed on `main`, then shipped as **0.14.0** (`42ffc20`, tag
+`v0.14.0`). Integrated/release gate: `cargo fmt --all --check` + `cargo clippy --all-targets
+-- -D warnings` + `cargo test` (after the documented build-script clean for the local
+`version_cli` false-fail) + `./test-security.sh` (48 checks + Wave 2a) + localhost loopback
+render smoke + `ossctl audit` (core complete, 0 gaps) + `cargo publish --dry-run`; CI, crates
+publish, cargo-dist Release, and Homebrew formula update all green. Verified live on crates.io,
+GitHub Release, and Homebrew.
+- ✅ `hosted-store-generation-pointer` (`fa957a2` + `1e04534` + `d41db01`, status **done**)
+  redesigned hosted spaces and live overlays around immutable generation directories plus an
+  atomically swapped `current` pointer. A crash before the pointer flip keeps the prior served
+  generation/round live, completed flips preserve the committed-vs-durable honesty contract,
+  legacy flat spaces and two-file live overlays read transparently, and review hardening made
+  recovery conservative, symlink-safe, and fail-closed on page/space collisions.
+- 🌱 Review follow-ups filed and folded into Lane B: `hosted-idem-sweep-robustness`,
+  `hosted-gc-swap-on-partial-fsync`, `hosted-snapshot-arc-sharing`,
+  `hosted-store-input-revalidation`, `hosted-loadbudget-asset-caps`, and
+  `hosted-genptr-autoheal`.
 
 ## Round 2026-08-15 — 0.13.0 shipped (hosted store durability honesty)
 
@@ -292,15 +313,14 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main` contains post-0.13.0 hosted-store durability work in the integration/release gate.
-`hosted-store-generation-pointer` landed and closed `done`; its review follow-ups are now folded
-into Lane B. Next ready hosted-core heads are `hosted-idem-sweep-robustness`,
-`hosted-gc-swap-on-partial-fsync`, and `hosted-snapshot-arc-sharing`, but finish the current
-release gate first.
+`main == origin`, clean tree, nothing in flight, 0.14.0 released + verified live.
+Next ready hosted-core heads are `hosted-idem-sweep-robustness`,
+`hosted-gc-swap-on-partial-fsync`, and `hosted-snapshot-arc-sharing`. They all touch
+`src/hosted/*`, so sequence them in Lane B. `space-custom-template` still waits for a base
+templates design process before spawning.
 
-**Done this round:** `hosted-store-generation-pointer` closed `done` with generation dirs +
-current-pointer storage, live-overlay pointering, legacy reads, review hardening, and green
-worker gate.
+**Done this round:** `hosted-store-generation-pointer` closed `done`; 0.14.0 shipped and verified
+on crates.io, GitHub Release, and Homebrew.
 
 **2. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
 NOT a ready head). Whole-space **branded** template (sidebar/landing/prose as a unit), beyond
