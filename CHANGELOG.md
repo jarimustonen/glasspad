@@ -13,6 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.14.0] - 2026-08-15
+
+Hardens hosted-store crash consistency by moving mutable hosted spaces and live overlays to
+immutable generation directories selected by an atomically replaced `current` pointer.
+
+### Changed
+- **Hosted spaces now commit through generation pointers**: each publish/update writes a complete
+  immutable generation, fsyncs it, then flips a single `current` pointer. A crash before the flip
+  keeps the previously served generation live, while a completed flip preserves the existing
+  committed-vs-durable honesty contract.
+- **Live overlays use the same generation model**: a failed or interrupted next round no longer
+  discards the previously committed live round because `live.html` and metadata are selected as
+  one generation.
+
+### Fixed
+- **Hosted-store recovery is more conservative and symlink-safe**: corrupt or unresolvable
+  pointers no longer downgrade to stale legacy content, restored backups are reconciled on startup,
+  page/space slug collisions fail closed, and legacy flat spaces plus two-file overlays still read
+  transparently during upgrade.
+
 ## [0.13.0] - 2026-08-15
 
 Fixes the hosted-store durability honesty gap found during the stable-URL update review.
