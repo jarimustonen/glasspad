@@ -5,12 +5,34 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**CURRENT: glasspad 0.11.0 is FULLY RELEASED + verified live** (2026-08-15) — crates.io
-`0.11.0` (yanked=false, sparse index authoritative), GitHub Release `v0.11.0` (12 assets,
-not draft), Homebrew `version "0.11.0"`. Clean tag-triggered release, mac built clean on
-hauis, no re-runs. Next: **`hosted-nav-loses-sidebar`** (live maalla.dev bug — Jari: korjataan)
-+ **`publish-update-in-place`** in parallel (see _▶ Start here_). The 0.3.0→0.10.0 release
-history is preserved below for context.
+**CURRENT: glasspad 0.12.0 is FULLY RELEASED + verified live** (2026-08-15) — crates.io
+`0.12.0` (yanked=false, sparse index authoritative), GitHub Release `v0.12.0` (12 assets,
+not draft), Homebrew `version "0.12.0"`. Clean tag-triggered release, mac built clean on
+hauis, no re-runs. Next: **`materialize-space-durability`** (hosted-store durability follow-up
+from the publish-update review) unless Jari wants to switch to template design. The 0.3.0→0.11.0
+release history is preserved below for context.
+
+## Round 2026-08-15 — 0.12.0 shipped (stable URL updates + hosted sidebar triage)
+
+Two sequenced Lane-B/render-risk spinoffs landed on `main`, then shipped as **0.12.0**
+(`b591037`, tag `v0.12.0`). Integrated/release gate: `cargo fmt --all --check` +
+`cargo clippy --all-targets -- -D warnings` + `cargo test` + `./test-security.sh` (48 checks
++ Wave 2a) + `ossctl audit` (core complete, 0 gaps) + `cargo publish --dry-run`; CI,
+crates publish, and cargo-dist Release workflows all green.
+- ✅ `publish-update-in-place` (`79a6a2b` + `0adf9fd`, status **done**) — `glasspad publish
+  --update <slug>` now updates an existing hosted space by capability slug while preserving
+  the same `/p/<slug>` URL. Server side is owner-authenticated `PUT /api/v1/spaces/{slug}`:
+  missing/foreign slug fails closed, idempotency-key replay semantics stay unchanged, retention
+  refreshes on update, and security probes cover owner/cross-tenant/unknown/unauthenticated
+  cases. Multi-model review hardening applied before merge.
+- ✅ `hosted-nav-loses-sidebar` (`46e9e37`, status **cannot-reproduce**) — current `main`
+  already renders grouped sidebar chrome on every hosted page URL and across store reopen;
+  regression coverage added. The observed maalla.dev symptom is an ops/stored-metadata issue:
+  upgrade hosted glasspad to a current build and re-publish affected spaces so `nav_groups`
+  is persisted.
+- 🌱 Review follow-up filed and folded into the DAG: `materialize-space-durability` (normal,
+  Lane B) for `materialize_space` fsync-divergence/generation-pointer durability and optional
+  PUT optimistic concurrency.
 
 ## Round 2026-08-14/15 — 0.11.0 shipped (hosted return-channel fix + inline-SVG markdown diagrams)
 
@@ -254,30 +276,18 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin` @ `9b34edd`, clean tree, nothing in flight, 0.11.0 released + verified live.
-Agenda: **run `hosted-nav-loses-sidebar` and `publish-update-in-place` in parallel** (two
-lanes). **Phase 1 must confirm file-disjointness before parallel spawn** — the real
-uncertainty is which file family `hosted-nav-loses-sidebar` touches (render/`space.rs` nav
-chrome vs hosted-serve routing). If it turns out to touch `src/hosted/*`, it collides with
-`publish-update-in-place` and the two must be **sequenced**, not parallelised.
+`main == origin` @ `b591037`, clean tree, nothing in flight, 0.12.0 released + verified live.
+Agenda: **run `materialize-space-durability` next** unless Jari redirects to template design.
+It is the review follow-up from `publish-update-in-place`: fix/settle hosted store durability
+around `materialize_space` fsync-divergence and the generation-pointer/richer-outcome design,
+with optional PUT optimistic concurrency if it fits the same unit. Lane B (`src/hosted/*`),
+so sequence it with any other hosted-core work. `/llm-review`, keep `./test-security.sh` green.
 
-**1. `hosted-nav-loses-sidebar`** (bug, normal — Jari: "korjataan"). On maalla.dev (0.10.0
-client) the home page shows the grouped sidebar, but clicking a nav entry (e.g. `latest`)
-lands on a page **without the sidebar** — the served per-page HTML omits the grouped nav
-chrome. Filed by the diagrams worker from aggountant project-view. Most-likely lands in the
-space-nav render path (`src/artifact_host/space.rs` + nav generation from `space-docsite-nav`,
-0.8.0) → **Lane render**; but confirm it isn't a hosted-serve routing issue (`src/hosted/*`)
-before parallelising with unit 2. `/llm-review`, keep `./test-security.sh` green.
+**Done this round:** `hosted-nav-loses-sidebar` closed `cannot-reproduce` with regression
+coverage + maalla.dev upgrade/republish ops note; `publish-update-in-place` shipped in 0.12.0
+as `glasspad publish --update <slug>`.
 
-**2. `publish-update-in-place`** (feature, normal — renamed this handoff from the Telegram
-intake `intake-feature-glasspad-15de629c511e`; Jari: "vaikuttaa järkevältä"). Every
-`glasspad publish` mints a NEW capability slug/URL; `--idempotency-key` returns the FIRST
-page for that key (200), so it can't be used to **update** a published page in place. Deliver
-a stable-slug in-place update path (re-publish to the same URL). Lands `src/cli.rs` +
-`src/hosted/*` (publish ingest + slug mapping) + docs → **Lane B (cli/hosted)**. Tightly
-coupled to the 0.11.0 publish/submissions surface just shipped. `/llm-review`, security green.
-
-**3. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
+**2. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
 NOT a ready head). Whole-space **branded** template (sidebar/landing/prose as a unit), beyond
 the per-page built-in `prose`/`dashboard`. **Jari's steer: do a separate design process for
 templates first — a set of base templates** (current built-ins are skeletal: `prose` =
