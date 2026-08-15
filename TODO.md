@@ -336,10 +336,10 @@ never parallel (return-channel + space-ingest history showed this family collide
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: materialize-space-durability   ← review follow-up for hosted store durability
+GLOBAL HEAD-OF-LINE: hosted-store-generation-pointer   ← follow-up for immutable generation dirs + current-pointer durability
 
 LANE B — cli/hosted/server core (cli.rs + hosted/* + server.rs + shell.rs + config.rs)
-  ▶ materialize-space-durability  (task, normal — review follow-up from publish-update-in-place: materialize_space fsync-divergence / generation-pointer durability + optional PUT If-Match concurrency)
+  ▶ hosted-store-generation-pointer  (improvement, normal — immutable generation dirs + current-pointer for live overlay and space/key durability)
 
 LANE render — space/markdown render (space.rs + render.rs + headers.rs + base.css)
   ▶ docsite-autolink-convention   (feature, low — mostly docs/producer-convention + author link-class theming; aggountant keeps a thin preprocessor. Tracked, no rush)
