@@ -2,8 +2,13 @@
 created: 2026-08-15
 updated: 2026-08-15
 type: chore
-status: open
+status: done
 priority: normal
+closed: 2026-08-15
+closed_by: claude
+commits:
+- hash: 18564ae
+  summary: 'docs(release): standardise onto ossctl release pattern'
 ---
 
 # Standardise release infra onto ossctl pattern
@@ -18,3 +23,9 @@ On inspection the CI/config half was already in place from the 0.2.x cycle (dist
 - dist-workspace.toml: correct the gnu-vs-musl rationale comment (was wrongly attributing it to reqwest->native-tls/OpenSSL; reqwest actually uses rustls-tls).
 
 Reviewed via /llm-review (gemini + gpt-5.6): three confirmed factual-accuracy findings applied. Green gate: cargo fmt --all --check OK; dist plan valid; release.yml in sync; workflows valid YAML.
+
+## Resolution
+
+### 2026-08-15T04:25:30Z · @claude
+
+Doc slice complete: cross-platform operating-policy paragraph added, gnu-vs-musl rationale corrected, release infra verified equivalent to ossctl pattern and in sync. Fulfils the glasspad slice of homebase cross-repo-release-standardisation.
