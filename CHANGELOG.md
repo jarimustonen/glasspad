@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.12.0] - 2026-08-15
+
+Adds stable-URL hosted republishing: `glasspad publish --update <slug>` can replace a
+published space in place while preserving the same `/p/<slug>` link. This release also
+locks in grouped-sidebar behaviour for hosted spaces with a regression test; the observed
+maalla.dev sidebar loss is a deploy/stored-metadata issue, not a current-code defect.
+
+### Added
+- **`glasspad publish --update <slug>`**: update an existing hosted space by capability
+  slug, preserving the public URL for living documents such as meeting notes. The update
+  path is owner-scoped, fails closed for missing or cross-tenant slugs, keeps existing
+  idempotency-key semantics unchanged, and uses the same hosted-store durability pattern
+  as space publish.
+- **Hosted update API**: owner-authenticated `PUT /api/v1/spaces/{slug}` replaces a space
+  snapshot in place, refreshes retention, and keeps the artifact sandbox/security contract
+  unchanged.
+
+### Fixed
+- **Grouped hosted sidebar regression coverage**: added a test proving grouped nav chrome
+  is present for every hosted page URL and survives store reopen. The current code already
+  behaves correctly; affected maalla.dev spaces need the hosted server upgraded and then
+  re-published so `nav_groups` is persisted.
+
 ## [0.11.0] - 2026-08-14
 
 Fixes the **hosted artifact return channel** and adds **inline-SVG diagrams** to
