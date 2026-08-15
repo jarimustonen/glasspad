@@ -634,25 +634,37 @@ impl Store {
             created_at: Utc::now(),
         };
 
-        self.write_page(&slug, &html, &meta)
+        let committed = self
+            .write_page(&slug, &html, &meta)
             .map_err(PublishError::Io)?;
 
-        // Record the durable key → slug mapping only AFTER the page is on disk and
-        // fsync'd. Ordering is the crash-safety contract: if we crash between the two
-        // writes, at worst an orphan page exists with no mapping — the caller retries
-        // and we create fresh (safe). We never persist a mapping to a page that isn't
-        // durable, so a key can never resolve to a missing/half-written page.
+        // The page is committed on disk: advance the served snapshot NOW, before any
+        // further fallible write, so a later failure can never leave memory serving the
+        // old set while disk holds the new page. Clone-modify-swap: readers in flight
+        // keep the old Arc; new readers see the added page. (O(n) rebuild is acceptable
+        // at this scale; a future Arc-shared Space body would make it O(1) — plan §6.)
+        let mut spaces = current.spaces.clone();
+        spaces.insert(slug.clone(), one_artifact_space(html, title.clone()));
+        self.host.swap(Snapshot { spaces });
+
+        // Durability honesty: if the publishing rename could not be confirmed durable,
+        // surface it now (the snapshot already matches disk, so no divergence) rather
+        // than telling the client a possibly-non-durable write succeeded. Return BEFORE
+        // the mapping write so a durable key never points at a non-durable page.
+        if let Committed::Unconfirmed(e) = committed {
+            return Err(PublishError::Io(e));
+        }
+
+        // Record the durable key → slug mapping only AFTER the page is durable.
+        // Ordering is the crash-safety contract: if we crash between the two writes, at
+        // worst an orphan page exists with no mapping — the caller retries and we create
+        // fresh (safe). We never persist a mapping to a page that isn't durable, so a
+        // key can never resolve to a missing/half-written page. (A mapping-write failure
+        // here returns `Err`, but the snapshot is already swapped, so memory == disk.)
         if let Some(key) = idempotency_key {
             self.write_idem(tenant, key, &slug)
                 .map_err(PublishError::Io)?;
         }
-
-        // Clone-modify-swap: readers in flight keep the old Arc; new readers see the
-        // added page. (O(n) rebuild is acceptable at this iteration's scale; a
-        // future Arc-shared Space body would make it O(1) — see plan §6.)
-        let mut spaces = current.spaces.clone();
-        spaces.insert(slug.clone(), one_artifact_space(html, title.clone()));
-        self.host.swap(Snapshot { spaces });
 
         Ok(Published {
             slug,
@@ -694,13 +706,18 @@ impl Store {
         let round = self.read_live_round(&dir).saturating_add(1);
         let content_version = crate::submissions::content_version(&html);
 
-        // Persist the overlay durably BEFORE swapping the served body, so a crash
-        // mid-push leaves at worst a body with no `live.json` (which `load_live_body`
-        // ignores → the page reverts to the immutable baseline, never blanks).
-        self.write_live(&dir, &html, round)
+        // Persist the overlay BEFORE swapping the served body, so a crash mid-push
+        // leaves at worst a body with no `live.json` (which `load_live_body` ignores →
+        // the page reverts to the immutable baseline, never blanks).
+        let committed = self
+            .write_live(&dir, &html, round)
             .map_err(RoundError::Io)?;
 
-        // Swap the served snapshot body in place (title stays the baseline's).
+        // The overlay is committed on disk: swap the served body in place (title stays
+        // the baseline's) and notify connected shells, so memory/SSE match disk, THEN —
+        // if the commit's durability was unconfirmed — surface the error. Swapping even
+        // on the unconfirmed path is what keeps the served round from diverging from
+        // what a restart would load.
         let title = sp
             .artifacts
             .get(SINGLE_SLUG)
@@ -712,6 +729,10 @@ impl Store {
 
         // Push the keyed round-swap to any connected shell (reuses the reload SSE).
         self.host.notify_round(slug, &content_version, round);
+
+        if let Committed::Unconfirmed(e) = committed {
+            return Err(RoundError::Io(e));
+        }
 
         Ok(RoundPushed {
             round,
@@ -725,7 +746,16 @@ impl Store {
     /// fsync'd after each rename. `.live.*.tmp` staging siblings are cleaned on error;
     /// they live under the page dir (not `pages/`), so the top-level GC tmp-reaper
     /// never touches them, and `load_page` only reads the two exact filenames.
-    fn write_live(&self, dir: &Path, html: &str, round: u64) -> std::io::Result<()> {
+    ///
+    /// Same commit invariant as [`Store::materialize_space`], with the **meta rename**
+    /// as the overlay's commit point (that is when a consistent `(body, meta)` pair
+    /// first exists). An error before it is a plain `Err` (nothing usable committed — a
+    /// torn body-only state is discarded on load, reverting to baseline). After it the
+    /// fn returns [`Committed`]: a failed post-commit fsync becomes
+    /// `Committed::Unconfirmed`, so `push_round` still swaps the served body + notifies
+    /// shells (memory == disk) and surfaces the durability error, rather than returning
+    /// `Err` and leaving the new round on disk while the snapshot stays old.
+    fn write_live(&self, dir: &Path, html: &str, round: u64) -> std::io::Result<Committed> {
         // Body cap (defense-in-depth; the handler already bounds it to the per-file
         // cap): never persist an overlay larger than a baseline artifact.
         if html.len() as u64 > space::MAX_FILE_BYTES {
@@ -734,12 +764,14 @@ impl Store {
                 "live round body exceeds the per-file limit",
             ));
         }
-        let staged = (|| -> std::io::Result<()> {
+        let staged = (|| -> std::io::Result<Committed> {
             // 1. Body first.
             let body_final = dir.join(LIVE_FILE);
             let body_tmp = dir.join(".live.html.tmp");
             write_file_synced(&body_tmp, html.as_bytes())?;
             std::fs::rename(&body_tmp, &body_final)?;
+            // Pre-commit: a new body with no matching meta yet is a torn state that load
+            // discards (reverts to baseline), so a failure here is truthfully `Err`.
             fsync_dir(dir)?;
             // 2. Meta after the body is durable, stamped with the body's digest so a
             //    crash between the two renames yields a mismatched pair that load
@@ -757,8 +789,12 @@ impl Store {
             let meta_tmp = dir.join(".live.json.tmp");
             write_file_synced(&meta_tmp, &json)?;
             std::fs::rename(&meta_tmp, &meta_final)?;
-            fsync_dir(dir)?;
-            Ok(())
+            // COMMIT POINT: a consistent (body, meta) pair now exists on disk. The
+            // parent flush reports durability rather than gating the commit.
+            Ok(match self.commit_fsync(dir) {
+                Ok(()) => Committed::Durable,
+                Err(e) => Committed::Unconfirmed(e),
+            })
         })();
         if staged.is_err() {
             let _ = std::fs::remove_file(dir.join(".live.html.tmp"));
@@ -936,13 +972,17 @@ impl Store {
         Err(PublishError::SlugExhausted)
     }
 
-    /// Atomically + **durably** materialize a page directory: write both files
-    /// (fsync'd) into a `.<slug>.tmp` staging dir, fsync the staging dir, `rename`
-    /// it into place, then fsync `pages_dir` so the rename survives a crash. A reader
-    /// never sees a page dir that exists but lacks its artifact/meta, and once this
-    /// returns the page is durable — which is the precondition for recording an
+    /// Atomically materialize a page directory: write both files (fsync'd) into a
+    /// `.<slug>.tmp` staging dir, fsync the staging dir, `rename` it into place, then
+    /// fsync `pages_dir` so the rename survives a crash. A reader never sees a page dir
+    /// that exists but lacks its artifact/meta. Same commit invariant as
+    /// [`Store::materialize_space`]: `Err` ⟺ nothing changed (pre-commit); once the
+    /// publishing rename lands it returns [`Committed`], so a post-commit parent-dir
+    /// fsync failure becomes `Committed::Unconfirmed` (the caller swaps + surfaces it)
+    /// rather than an `Err` that would strand the page on disk while the snapshot stays
+    /// old. A `Committed::Durable` return is the precondition for recording an
     /// idempotency mapping that points at it.
-    fn write_page(&self, slug: &str, html: &str, meta: &PageMeta) -> std::io::Result<()> {
+    fn write_page(&self, slug: &str, html: &str, meta: &PageMeta) -> std::io::Result<Committed> {
         let final_dir = self.pages_dir.join(slug);
         let tmp_dir = self.pages_dir.join(format!(".{slug}.tmp"));
         // Clean any stale staging dir from a prior crash.
@@ -950,7 +990,7 @@ impl Store {
         // Do the staged writes in a closure so a failure at ANY step cleans up the
         // staging dir rather than leaking it (a distinct slug is minted next time,
         // so a leaked `.<slug>.tmp` would otherwise never be reclaimed).
-        let staged = (|| -> std::io::Result<()> {
+        let staged = (|| -> std::io::Result<Committed> {
             std::fs::create_dir_all(&tmp_dir)?;
             write_file_synced(&tmp_dir.join(ARTIFACT_FILE), html.as_bytes())?;
             let meta_json = serde_json::to_vec_pretty(meta)
@@ -962,8 +1002,12 @@ impl Store {
             // rename is atomic on the same filesystem; the staging dir is a sibling
             // so it shares the pages_dir filesystem.
             std::fs::rename(&tmp_dir, &final_dir)?;
-            // Flush the parent so the rename (the page's appearance) is itself durable.
-            fsync_dir(&self.pages_dir)
+            // COMMIT POINT: the page is now `pages/<slug>/`. The parent flush reports
+            // durability rather than gating the commit.
+            Ok(match self.commit_fsync(&self.pages_dir) {
+                Ok(()) => Committed::Durable,
+                Err(e) => Committed::Unconfirmed(e),
+            })
         })();
         if staged.is_err() {
             let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -1204,16 +1248,9 @@ impl Store {
             updated_at: now,
         };
 
-        self.materialize_space(&slug, &space, &meta, !created)
+        let committed = self
+            .materialize_space(&slug, &space, &meta, !created)
             .map_err(PublishError::Io)?;
-
-        // Record the durable stable-key mapping only AFTER the space is on disk (same
-        // ordering as the page idempotency mapping): a crash between the two leaves at
-        // worst an orphan space with no mapping, never a mapping to a missing space.
-        if let Some(key) = space_key {
-            self.write_space_idem(tenant, key, &slug)
-                .map_err(PublishError::Io)?;
-        }
 
         let pages: Vec<PublishedPage> = space
             .nav
@@ -1226,10 +1263,28 @@ impl Store {
             })
             .collect();
 
-        // Clone-modify-swap the served snapshot (readers in flight keep the old Arc).
+        // The space is committed on disk: advance the served snapshot NOW, before any
+        // further fallible write, so a later failure can never leave memory serving the
+        // old tree while disk holds the new one. Clone-modify-swap (readers in flight
+        // keep the old Arc).
         let mut spaces = current.spaces.clone();
         spaces.insert(slug.clone(), space.clone());
         self.host.swap(Snapshot { spaces });
+
+        // Durability honesty: surface an unconfirmed commit now (snapshot already
+        // matches disk, so no divergence), BEFORE writing the stable-key mapping — a
+        // durable key must never point at a space whose durability is unconfirmed.
+        if let Committed::Unconfirmed(e) = committed {
+            return Err(PublishError::Io(e));
+        }
+
+        // Record the durable stable-key mapping only AFTER the space is durable (same
+        // ordering as the page idempotency mapping): a crash between the two leaves at
+        // worst an orphan space with no mapping, never a mapping to a missing space.
+        if let Some(key) = space_key {
+            self.write_space_idem(tenant, key, &slug)
+                .map_err(PublishError::Io)?;
+        }
 
         Ok(PublishedSpace {
             slug,
@@ -1324,7 +1379,8 @@ impl Store {
         };
 
         // Atomic staged replace (backup the current tree, swing the new one in).
-        self.materialize_space(slug, &space, &meta, true)
+        let committed = self
+            .materialize_space(slug, &space, &meta, true)
             .map_err(UpdateError::Io)?;
 
         let pages: Vec<PublishedPage> = space
@@ -1338,10 +1394,17 @@ impl Store {
             })
             .collect();
 
-        // Clone-modify-swap the served snapshot (readers in flight keep the old Arc).
+        // The replacement is committed on disk: advance the served snapshot NOW (so a
+        // subsequent failure can't leave memory on the old tree while disk holds the
+        // new one), THEN surface an unconfirmed commit. Clone-modify-swap (readers in
+        // flight keep the old Arc).
         let mut spaces = current.spaces.clone();
         spaces.insert(slug.to_string(), space.clone());
         self.host.swap(Snapshot { spaces });
+
+        if let Committed::Unconfirmed(e) = committed {
+            return Err(UpdateError::Io(e));
+        }
 
         Ok(PublishedSpace {
             slug: slug.to_string(),
@@ -1643,39 +1706,47 @@ impl Store {
         Ok(Some(out))
     }
 
-    /// Atomically + durably materialize a `spaces/<slug>/` directory from a validated
-    /// [`Space`] + [`SpaceMeta`]. Stages the whole tree in `.<slug>.tmp/`, fsyncs it,
-    /// then publishes it with a single rename (fresh create) or an atomic replace
-    /// (rename final → `.<slug>.old`, rename tmp → final, remove backup) so a reader
-    /// never sees a half-written or missing space and a crash leaves either the old
-    /// or the new tree intact.
+    /// Atomically materialize a `spaces/<slug>/` directory from a validated
+    /// [`Space`] + [`SpaceMeta`] — and durably, when the final parent-dir fsync
+    /// succeeds (the return value reports this; see the commit invariant below).
+    /// Stages the whole tree in `.<slug>.tmp/`, fsyncs it, then publishes it with a
+    /// single rename (fresh create) or an atomic replace (rename final → `.<slug>.old`,
+    /// rename tmp → final, remove backup) so a reader never sees a half-written or
+    /// missing space and a crash leaves either the old or the new tree intact.
     ///
     /// **Commit invariant (what `Ok`/`Err` mean to the caller).** The publishing
-    /// rename (`tmp → final`) is the single **commit point**. `Err` is returned only
-    /// for a failure *before* that rename lands — in which case nothing was swapped
-    /// into `spaces/<slug>/` (a replace restored its prior tree, a create left no
-    /// final), so the caller's on-disk truth is unchanged and it must **not** swap its
-    /// served snapshot. Once the rename succeeds the new tree *is* the on-disk truth,
-    /// so this function **commits to `Ok`**: the post-commit parent-dir fsync is
-    /// best-effort (see [`Store::commit_fsync`]) and its failure is logged, never
-    /// surfaced. If it were surfaced, the caller would get `Err`, skip the snapshot
-    /// swap believing "nothing changed", yet a restart — which rebuilds the snapshot
-    /// from disk — would serve the new tree, diverging memory from disk until then.
-    /// So callers can rely on `Ok ⟺ new tree is final` and `Err ⟺ nothing changed`,
-    /// and swap iff `Ok`.
+    /// rename (`tmp → final`) is the single **commit point**, and the return value
+    /// distinguishes the three states a caller must tell apart:
+    ///
+    /// - `Err(io::Error)` — a failure *before* the publishing rename landed. Nothing
+    ///   was swapped into `spaces/<slug>/` (a replace restored its prior tree, a create
+    ///   left no final), so the on-disk truth is unchanged and the caller must **not**
+    ///   swap its served snapshot.
+    /// - `Ok(Committed::Durable)` — the rename landed and the parent-dir fsync
+    ///   confirmed it. The caller **must** swap its snapshot; the write is durable.
+    /// - `Ok(Committed::Unconfirmed(e))` — the rename landed (the new tree **is** the
+    ///   on-disk truth) but the parent-dir fsync failed, so durability is unconfirmed.
+    ///   The caller **must still** swap its snapshot (memory has to match what a restart
+    ///   would serve — this is the divergence this design prevents), then surface `e` so
+    ///   a client is never told a possibly-non-durable write succeeded.
+    ///
+    /// So the caller swaps iff `Ok(_)` — never on `Err` — which is what keeps the
+    /// served snapshot and the on-disk tree from diverging, while durability is reported
+    /// honestly rather than swallowed. On `Unconfirmed` a replace **keeps** its `.old`
+    /// backup (the last confirmed-durable generation); recovery reconciles it.
     fn materialize_space(
         &self,
         slug: &str,
         space: &Space,
         meta: &SpaceMeta,
         replace: bool,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<Committed> {
         let final_dir = self.spaces_dir.join(slug);
         let tmp_dir = self.spaces_dir.join(format!(".{slug}.tmp"));
         let backup_dir = self.spaces_dir.join(format!(".{slug}.old"));
         let _ = std::fs::remove_dir_all(&tmp_dir);
 
-        let staged = (|| -> std::io::Result<()> {
+        let staged = (|| -> std::io::Result<Committed> {
             std::fs::create_dir_all(&tmp_dir)?;
             // meta.json
             let meta_json = serde_json::to_vec_pretty(meta)
@@ -1727,31 +1798,36 @@ impl Store {
                     return Err(e);
                 }
                 // COMMIT POINT reached: the new tree is now `spaces/<slug>/`, the
-                // on-disk truth. Everything past here is best-effort and must NOT turn
-                // a committed replace back into an `Err` (see the commit invariant on
-                // this fn and `commit_fsync`) — the caller has to swap its snapshot.
-                if let Err(e) = self.commit_fsync(&self.spaces_dir) {
-                    eprintln!(
-                        "glasspad host: fsync of spaces dir after committing replace of {slug} \
-                         failed: {e}; the new tree is live but its durability is unconfirmed \
-                         until the OS flushes"
-                    );
+                // on-disk truth. Past here the function never returns `Err` — the caller
+                // must swap its snapshot — but it DOES report whether the commit was
+                // confirmed durable so the caller can honestly surface an fsync failure.
+                match self.commit_fsync(&self.spaces_dir) {
+                    Ok(()) => {
+                        // Durable: the prior generation's backup is now safe to reclaim.
+                        let _ = std::fs::remove_dir_all(&backup_dir);
+                        Ok(Committed::Durable)
+                    }
+                    Err(e) => {
+                        // Unconfirmed: the publishing rename is NOT confirmed durable, so
+                        // RETAIN `.old` as the last durable generation. Deleting it here
+                        // (as an unconditional cleanup would) could lose BOTH generations
+                        // if a crash then persisted `final -> .old` + the deletion but
+                        // not `tmp -> final`. Recovery reconciles the retained backup
+                        // (final present -> drop `.old`; final lost on a crash ->
+                        // restore `.old`).
+                        Ok(Committed::Unconfirmed(e))
+                    }
                 }
-                let _ = std::fs::remove_dir_all(&backup_dir);
             } else {
                 std::fs::rename(&tmp_dir, &final_dir)?;
-                // COMMIT POINT: the fresh tree is now `spaces/<slug>/`. As in the
-                // replace branch, the parent-dir flush past this point is best-effort —
-                // a failure must not make the caller believe the create did not happen
-                // (it did; a restart would serve it), so we log and commit to `Ok`.
-                if let Err(e) = self.commit_fsync(&self.spaces_dir) {
-                    eprintln!(
-                        "glasspad host: fsync of spaces dir after creating {slug} failed: {e}; \
-                         the new tree is live but its durability is unconfirmed until the OS flushes"
-                    );
-                }
+                // COMMIT POINT: the fresh tree is now `spaces/<slug>/`. As in the replace
+                // branch, the caller must swap on commit; the parent-dir flush reports
+                // durability rather than gating the commit.
+                Ok(match self.commit_fsync(&self.spaces_dir) {
+                    Ok(()) => Committed::Durable,
+                    Err(e) => Committed::Unconfirmed(e),
+                })
             }
-            Ok(())
         })();
         if staged.is_err() {
             let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -1759,14 +1835,14 @@ impl Store {
         staged
     }
 
-    /// fsync the `spaces/` parent after a **committed** publishing rename. This is the
-    /// durability flush for the rename, but it runs *past the point of no return*: the
-    /// new tree is already the on-disk truth, so [`Store::materialize_space`]
-    /// deliberately swallows an error here rather than reverting a committed replace to
-    /// `Err` (which would strand the caller believing "nothing changed" while a restart
-    /// serves the new tree — the divergence this whole design prevents). It is split
-    /// into its own method so a test can deterministically simulate that flush failing
-    /// and prove the caller still commits + swaps.
+    /// fsync a parent directory after a **committed** publishing rename. This is the
+    /// durability flush for the rename, run *past the point of no return*: the new tree
+    /// is already the on-disk truth, so its callers ([`Store::materialize_space`],
+    /// [`Store::write_page`], [`Store::write_live`]) never revert a committed publish to
+    /// `Err` on its failure — they map it to a `Committed::Unconfirmed` outcome, swap
+    /// their snapshot regardless, and surface the error afterwards. Split into its own
+    /// method so a test can deterministically simulate the flush failing and prove the
+    /// caller still commits + swaps.
     fn commit_fsync(&self, dir: &Path) -> std::io::Result<()> {
         #[cfg(test)]
         if fault::take_commit_fsync_fault() {
@@ -1934,6 +2010,22 @@ fn fsync_tree(dir: &Path) -> std::io::Result<()> {
     fsync_dir(dir)
 }
 
+/// Outcome of a **committed** atomic publish (the publishing rename landed, so the new
+/// tree/overlay IS the on-disk truth and the caller MUST advance its served snapshot).
+/// Returned by [`Store::materialize_space`], [`Store::write_page`], and
+/// [`Store::write_live`]; a pre-commit failure is a plain `Err` (nothing changed) and
+/// the caller must NOT swap. The variant distinguishes durability so the caller can
+/// report it honestly rather than pretend an unflushed write is durable.
+enum Committed {
+    /// The publishing rename landed and its parent-dir fsync confirmed it durable.
+    Durable,
+    /// The publishing rename landed (the new tree is on disk — swap the snapshot) but
+    /// the parent-dir fsync failed, so durability is unconfirmed. The caller swaps the
+    /// snapshot (memory must match what a restart would serve), then surfaces this error
+    /// so a client is never told a possibly-non-durable write succeeded.
+    Unconfirmed(std::io::Error),
+}
+
 /// Ceiling on a `meta.json` sidecar read — it is a handful of small fields, so a
 /// larger file is corrupt/hostile and is bounded here to avoid an unbounded alloc.
 const MAX_META_BYTES: u64 = 64 * 1024;
@@ -2044,9 +2136,23 @@ mod fault {
         static COMMIT_FSYNC_FAULTS: Cell<u32> = const { Cell::new(0) };
     }
 
-    /// Arm the next `n` post-commit fsyncs on the current thread to fail.
-    pub fn arm_commit_fsync_faults(n: u32) {
+    /// Resets the armed-fault count to 0 on drop, so an unconsumed fault (a test that
+    /// arms more than it consumes, or panics before consuming) can never leak onto a
+    /// later test that libtest schedules on the same worker thread.
+    #[must_use]
+    pub struct FaultGuard;
+
+    impl Drop for FaultGuard {
+        fn drop(&mut self) {
+            COMMIT_FSYNC_FAULTS.with(|c| c.set(0));
+        }
+    }
+
+    /// Arm the next `n` post-commit fsyncs on the current thread to fail. Hold the
+    /// returned guard for the test's scope; on drop it clears any unconsumed faults.
+    pub fn arm_commit_fsync_faults(n: u32) -> FaultGuard {
         COMMIT_FSYNC_FAULTS.with(|c| c.set(n));
+        FaultGuard
     }
 
     /// Consume one armed fault; `true` when the current `commit_fsync` should fail.
@@ -3274,15 +3380,24 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    // NOTE on the fault-injection tests below. The injected `commit_fsync` fault returns
+    // an error *without* dropping the underlying write, so these are NOT physical
+    // crash-durability tests (that would need a VFS/dm-flakey fault harness). They pin
+    // the SNAPSHOT-SWAP / commit invariant the fix establishes: when the publishing
+    // rename has committed but the post-commit parent-dir fsync fails, the served
+    // snapshot is advanced to the new tree (memory == disk, no divergence) AND the
+    // durability failure is surfaced to the caller (honest 500), rather than the old
+    // behaviour of returning Err with the snapshot left on the old tree.
+
     #[test]
-    fn replace_commits_and_swaps_even_when_post_commit_fsync_fails() {
+    fn replace_commits_and_swaps_then_surfaces_post_commit_fsync_failure() {
         // The fsync-after-swap divergence window (issue: materialize-space-durability).
         // The publishing rename has already put the new tree in `spaces/<slug>/`, then
-        // the parent-dir fsync fails. The update must still COMMIT: return Ok, swap the
-        // served snapshot to the new content, and leave no `.old`/`.tmp` divergence — so
-        // a caller can never treat "new tree already final on disk" as "unchanged".
-        // (Before the fix this returned Err, the snapshot stayed V1, and a restart —
-        // which rebuilds from disk — served V2: memory/disk divergence until restart.)
+        // the parent-dir fsync fails. The update must: (1) swap the served snapshot to
+        // the new content (no divergence), (2) surface the durability error to the
+        // caller, and (3) RETAIN the `.old` backup (the last confirmed-durable copy),
+        // which recovery then reconciles. Before the fix this returned Err with the
+        // snapshot left on V1 while disk held V2 — divergence until restart.
         let root = tmp_root("materialize-fsync-replace");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
@@ -3292,26 +3407,31 @@ mod tests {
         let slug = first.slug.clone();
 
         // Arm the next post-commit fsync (this thread) to fail, then update in place.
-        fault::arm_commit_fsync_faults(1);
-        let updated = store
-            .update_space("acme", &slug, sample_space("V2"))
-            .expect("a post-commit fsync failure must not fail the committed update");
-        assert_eq!(updated.slug, slug);
-        assert!(!updated.created);
-        assert_eq!(store.page_count(), 1, "no duplicate space");
+        let guard = fault::arm_commit_fsync_faults(1);
+        let updated = store.update_space("acme", &slug, sample_space("V2"));
+        drop(guard);
+        assert!(
+            matches!(updated, Err(UpdateError::Io(_))),
+            "an unconfirmed commit must be surfaced as an I/O error, not a silent success"
+        );
 
-        // Memory (served snapshot) matches the committed disk tree: both are V2.
+        // Divergence is nonetheless closed: the served snapshot is swapped to V2, so
+        // memory matches what a restart would load.
+        assert_eq!(store.page_count(), 1, "no duplicate space");
         let sp = h.snapshot().space(&slug).cloned().unwrap();
         assert!(
             sp.artifact("index").unwrap().html.contains("V2"),
-            "served snapshot must be swapped to the committed new tree"
+            "served snapshot must be swapped to the committed new tree even on an unconfirmed commit"
         );
-        // No stranded staging dirs the caller/recovery would have to reconcile.
-        assert!(!root.join("spaces").join(format!(".{slug}.old")).exists());
+        // The backup is RETAINED (the durable-copy safety property); the tmp is gone.
+        assert!(
+            root.join("spaces").join(format!(".{slug}.old")).exists(),
+            "the last durable generation (.old) must be kept when durability is unconfirmed"
+        );
         assert!(!root.join("spaces").join(format!(".{slug}.tmp")).exists());
 
-        // Disk truth agrees on reopen (rescan serves V2, page_count 1) — the same
-        // content the running process serves, i.e. no restart-time divergence.
+        // Reopen: recovery reconciles the retained backup (final exists → drop `.old`)
+        // and serves V2 — no lost generation, no leftover staging dir.
         let h2 = host();
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(store2.page_count(), 1);
@@ -3324,95 +3444,119 @@ mod tests {
                 .html
                 .contains("V2")
         );
+        assert!(
+            !root.join("spaces").join(format!(".{slug}.old")).exists(),
+            "recovery reclaims the backup once final is present"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn fresh_create_commits_and_swaps_even_when_post_commit_fsync_fails() {
-        // Same divergence window on the CREATE path: the fresh tree's rename has
-        // committed, then the parent fsync fails. publish_space must still return Ok and
-        // serve the new space (the caller holds the returned slug), not surface an error
-        // and strand an orphan tree the client never learns about.
+    fn fresh_create_commits_and_swaps_then_surfaces_post_commit_fsync_failure() {
+        // Same divergence window on the CREATE path. publish_space surfaces the
+        // durability error, but the snapshot is swapped so the space is already served
+        // (memory == disk) and survives reopen — the fix eliminates the divergence while
+        // reporting the failure honestly. (The client got a 500 and will retry to a
+        // fresh durable slug; the served orphan is GC'd by retention.)
         let root = tmp_root("materialize-fsync-create");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
 
-        fault::arm_commit_fsync_faults(1);
-        let pubd = store
-            .publish_space("acme", sample_space("Fresh"), None)
-            .expect("a post-commit fsync failure must not fail the committed create");
-        assert!(pubd.created);
+        let guard = fault::arm_commit_fsync_faults(1);
+        let pubd = store.publish_space("acme", sample_space("Fresh"), None);
+        drop(guard);
+        assert!(
+            matches!(pubd, Err(PublishError::Io(_))),
+            "an unconfirmed create must be surfaced as an I/O error"
+        );
+
+        // The snapshot was nonetheless swapped: exactly one space, serving the new body.
         assert_eq!(store.page_count(), 1);
-
-        // Served immediately (snapshot swapped despite the flush failure).
-        let sp = h.snapshot().space(&pubd.slug).cloned().unwrap();
-        assert!(sp.artifact("index").unwrap().html.contains("Fresh"));
+        let snap = h.snapshot();
+        assert_eq!(snap.spaces.len(), 1);
         assert!(
-            !root
-                .join("spaces")
-                .join(format!(".{}.tmp", pubd.slug))
-                .exists()
-        );
-
-        // And durable on reopen (memory and disk agree).
-        let h2 = host();
-        let _store2 = Store::open(&root, h2.clone()).unwrap();
-        assert!(
-            h2.snapshot()
-                .space(&pubd.slug)
-                .unwrap()
+            snap.spaces.values().any(|sp| sp
                 .artifact("index")
-                .unwrap()
-                .html
-                .contains("Fresh")
+                .is_some_and(|a| a.html.contains("Fresh"))),
+            "served snapshot must reflect the committed create"
         );
+
+        // Durable on reopen (memory and disk agree; no leftover staging dir).
+        let h2 = host();
+        let store2 = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(store2.page_count(), 1);
+        assert!(h2.snapshot().spaces.values().any(|sp| {
+            sp.artifact("index")
+                .is_some_and(|a| a.html.contains("Fresh"))
+        }));
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn post_commit_fsync_failure_preserves_idempotency_and_ownership() {
-        // The commit-invariant fix must not weaken keyed-replay or tenant isolation.
-        // A keyed publish whose post-commit fsync fails still commits, and a later
-        // same-key publish replays the SAME slug in place (never a duplicate); a foreign
-        // tenant's key is scoped to its own space, and an unknown slug still fails closed.
+    fn keyed_create_with_unconfirmed_commit_writes_no_mapping() {
+        // Ordering invariant under fault: on an unconfirmed keyed create, publish_space
+        // returns BEFORE writing the stable-key mapping, so a durable key never points
+        // at a space whose durability is unconfirmed. A same-key retry therefore finds
+        // no mapping and mints a FRESH space; the retry (durable) DOES record the
+        // mapping, so a further same-key publish replays it. Tenant isolation is intact.
         let root = tmp_root("materialize-fsync-idem");
         let h = host();
         let store = Store::open(&root, h.clone()).unwrap();
 
-        fault::arm_commit_fsync_faults(1);
-        let first = store
-            .publish_space("acme", sample_space("V1"), Some("docs"))
-            .expect("keyed create commits through a post-commit fsync failure");
-        assert!(first.created);
+        // 1. Keyed create hits the fault → Err, space served, but NO mapping written.
+        let guard = fault::arm_commit_fsync_faults(1);
+        let first = store.publish_space("acme", sample_space("V1"), Some("docs"));
+        drop(guard);
+        assert!(matches!(first, Err(PublishError::Io(_))));
+        assert_eq!(
+            store.page_count(),
+            1,
+            "the unconfirmed space is still served"
+        );
 
-        // Same key → same slug, updated in place (idempotency-key replay intact).
-        let again = store
+        // 2. Same key, no fault → mints a NEW space (no durable mapping existed), proving
+        //    we never bound the key to the unconfirmed space.
+        let retry = store
             .publish_space("acme", sample_space("V2"), Some("docs"))
+            .expect("a durable retry succeeds");
+        assert!(
+            retry.created,
+            "no mapping existed → a fresh mint, not a replay"
+        );
+        assert_eq!(store.page_count(), 2);
+
+        // 3. The durable retry DID record the mapping → a further same-key publish
+        //    replays it in place (same slug, no new space).
+        let replay = store
+            .publish_space("acme", sample_space("V3"), Some("docs"))
             .unwrap();
-        assert_eq!(first.slug, again.slug, "keyed replay must reuse the slug");
-        assert!(!again.created);
-        assert_eq!(store.page_count(), 1, "no duplicate from the replayed key");
+        assert_eq!(
+            retry.slug, replay.slug,
+            "keyed replay reuses the durable slug"
+        );
+        assert!(!replay.created);
+        assert_eq!(store.page_count(), 2, "replay is in place, no duplicate");
         assert!(
             h.snapshot()
-                .space(&first.slug)
+                .space(&retry.slug)
                 .unwrap()
                 .artifact("index")
                 .unwrap()
                 .html
-                .contains("V2")
+                .contains("V3")
         );
 
-        // Tenant isolation: a foreign tenant's same key mints its OWN space, and an
-        // unknown-slug update still fails closed (no cross-tenant existence oracle).
+        // 4. Tenant isolation preserved: a foreign tenant's same key mints its OWN space,
+        //    and an unknown/foreign-slug update still fails closed.
         let other = store
             .publish_space("globex", sample_space("B"), Some("docs"))
             .unwrap();
         assert_ne!(
-            first.slug, other.slug,
+            retry.slug, other.slug,
             "same key, different tenant → different space"
         );
         assert!(matches!(
-            store.update_space("globex", &first.slug, sample_space("evil")),
+            store.update_space("globex", &retry.slug, sample_space("evil")),
             Err(UpdateError::NoSuchSpace)
         ));
         std::fs::remove_dir_all(&root).ok();

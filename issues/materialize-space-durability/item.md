@@ -40,3 +40,9 @@ in publish-update-in-place — a synchronous `.old → final` restore on a faile
 stale-write protection. Optional future enhancement: return a content-version/ETag on
 publish/update and honor `If-Match` on PUT (`409`/`412` on stale). Not required by the
 publish-update-in-place scope; filed here so the durability/concurrency work travels together.
+
+## Agent Runs
+
+### 2026-08-15T13:31:36Z · @agent-materialize-durability
+
+Commit 84fc491: commit-honest materialize_space. The publishing rename is the single commit point; post-commit parent-dir fsync is best-effort (commit_fsync) — a failure is logged, not surfaced as Err — closing the fsync-after-swap divergence window (both replace and create paths). Added thread-local cfg(test) fault injection + 3 regression tests. Gates green: fmt, clippy -D warnings, cargo test, test-security.sh (48 + Wave 2a).
