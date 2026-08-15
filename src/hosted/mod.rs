@@ -1522,6 +1522,102 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Publish a whole SPACE bundle carrying a grouped nav (`groups`) and return the
+    /// assigned slug. Mirrors what the CLI uploads for a `glasspad.yaml` with `groups:`.
+    async fn publish_grouped_space_slug(
+        app: &Router,
+        pages: serde_json::Value,
+        groups: serde_json::Value,
+    ) -> String {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/spaces")
+            .header("host", TEST_HOST)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {KEY}"))
+            .body(Body::from(
+                serde_json::json!({ "pages": pages, "groups": groups }).to_string(),
+            ))
+            .unwrap();
+        body_json(send(app, req).await).await["slug"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn grouped_space_keeps_the_sidebar_on_every_page_url_and_across_reload() {
+        // Regression for `hosted-nav-loses-sidebar`: a space published with grouped nav
+        // must render the SAME grouped sidebar chrome on EVERY page URL — the generated
+        // home landing AND each non-home page — and must keep it after a server restart
+        // (store reloaded from disk). The shell builds the sidebar client-side from the
+        // `GROUPS` data literal it embeds; if any page URL (or a reload) dropped
+        // `nav_groups`, that page would fall back to the flat nav bar with an empty
+        // `aside.gp-sidebar` (hidden), which is exactly the reported "click a nav entry
+        // and lose the sidebar" symptom.
+        let root = tmp_root("grouped-sidebar");
+
+        // No `index`/`home` page + declared groups → `finalize` generates the landing
+        // and reconciles the grouped nav.
+        let pages = serde_json::json!([
+            { "slug": "overview", "html": "<h1>Overview</h1>" },
+            { "slug": "latest", "html": "<h1>Latest</h1>" },
+            { "slug": "details", "html": "<h1>Details</h1>" },
+        ]);
+        // Wire format for a member is a map (`{slug}`), matching what the CLI serializes
+        // from `glasspad.yaml` (the bare-slug-or-map flexibility is a YAML-layer nicety).
+        let groups = serde_json::json!([
+            { "label": "Guide", "members": [{ "slug": "overview" }, { "slug": "latest" }] },
+            { "label": "Reference", "members": [{ "slug": "details" }] },
+        ]);
+
+        // Assert the grouped sidebar chrome renders on EVERY page URL of the space: the
+        // home shell plus each real page's own shell route (a full-page load, e.g. an
+        // open-in-new-tab). A populated grouped sidebar carries its group labels in the
+        // shell's `GROUPS` data literal; an empty sidebar (flat-nav fallback) never does.
+        async fn assert_grouped(app: &Router, slug: &str) {
+            for path in [
+                format!("/p/{slug}/"),
+                format!("/p/{slug}/index"),
+                format!("/p/{slug}/overview"),
+                format!("/p/{slug}/latest"),
+                format!("/p/{slug}/details"),
+            ] {
+                let r = send(app, get_req(&path)).await;
+                assert_eq!(r.status(), StatusCode::OK, "shell {path} must serve");
+                let html = String::from_utf8(
+                    axum::body::to_bytes(r.into_body(), usize::MAX)
+                        .await
+                        .unwrap()
+                        .to_vec(),
+                )
+                .unwrap();
+                assert!(
+                    html.contains("\"label\"")
+                        && html.contains("Guide")
+                        && html.contains("Reference"),
+                    "grouped sidebar missing from shell {path}: the page fell back to the \
+                     flat nav (no GROUPS literal), reproducing hosted-nav-loses-sidebar"
+                );
+            }
+        }
+
+        let slug = {
+            let (app, _, _) = app_with(&root);
+            let slug = publish_grouped_space_slug(&app, pages, groups).await;
+            assert_grouped(&app, &slug).await;
+            slug
+        };
+
+        // Restart: a fresh `Store::open` on the same root rebuilds the served snapshot
+        // from disk (the persisted `meta.json` `nav_groups`), the exact path a hosted
+        // server takes on boot. The sidebar must survive it on every page URL.
+        let (app2, _, _) = app_with(&root);
+        assert_grouped(&app2, &slug).await;
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[tokio::test]
     async fn stream_requires_owner_key_and_scopes_by_tenant() {
         // A2 SSE: the stream carries the SAME API-key + per-tenant scope as the poll/
