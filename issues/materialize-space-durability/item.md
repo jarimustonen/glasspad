@@ -2,8 +2,9 @@
 created: 2026-08-15
 updated: 2026-08-15
 type: task
-status: in-progress
+status: done
 priority: normal
+closed: 2026-08-15
 ---
 
 # materialize_space(replace): synchronous rollback on fsync-divergence + generation-pointer redesign
@@ -46,3 +47,8 @@ publish-update-in-place scope; filed here so the durability/concurrency work tra
 ### 2026-08-15T13:31:36Z · @agent-materialize-durability
 
 Commit 84fc491: commit-honest materialize_space. The publishing rename is the single commit point; post-commit parent-dir fsync is best-effort (commit_fsync) — a failure is logged, not surfaced as Err — closing the fsync-after-swap divergence window (both replace and create paths). Added thread-local cfg(test) fault injection + 3 regression tests. Gates green: fmt, clippy -D warnings, cargo test, test-security.sh (48 + Wave 2a).
+
+### 2026-08-15T13:55:24Z · @agent-materialize-durability
+
+Commit c522e88: applied confirmed /llm-review + /assess-findings fixes (F1 backup-retention regression, F2 swap-before-mapping, F3 write_page/write_live parity, F4 honest committed-vs-durable outcome, F8 RAII fault guard). SPIN-OFF F13+F14 (generation-pointer redesign) filed as hosted-store-generation-pointer. DROPs: F5/F6 (cosmic-ray, recovery-covered), F7 (needs VFS harness, out of scope), F9/F12 (folded into follow-up). Assessment: history/assessment-materialize-space-durability.{json,md}. All gates green: fmt, clippy -D warnings, cargo test (all suites), test-security.sh (48 + Wave 2a).
+
