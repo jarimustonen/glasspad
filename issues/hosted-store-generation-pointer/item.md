@@ -2,8 +2,9 @@
 created: 2026-08-15
 updated: 2026-08-15
 type: improvement
-status: in-progress
+status: done
 priority: normal
+closed: 2026-08-15
 ---
 
 # Hosted store: immutable generation dirs + current-pointer for live overlay & space/key durability
@@ -48,3 +49,8 @@ Protocol: write + fsync a complete new generation → fsync the generation dir �
 ### 2026-08-15T16:26:54Z · @agent
 
 Implemented in fa957a2: generation-dir + current-pointer store for spaces and live overlays (F13 + F14); backward-compatible reads for legacy flat spaces + two-file overlays; deterministic crash-consistency tests; full suite + test-security.sh green.
+
+### 2026-08-15T17:11:32Z · @agent
+
+Review-hardening applied in 1e04534 after /llm-review (gemini-3.1-pro, gpt-5.6-sol, opus-4.7, deepseek-v4-pro) + /assess-findings. All 8 confirmed/introduced findings fixed (conservative recovery on unresolvable pointer, symlink-safe recovery, unconditional parent fsync, no legacy downgrade on corrupt pointer, restored-.old reconciliation, startup live reconcile, keyed page/space collision guard, pointer path-safety). 6 pre-existing/orthogonal items filed as follow-ups: hosted-idem-sweep-robustness, hosted-gc-swap-on-partial-fsync, hosted-genptr-autoheal, hosted-loadbudget-asset-caps, hosted-store-input-revalidation, hosted-snapshot-arc-sharing. Assessment: history/assessment-hosted-store-generation-pointer.md. Full suite + test-security.sh (48 + Wave 2a) green.
+
