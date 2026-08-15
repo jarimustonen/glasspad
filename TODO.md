@@ -7,10 +7,9 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 **CURRENT: glasspad 0.13.0 is FULLY RELEASED + verified live** (2026-08-15): crates.io
 `0.13.0` (sparse index via `cargo search`), GitHub Release `v0.13.0` (12 assets, not draft),
-Homebrew `version "0.13.0"`. Clean tag-triggered release, mac built clean on hauis. Next:
-**`hosted-store-generation-pointer`** (immutable generation dirs + current-pointer durability)
-unless Jari redirects to template design. The 0.3.0→0.12.0 release history is preserved below
-for context.
+Homebrew `version "0.13.0"`. Clean tag-triggered release, mac built clean on hauis.
+`hosted-store-generation-pointer` has now landed on `main` after 0.13.0 and is in the
+integration/release gate. The 0.3.0→0.12.0 release history is preserved below for context.
 
 ## Round 2026-08-15 — 0.13.0 shipped (hosted store durability honesty)
 
@@ -293,15 +292,15 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin`, clean tree, nothing in flight, 0.13.0 released + verified live.
-Agenda: **run `hosted-store-generation-pointer` next** unless Jari redirects to template
-design. It is the review follow-up from `materialize-space-durability`: immutable generation
-directories + an atomically-swapped current pointer for spaces, stable-key mappings, and live
-overlays. Lane B (`src/hosted/*`), so sequence it with any other hosted-core work. Use
-`/llm-review`, keep `./test-security.sh` green.
+`main` contains post-0.13.0 hosted-store durability work in the integration/release gate.
+`hosted-store-generation-pointer` landed and closed `done`; its review follow-ups are now folded
+into Lane B. Next ready hosted-core heads are `hosted-idem-sweep-robustness`,
+`hosted-gc-swap-on-partial-fsync`, and `hosted-snapshot-arc-sharing`, but finish the current
+release gate first.
 
-**Done this round:** `materialize-space-durability` closed `done`; 0.13.0 shipped and verified
-on crates.io, GitHub Release, and Homebrew.
+**Done this round:** `hosted-store-generation-pointer` closed `done` with generation dirs +
+current-pointer storage, live-overlay pointering, legacy reads, review hardening, and green
+worker gate.
 
 **2. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
 NOT a ready head). Whole-space **branded** template (sidebar/landing/prose as a unit), beyond
@@ -352,10 +351,15 @@ never parallel (return-channel + space-ingest history showed this family collide
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: hosted-store-generation-pointer   ← follow-up for immutable generation dirs + current-pointer durability
+GLOBAL HEAD-OF-LINE: hosted-idem-sweep-robustness   ← hosted-store review follow-up, normal priority
 
 LANE B — cli/hosted/server core (cli.rs + hosted/* + server.rs + shell.rs + config.rs)
-  ▶ hosted-store-generation-pointer  (improvement, normal — immutable generation dirs + current-pointer for live overlay and space/key durability)
+  ▶ hosted-idem-sweep-robustness        (improvement, normal — harden hosted idempotency-mapping sweep: transient errors, invalid records, symlinked tenant dirs, empty tenant reap)
+    hosted-gc-swap-on-partial-fsync     (improvement, normal — rebuild+swap served snapshot before surfacing post-removal fsync/read_dir errors)
+    hosted-snapshot-arc-sharing         (improvement, normal — Arc-share Space bodies, reduce mutation-lock clone cost, enforce MAX_PAGES on load)
+    hosted-store-input-revalidation     (improvement, low — store-boundary slug/tenant/path revalidation + per-file symlink checks)
+    hosted-loadbudget-asset-caps        (improvement, low — reject over-cap assets and charge LoadBudget for asset-directory fan-out)
+    hosted-genptr-autoheal              (improvement, low — optional two-slot/sequence pointer auto-heal if `current` is genuinely lost)
 
 LANE render — space/markdown render (space.rs + render.rs + headers.rs + base.css)
   ▶ docsite-autolink-convention   (feature, low — mostly docs/producer-convention + author link-class theming; aggountant keeps a thin preprocessor. Tracked, no rush)
