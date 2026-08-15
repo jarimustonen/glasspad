@@ -42,3 +42,9 @@ Protocol: write + fsync a complete new generation → fsync the generation dir �
 ## Out of scope / not doing
 
 - The double-fault restore path (F5) and inter-rename fsync (F6) were DROPped: recovery (`recover_space_staging`) already reconciles every crash combination, and the fixes cost readability/an extra sync for cosmic-ray-frequency events. See `history/assessment-materialize-space-durability.md`.
+
+## Comments
+
+### 2026-08-15T16:26:54Z · @agent
+
+Implemented in fa957a2: generation-dir + current-pointer store for spaces and live overlays (F13 + F14); backward-compatible reads for legacy flat spaces + two-file overlays; deterministic crash-consistency tests; full suite + test-security.sh green.
