@@ -5,11 +5,41 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**CURRENT: glasspad 0.10.0 is FULLY RELEASED + verified live** (2026-08-14) — crates.io
-`0.10.0` (yanked=false), GitHub Release `v0.10.0` (12 assets), Homebrew `version "0.10.0"`.
-Three releases shipped this session (0.8.0 → 0.9.0 → 0.10.0); see _Round 2026-08-14_ below.
-Next: **`hosted-submit-return-broken`** + **`markdown-diagrams`** in parallel (see _▶ Start
-here_). The 0.3.0→0.7.0 release history is preserved below for context.
+**CURRENT: glasspad 0.11.0 is FULLY RELEASED + verified live** (2026-08-15) — crates.io
+`0.11.0` (yanked=false, sparse index authoritative), GitHub Release `v0.11.0` (12 assets,
+not draft), Homebrew `version "0.11.0"`. Clean tag-triggered release, mac built clean on
+hauis, no re-runs. Next: **`hosted-nav-loses-sidebar`** (live maalla.dev bug — Jari: korjataan)
++ **`publish-update-in-place`** in parallel (see _▶ Start here_). The 0.3.0→0.10.0 release
+history is preserved below for context.
+
+## Round 2026-08-14/15 — 0.11.0 shipped (hosted return-channel fix + inline-SVG markdown diagrams)
+
+Two parallel spinoffs (Lane B ∥ Lane render, both headless), both landed green + reviewed,
+released as **0.11.0** (`9b34edd`, tag `v0.11.0`). Integrated green gate on main: fmt +
+clippy -D + `cargo test` (incl. new hosted-submit tests + commit-stamp, no false-fail after
+`rm -rf target/debug/build/glasspad-*`) + `./test-security.sh` (48 checks + Wave 2a, whole
+suite green) + `ossctl audit` (core complete, 0 gaps) + `cargo publish --dry-run`.
+- ✅ `hosted-submit-return-broken` (`99f75d4`+`66c4115`+`47127cc`, status **fixed**) — the
+  worker found it was a **genuine defect**, not just the by-design/UX gap the earlier
+  read-only analysis suspected: the hosted return channel now works end-to-end for
+  CLI-published (space) pages. New **`glasspad submissions <slug>`** drain command (per-tenant
+  scoped, `--json`, paginated; cross-tenant → opaque 404) so a returning/departed agent
+  fetches its backlog; `publish` now prints the exact `await-submission` invocation (with the
+  configured `--public-host`) + retention note. Multi-page version binding + fail-closed owner
+  checks hardened after 4-model `/llm-review` + assessment. **Shipped on the PRAGMATIC scope**
+  — the true async/webhook push-to-a-departed-agent is a separate future design issue, still
+  **unfiled** (Jari's call whether to file).
+- ✅ `markdown-diagrams` (`f077046`+`9aafb35`+`7869355`, status **done**) — inline-SVG diagram
+  pattern for markdown spaces via **approach (a)**: the producing agent owns SVG generation and
+  embeds it inline; glasspad supplies only theme-aware CSS (`--gp-status-*` done/next/blocked/
+  future across all three theme blocks + `.gp-diagram/.gp-node/.gp-edge/.gp-status-*/.gp-legend/
+  .gp-chip`). Priority colour-coded status DAG renders end-to-end. Chosen over native mermaid
+  (b) because it directly serves the live project-view case, adds **no new JS/eval surface**,
+  and requires **zero change to the null-origin sandbox or artifact CSP** (regression-asserted
+  through the real content route). 4-model `/llm-review` + assessment applied before merge.
+- 🌱 The diagrams worker filed **two new issues** from aggountant project-view: `hosted-nav-loses-sidebar`
+  (bug — hosted sub-page loses the grouped sidebar) and `space-custom-template` (feature —
+  whole-space branded template). Both folded/handled at this handoff (see DAG + Start here).
 
 ## Round 2026-08-14 — 0.8.0, 0.9.0, 0.10.0 shipped (all verified live)
 
@@ -224,33 +254,46 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin` @ `51ad905`, clean tree, nothing in flight, 0.10.0 released + verified live.
-Jari's decided agenda: **run `hosted-submit-return-broken` and `markdown-diagrams` in
-parallel** ("samaan aikaan tuleutumaan"). They likely touch disjoint files → two lanes;
-**Phase 1 must confirm file-disjointness before parallel spawn** (only collision risk: if
-the hosted-submit fix slips into `shell.rs`/CSP while markdown-diagrams touches `headers.rs`).
+`main == origin` @ `9b34edd`, clean tree, nothing in flight, 0.11.0 released + verified live.
+Agenda: **run `hosted-nav-loses-sidebar` and `publish-update-in-place` in parallel** (two
+lanes). **Phase 1 must confirm file-disjointness before parallel spawn** — the real
+uncertainty is which file family `hosted-nav-loses-sidebar` touches (render/`space.rs` nav
+chrome vs hosted-serve routing). If it turns out to touch `src/hosted/*`, it collides with
+`publish-update-in-place` and the two must be **sequenced**, not parallelised.
 
-**1. `hosted-submit-return-broken`** (bug, high — Jari: "tärkeä"). Analyzed = by-design/UX
-gap, submit path correct. **Recommended scope = PRAGMATIC fix first** (confirm with Jari at
-start): `publish` output prints the exact `await-submission` invocation + retention note;
-new **`glasspad submissions <slug>` drain command** (poll route exists) so a returning agent
-gets the backlog; confirm live `--public-host`. The true async/webhook push is a SEPARATE
-large design issue — file it only if Jari wants push-to-a-departed-agent. Lands `src/cli.rs`
-+ `src/hosted/submit.rs` + docs → **Lane B (cli/hosted)**. `/llm-review`, keep security green.
+**1. `hosted-nav-loses-sidebar`** (bug, normal — Jari: "korjataan"). On maalla.dev (0.10.0
+client) the home page shows the grouped sidebar, but clicking a nav entry (e.g. `latest`)
+lands on a page **without the sidebar** — the served per-page HTML omits the grouped nav
+chrome. Filed by the diagrams worker from aggountant project-view. Most-likely lands in the
+space-nav render path (`src/artifact_host/space.rs` + nav generation from `space-docsite-nav`,
+0.8.0) → **Lane render**; but confirm it isn't a hosted-serve routing issue (`src/hosted/*`)
+before parallelising with unit 2. `/llm-review`, keep `./test-security.sh` green.
 
-**2. `markdown-diagrams`** (feature, normal, **design-first**). Diagrams in markdown; the
-priority case is the **colour-coded status DAG (done/next/blocked/future) = the live
-project-view**. Either (a) a documented/supported inline-SVG-from-`assets/` pattern (confirm
-CSP/sandbox lets a themed inline SVG display) and/or (b) native mermaid fenced-block render in
-the prose template. **CSP/sandbox-sensitive** (inline SVG may need `src/artifact_host/headers.rs`)
-→ **Lane render** (`render.rs` + `headers.rs` + `base.css`). Design-first, `/llm-review`,
-`./test-security.sh` MUST stay green. A release after these land would be **0.11.0**.
+**2. `publish-update-in-place`** (feature, normal — renamed this handoff from the Telegram
+intake `intake-feature-glasspad-15de629c511e`; Jari: "vaikuttaa järkevältä"). Every
+`glasspad publish` mints a NEW capability slug/URL; `--idempotency-key` returns the FIRST
+page for that key (200), so it can't be used to **update** a published page in place. Deliver
+a stable-slug in-place update path (re-publish to the same URL). Lands `src/cli.rs` +
+`src/hosted/*` (publish ingest + slug mapping) + docs → **Lane B (cli/hosted)**. Tightly
+coupled to the 0.11.0 publish/submissions surface just shipped. `/llm-review`, security green.
 
-**3. `docsite-autolink-convention`** (feature, low) — tracked, no rush. Mostly a DOCS/producer
+**3. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
+NOT a ready head). Whole-space **branded** template (sidebar/landing/prose as a unit), beyond
+the per-page built-in `prose`/`dashboard`. **Jari's steer: do a separate design process for
+templates first — a set of base templates** (current built-ins are skeletal: `prose` =
+`<article class="gp-prose">`, `dashboard` = `<div class="gp-card">`, plus arbitrary
+single-`{{content}}` HTML file templates via `--template`). Recommended next step: file a
+`base-templates-design` (design-first) issue and block `space-custom-template` on it, rather
+than building custom-per-space directly. Lane render. Do NOT spawn until the design exists.
+
+**4. `docsite-autolink-convention`** (feature, low) — tracked, no rush. Mostly a DOCS/producer
 convention: document the "preprocess markdown before publish" seam for spaces, and allow a
 small set of author-supplied link classes (e.g. `<a class="xref">`) to survive into rendered
 prose for theming. glasspad does NOT own glossary/xref logic; aggountant keeps a thin
 preprocessor. Not this agenda's priority.
+
+**Open decision (carried, not blocking):** file the hosted-submit **async/webhook push**
+(push-to-a-departed-agent) as a future design issue, or drop it? Left unfiled — Jari's call.
 
 _Older candidates still valid:_ tilictl docsite migration (tracked in tilictl); optional
 polish (below).
@@ -264,7 +307,7 @@ polish (below).
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-14)
+## Execution DAG (2026-08-15)
 
 Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
 (never copied here). Merge each round (drop landed, add active, keep existing order).
@@ -283,14 +326,15 @@ never parallel (return-channel + space-ingest history showed this family collide
 
 <!-- execution-dag:begin -->
 ```
-GLOBAL HEAD-OF-LINE: hosted-submit-return-broken   ← high, Jari-prioritised; markdown-diagrams runs in a parallel lane
+GLOBAL HEAD-OF-LINE: hosted-nav-loses-sidebar   ← live maalla.dev bug (Jari: korjataan); publish-update-in-place runs in a parallel lane
 
 LANE B — cli/hosted/server core (cli.rs + hosted/* + server.rs + shell.rs + config.rs)
-  ▶ hosted-submit-return-broken   (bug, high — pragmatic fix: publish prints await-submission cmd + `glasspad submissions <slug>` drain command + confirm --public-host. Async/webhook = separate future design issue. CONFIRM scope w/ Jari at start)
+  ▶ publish-update-in-place       (feature, normal — stable-slug in-place publish update; --idempotency-key returns the FIRST page so can't update. Lands cli.rs + hosted/* + docs. Coupled to the 0.11.0 publish/submissions surface)
 
-LANE render — space/markdown render (render.rs + headers.rs + base.css)
-  ▶ markdown-diagrams             (feature, normal, design-first — inline-SVG-from-assets pattern and/or native mermaid; priority = colour-coded status-DAG. CSP/sandbox-sensitive; collision: headers.rs — Phase 1 confirm hosted-submit stays out of shell.rs/CSP before parallel spawn)
+LANE render — space/markdown render (space.rs + render.rs + headers.rs + base.css)
+  ▶ hosted-nav-loses-sidebar      (bug, normal — per-page hosted response drops the grouped sidebar; most-likely space.rs nav chrome. Phase 1 MUST confirm it does NOT touch hosted/* before parallelising with publish-update-in-place — if it does, sequence them)
     docsite-autolink-convention   (feature, low — mostly docs/producer-convention + author link-class theming; aggountant keeps a thin preprocessor. Tracked, no rush)
+    space-custom-template         (feature, normal — AWAITING template-design decision, NOT a ready head. Whole-space branded template; Jari wants a base-templates design process first. File `base-templates-design` + block on it before spawning)
 ```
 <!-- execution-dag:end -->
 
@@ -367,4 +411,4 @@ browser automation.
 
 ## Piialiisan bugiraportit
 
-- [ ] 🐛 Piialiisan bugiraportti: publish: update a published artifact in place (stable slug) instead of … — jari via Telegram ([`intake-feature-glasspad-15de629c511e`](issues/intake-feature-glasspad-15de629c511e/item.md))
+- [x] 🐛 publish: update a published artifact in place (stable slug) instead of minting a new URL — jari via Telegram → **admitted + renamed** to [`publish-update-in-place`](issues/publish-update-in-place/item.md), folded into Lane B (2026-08-15).

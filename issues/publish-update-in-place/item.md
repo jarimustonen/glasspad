@@ -1,13 +1,12 @@
 ---
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-15
 type: feature
 reporter: jari
 status: open
 priority: normal
 labels:
 - via:agent-homebase-wrapup
-- needs-triage
 ---
 
 # publish: update a published artifact in place (stable slug) instead of …
