@@ -725,7 +725,7 @@ fn resolve_space_template(
     reference: Option<&str>,
     root: &Path,
     canon_root: &Path,
-    total: &mut u64,
+    _total: &mut u64,
 ) -> Result<SpaceTemplate, ScanError> {
     let name = reference.unwrap_or(render::DEFAULT_TEMPLATE);
     if let Some(source) = render::builtin_template(name) {
@@ -771,10 +771,11 @@ fn resolve_space_template(
         }
     }
     ensure_within(canon_root, &path)?;
-    let raw = read_file_capped(&path, total)?;
-    // The source file is an input, not a served snapshot entry. Its bytes count while
-    // reading for the cap, then the rendered page bodies replace that accounting.
-    *total = total.saturating_sub(raw.len() as u64);
+    // The template is an input, not a served snapshot entry. Bound it to the normal
+    // per-file ceiling without borrowing the nearly-full snapshot's remaining byte
+    // budget: its bytes will instead be represented in every rendered page body.
+    let mut template_total = 0;
+    let raw = read_file_capped(&path, &mut template_total)?;
     let source = String::from_utf8(raw).map_err(|_| ScanError::NotUtf8(path.clone()))?;
     if !super::wrap::is_fragment(&source) {
         return Err(ScanError::TemplateFullDocument(path));
@@ -2582,6 +2583,36 @@ mod fs_tests {
         assert_eq!(space.nav_groups[0].label, "Docs");
         let index = &space.artifact("index").unwrap().html;
         assert!(index.contains("gp-toc") && index.contains("href=\"#start\""));
+        // The rail is a sibling of the producer template, never nested inside its
+        // content slot (which would break a branded page's own layout).
+        assert!(index.starts_with("<div class=\"gp-doc\">\n<main class=\"brand\">"));
+    }
+
+    #[test]
+    fn custom_template_rejects_full_documents_and_escaping_paths() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Hi\n");
+        d.write(
+            "templates/full.html",
+            b"<!doctype html><html><body>{{content}}</body></html>",
+        );
+        d.write("glasspad.yaml", b"template: templates/full.html\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::TemplateFullDocument(_))
+        ));
+
+        for bad in [
+            "../secret.html",
+            "/etc/passwd",
+            "templates/../../../secret.html",
+        ] {
+            d.write("glasspad.yaml", format!("template: {bad}\n").as_bytes());
+            assert!(
+                matches!(scan_dir(d.path()), Err(ScanError::TemplatePath(_))),
+                "path {bad:?} should be rejected"
+            );
+        }
     }
 
     #[test]

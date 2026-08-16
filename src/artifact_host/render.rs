@@ -440,11 +440,14 @@ pub fn render_space_template_to_body(
     if toc.len() < MIN_TOC_ENTRIES {
         return apply_template(template, &rendered);
     }
-    let content = format!(
-        "<div class=\"gp-doc\">\n<div class=\"gp-template-content\">\n{rendered}\n</div>\n{}</div>\n",
+    // Keep the producer's template as one grid child and the rail as its sibling.
+    // Putting `.gp-doc` *inside* `{{content}}` would nest the grid inside a branded
+    // `<main>`/`.gp-prose` wrapper and break the rail's desktop layout.
+    let applied = apply_template(template, &rendered)?;
+    Ok(format!(
+        "<div class=\"gp-doc\">\n{applied}\n{}</div>\n",
         render_toc(&toc)
-    );
-    apply_template(template, &content)
+    ))
 }
 
 #[cfg(test)]
