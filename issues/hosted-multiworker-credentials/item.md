@@ -1,10 +1,11 @@
 ---
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-16
 type: feature
-status: open
+status: wontfix
 priority: low
 labels: [deferred]
+closed: 2026-08-16
 ---
 
 # Secure credential model for many workers publishing to a hosted glasspad

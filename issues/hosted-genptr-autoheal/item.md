@@ -1,10 +1,11 @@
 ---
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 type: improvement
-status: open
+status: wontfix
 priority: low
 related: ['@hosted-store-generation-pointer']
+closed: 2026-08-16
 ---
 
 # Generation-pointer auto-heal from a genuinely-lost current pointer (durable previous-pointer / sequence)

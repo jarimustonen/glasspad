@@ -1,10 +1,11 @@
 ---
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 type: improvement
-status: open
+status: wontfix
 priority: low
 related: ['@hosted-store-generation-pointer']
+closed: 2026-08-16
 ---
 
 # Hosted store: revalidate caller slug/tenant + per-file symlink checks at the storage boundary
