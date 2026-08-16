@@ -30,9 +30,13 @@ fails with an informative error (never an interactive prompt).
   artifact is addressed by a **slug** = its filename stem (`sales.md` → slug
   `sales`). Link between pages with ordinary relative links (`<a href="./detail">`).
 - Pick the Markdown theme per space in an optional per-space `glasspad.yaml` with
-  `template: prose` (default reading theme) or `template: dashboard` (card look).
-  `.md` and `.html` pages coexist; a `.md` and `.html` sharing a stem is a hard
-  collision.
+  `template: prose` (default reading theme), `template: dashboard` (card look), or
+  a relative path to a producer-owned fragment template such as
+  `template: templates/brand.html`. A custom template has exactly one `{{content}}`
+  slot and is applied to every Markdown page; it must be a regular UTF-8 fragment
+  inside the space (no symlinks, traversal, or full HTML document). It is rendered
+  into the uploaded page bodies, so hosted spaces are self-contained. `.md` and
+  `.html` pages coexist; a `.md` and `.html` sharing a stem is a hard collision.
 
 ## Where it lands: the `target`
 
@@ -246,6 +250,6 @@ Each round stays inside the frozen null-origin sandbox, and a submission answeri
   So are symlinks, path traversal, non-UTF-8 files, and oversize files.
 - Home artifact: `index` > `home` > first in nav order. Nav order comes from an
   optional per-space `glasspad.yaml` (`nav: [home, sales, detail]`), else
-  lexicographic. That `glasspad.yaml` is structure only (title / theme / nav), never
-  content — usually absent, and distinct from the repo-root `.glasspad.yaml` that
+  lexicographic. That `glasspad.yaml` is structure only (title / theme / nav plus a
+  local template path), never page content — usually absent, and distinct from the repo-root `.glasspad.yaml` that
   carries the publish `target`.

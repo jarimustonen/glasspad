@@ -129,8 +129,13 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   `wrap` injects `base.css` + `bridge.js`). `.md` and `.html` pages coexist; a
   same-stem `.md`+`.html` (or `.md`+`.markdown`) pair is a `DuplicateSlug` hard
   error. The rendered body is re-capped at `MAX_FILE_BYTES` (markup can amplify);
-  an unknown `template:` name is a hard error (built-in only — fully custom
-  templates are the single-file `render` seam). All of `serve`/`build`/
+  an unknown `template:` name is a hard error. A path-like `template:` value (for
+  example `templates/brand.html`) loads one regular UTF-8 **fragment** file relative
+  to the space root, rejects symlinks/traversal/full documents, and applies its
+  exactly-one `{{content}}` slot to every Markdown page during scanning; rendered
+  bodies are then uploaded, so hosted serving never reads the local template path.
+  Custom pages retain server-generated heading anchors and the TOC rail; the trusted
+  shell still owns grouped navigation and landing pages. All of `serve`/`build`/
   `publish-space` inherit this for free (they consume the produced `Space`).
   **Grouped nav + generated landing (space-docsite-nav):** the manifest gains an
   optional `groups:` key (named groups → ordered `members`; a member is a bare slug

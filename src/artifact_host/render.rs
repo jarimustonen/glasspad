@@ -421,10 +421,30 @@ pub fn render_to_body(markdown: &str, template: &str) -> Result<String, Template
     if template == PROSE_TEMPLATE {
         return Ok(render_prose_body(markdown));
     }
-    // Validate the single placeholder up front (cheap) so a bad template short-
-    // circuits before rendering a possibly-large markdown body; then splice.
     split_at_placeholder(template)?;
     apply_template(template, &render_markdown(markdown))
+}
+
+/// Render a producer-supplied **space** template while retaining the per-page TOC
+/// rail. The template still receives exactly one `{{content}}` value, but on pages
+/// with enough H2/H3 headings that value is a `.gp-doc` grid containing its rendered
+/// markdown and the server-generated rail. This keeps the trusted host shell and
+/// native in-frame anchors intact without giving the template a second slot or any
+/// authority over the response boundary.
+pub fn render_space_template_to_body(
+    markdown: &str,
+    template: &str,
+) -> Result<String, TemplateError> {
+    split_at_placeholder(template)?;
+    let (rendered, toc) = render_markdown_with_headings(markdown);
+    if toc.len() < MIN_TOC_ENTRIES {
+        return apply_template(template, &rendered);
+    }
+    let content = format!(
+        "<div class=\"gp-doc\">\n<div class=\"gp-template-content\">\n{rendered}\n</div>\n{}</div>\n",
+        render_toc(&toc)
+    );
+    apply_template(template, &content)
 }
 
 #[cfg(test)]

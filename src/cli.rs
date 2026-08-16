@@ -401,6 +401,9 @@ fn exit_scan_error(e: &ScanError, json: bool) -> ! {
         ScanError::BadAssetName(_) => ("invalid_asset_name", 1),
         ScanError::Manifest(_, _) => ("invalid_manifest", 1),
         ScanError::UnknownTemplate(_) => ("unknown_template", 1),
+        ScanError::TemplateNotFound(_) => ("template_not_found", 1),
+        ScanError::TemplatePath(_) => ("invalid_template_path", 1),
+        ScanError::TemplateFullDocument(_) => ("invalid_template", 1),
         ScanError::RenderTooLarge(_, _) => ("render_too_large", 1),
         ScanError::TemplateRender(_, _) => ("invalid_template", 1),
     };

@@ -3,7 +3,7 @@
 //!
 //! A **space** is a directory of artifacts (`.html` served verbatim, and — the
 //! markdown-native path — `.md`/`.markdown` rendered server-side through a built-in
-//! template into an artifact body) plus first-class `assets/`.
+//! or producer-supplied fragment template into an artifact body) plus first-class `assets/`.
 //! `scan_dir` reads the whole tree into an **immutable in-memory snapshot**;
 //! `ArtifactHost` swaps snapshots atomically (a half-written file is never served
 //! — reads see either the fully-old or the fully-new snapshot, never a partial
@@ -189,10 +189,16 @@ pub enum ScanError {
     NotUtf8(PathBuf),
     BadAssetName(PathBuf),
     Manifest(PathBuf, String),
-    /// The manifest's `template:` named something that is not a built-in template
-    /// (markdown-native spaces select the template by built-in name, `prose` or
-    /// `dashboard`; a fully custom template is authored via single-file `render`).
+    /// The manifest's `template:` named neither a built-in nor a path-like custom
+    /// template reference.
     UnknownTemplate(String),
+    /// A custom template path named by the manifest does not exist.
+    TemplateNotFound(PathBuf),
+    /// A custom template path is not a safe path relative to the space root.
+    TemplatePath(String),
+    /// A custom template must be a fragment so the host retains wrapping, bridge,
+    /// theme, and trusted shell behaviour.
+    TemplateFullDocument(PathBuf),
     /// Rendering a `.md` page through its template produced a body over the
     /// per-file cap (markup can amplify a small markdown source).
     RenderTooLarge(PathBuf, u64),
@@ -277,10 +283,26 @@ impl fmt::Display for ScanError {
             ScanError::Manifest(p, e) => write!(f, "cannot parse {}: {e}", p.display()),
             ScanError::UnknownTemplate(name) => write!(
                 f,
-                "unknown template {name:?} in {MANIFEST_FILE}: a markdown-native space selects a \
-                 built-in template by name (expected one of: {}). For a fully custom template, \
-                 pre-render the page to .html or use `glasspad render <file.md> --template <path>`",
+                "unknown template {name:?} in {MANIFEST_FILE}: expected a built-in ({}) or a \
+                 relative path to a template file (for example `templates/brand.html`)",
                 BUILTIN_NAMES.join(", ")
+            ),
+            ScanError::TemplateNotFound(path) => write!(
+                f,
+                "custom template {} does not exist: set `template:` to a readable file relative \
+                 to the space root",
+                path.display()
+            ),
+            ScanError::TemplatePath(path) => write!(
+                f,
+                "invalid custom template path {path:?}: it must be a relative path inside the \
+                 space (no `..`, absolute paths, or symlinks)"
+            ),
+            ScanError::TemplateFullDocument(path) => write!(
+                f,
+                "custom template {} is a full HTML document: space templates must be fragments \
+                 so glasspad can retain its theme, navigation bridge, and trusted shell",
+                path.display()
             ),
             ScanError::RenderTooLarge(p, n) => write!(
                 f,
@@ -529,9 +551,9 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
 
     let mut space = Space::default();
     let mut total: u64 = 0;
-    // The manifest's `template:` (built-in name), resolved once after the scan so a
-    // `.md` file that sorts *before* `glasspad.yaml` still renders with the chosen
-    // template. `None` → the `prose` default.
+    // The manifest's `template:` (built-in name or producer file), resolved once
+    // after the scan so a `.md` file that sorts before `glasspad.yaml` still renders
+    // with the chosen template. `None` → the `prose` default.
     let mut template_ref: Option<String> = None;
     // `.md`/`.markdown` pages are buffered raw during the scan and rendered *after*
     // the whole directory is read — so the template (from the manifest, which may
@@ -636,22 +658,25 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
     // Resolve + validate the template selection **unconditionally** — a mistyped
     // `template:` in `glasspad.yaml` is a config error that must fail fast, not lie
     // dormant until the first `.md` page is added to an otherwise `.html`-only space.
-    let template = resolve_space_template(template_ref.as_deref())?;
+    let template = resolve_space_template(template_ref.as_deref(), &root, &canon_root, &mut total)?;
 
     // --- render buffered markdown pages through the resolved template -------
-    // The template is a built-in fragment (`prose` default, or `dashboard`), so the
-    // rendered body flows through the SAME serve path as an `.html` artifact: the
-    // content route sets the frozen CSP/sandbox headers on the response, and
-    // `wrap::render_artifact` wraps the fragment (base.css + bridge.js). A template
-    // governs only the body — it can never widen the boundary or reach the shell.
+    // The template is always a fragment: built-in (`prose` default or `dashboard`)
+    // or a producer file buffered into this snapshot. The rendered body flows through
+    // the SAME serve path as an `.html` artifact: the content route sets the frozen
+    // CSP/sandbox headers and `wrap::render_artifact` adds base.css + bridge.js.
     for (stem, md, path) in pending_md {
         // Collision against an `.html` artifact of the same stem, or another `.md`
         // page — never silently resolved (mirrors the `.html`/`.htm` collision).
         if space.artifacts.contains_key(&stem) {
             return Err(ScanError::DuplicateSlug(stem, path));
         }
-        let body = render::render_to_body(&md, template)
-            .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
+        let body = if template.is_custom {
+            render::render_space_template_to_body(&md, &template.source)
+        } else {
+            render::render_to_body(&md, &template.source)
+        }
+        .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
         let len = body.len() as u64;
         if len > MAX_FILE_BYTES {
             return Err(ScanError::RenderTooLarge(path, len));
@@ -685,14 +710,79 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
     Ok(space)
 }
 
-/// Resolve a markdown-native space's template selection (the manifest `template:`
-/// field, default `prose`) to its built-in HTML fragment. Only built-in names are
-/// accepted — the single-file `render` seam owns fully custom / file-path templates;
-/// a `.md` space picks a reading theme by name, per-space. An unknown name is a hard
-/// error (informative, with the allowlist), never a silent fallback.
-fn resolve_space_template(reference: Option<&str>) -> Result<&'static str, ScanError> {
+/// A resolved space template. Custom template bytes are read during scanning, so a
+/// published space contains only rendered artifact bodies and never needs the local
+/// producer path at serve time.
+struct SpaceTemplate {
+    source: String,
+    is_custom: bool,
+}
+
+/// Resolve a markdown-native space's `template:`. Built-in names remain names;
+/// anything path-like (as in the single-file `--template` contract) is read from a
+/// regular, UTF-8, non-symlink file relative to this space root.
+fn resolve_space_template(
+    reference: Option<&str>,
+    root: &Path,
+    canon_root: &Path,
+    total: &mut u64,
+) -> Result<SpaceTemplate, ScanError> {
     let name = reference.unwrap_or(render::DEFAULT_TEMPLATE);
-    render::builtin_template(name).ok_or_else(|| ScanError::UnknownTemplate(name.to_string()))
+    if let Some(source) = render::builtin_template(name) {
+        return Ok(SpaceTemplate {
+            source: source.to_string(),
+            is_custom: false,
+        });
+    }
+    // Match the single-file resolver's useful distinction: bare unknown names are
+    // probably typos in a built-in; a dot or slash means an intended file reference.
+    if !name.contains('.') && !name.contains('/') {
+        return Err(ScanError::UnknownTemplate(name.to_string()));
+    }
+    let rel = Path::new(name);
+    let mut clean = PathBuf::new();
+    for component in rel.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => clean.push(part),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(ScanError::TemplatePath(name.to_string()));
+            }
+        }
+    }
+    if clean.as_os_str().is_empty() {
+        return Err(ScanError::TemplatePath(name.to_string()));
+    }
+    let path = root.join(&clean);
+    if !path.exists() {
+        return Err(ScanError::TemplateNotFound(path));
+    }
+    // `canonicalize` containment alone would allow an in-root symlink. Space inputs
+    // reject every symlink, including a template's ancestor directories.
+    let mut walked = root.to_path_buf();
+    for component in clean.components() {
+        walked.push(component);
+        if std::fs::symlink_metadata(&walked)
+            .map_err(|e| ScanError::Io(walked.clone(), e))?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(ScanError::Symlink(walked));
+        }
+    }
+    ensure_within(canon_root, &path)?;
+    let raw = read_file_capped(&path, total)?;
+    // The source file is an input, not a served snapshot entry. Its bytes count while
+    // reading for the cap, then the rendered page bodies replace that accounting.
+    *total = total.saturating_sub(raw.len() as u64);
+    let source = String::from_utf8(raw).map_err(|_| ScanError::NotUtf8(path.clone()))?;
+    if !super::wrap::is_fragment(&source) {
+        return Err(ScanError::TemplateFullDocument(path));
+    }
+    Ok(SpaceTemplate {
+        source,
+        is_custom: true,
+    })
 }
 
 /// Recursively scan the `assets/` subtree into `space.assets`, keyed by the
@@ -1839,16 +1929,14 @@ mod tests {
 
     #[test]
     fn resolve_space_template_defaults_to_prose_and_rejects_unknown() {
-        assert_eq!(
-            resolve_space_template(None).unwrap(),
-            render::builtin_template("prose").unwrap()
-        );
-        assert_eq!(
-            resolve_space_template(Some("dashboard")).unwrap(),
-            render::builtin_template("dashboard").unwrap()
-        );
+        let root = Path::new(".");
+        let canon = std::fs::canonicalize(root).unwrap();
+        let mut total = 0;
+        let prose = resolve_space_template(None, root, &canon, &mut total).unwrap();
+        assert_eq!(prose.source, render::builtin_template("prose").unwrap());
+        assert!(!prose.is_custom);
         assert!(matches!(
-            resolve_space_template(Some("nope")),
+            resolve_space_template(Some("nope"), root, &canon, &mut total),
             Err(ScanError::UnknownTemplate(_))
         ));
     }
@@ -2461,6 +2549,59 @@ mod fs_tests {
                 .html
                 .contains(r#"class="gp-card""#)
         );
+    }
+
+    #[test]
+    fn custom_manifest_template_applies_to_every_markdown_page_and_keeps_toc() {
+        let d = TempDir::new();
+        d.write(
+            "index.md",
+            b"# Home\n\n## Start\n\nHello\n\n## Finish\n\nBye\n",
+        );
+        d.write("guide.md", b"# Guide\n\nBody\n");
+        d.write(
+            "templates/brand.html",
+            b"<main class=\"brand\">{{content}}</main>",
+        );
+        d.write(
+            "glasspad.yaml",
+            b"template: ./templates/brand.html\ngroups:\n  - label: Docs\n    members: [index, guide]\n",
+        );
+        let space = scan_dir(d.path()).unwrap();
+        for slug in ["index", "guide"] {
+            assert!(
+                space
+                    .artifact(slug)
+                    .unwrap()
+                    .html
+                    .contains("class=\"brand\"")
+            );
+        }
+        // The custom template is a content fragment only: host navigation data is
+        // still finalized, and pages with enough headings retain the TOC rail.
+        assert_eq!(space.nav_groups[0].label, "Docs");
+        let index = &space.artifact("index").unwrap().html;
+        assert!(index.contains("gp-toc") && index.contains("href=\"#start\""));
+    }
+
+    #[test]
+    fn missing_or_invalid_custom_manifest_template_is_informative() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Hi\n");
+        d.write("glasspad.yaml", b"template: templates/missing.html\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::TemplateNotFound(_))
+        ));
+
+        let d = TempDir::new();
+        d.write("index.md", b"# Hi\n");
+        d.write("templates/bad.html", b"<main>no slot</main>");
+        d.write("glasspad.yaml", b"template: templates/bad.html\n");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::TemplateRender(_, _))
+        ));
     }
 
     #[test]
