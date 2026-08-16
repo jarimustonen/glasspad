@@ -2351,11 +2351,14 @@ fn build_single_page_space(
         .unwrap_or("page");
     // Take the single space `one_artifact_snapshot` builds without depending on `name`
     // being a valid/normalized map key (the snapshot always contains exactly one space).
-    server::one_artifact_snapshot(name, html)
-        .spaces
-        .into_values()
-        .next()
-        .expect("one_artifact_snapshot builds exactly one space")
+    std::sync::Arc::into_inner(
+        server::one_artifact_snapshot(name, html)
+            .spaces
+            .into_values()
+            .next()
+            .expect("one_artifact_snapshot builds exactly one space"),
+    )
+    .expect("one_artifact_snapshot has the only Space reference")
 }
 
 /// Upload a scanned/synthesized [`space::Space`] as one bundle to

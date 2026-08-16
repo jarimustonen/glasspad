@@ -592,15 +592,22 @@ impl Store {
     /// space in the snapshot); a slug can never collide across the two trees because
     /// [`Store::fresh_slug`] checks both plus the live snapshot at mint time.
     fn scan_disk(&self) -> Snapshot {
+        self.scan_disk_up_to(MAX_PAGES)
+    }
+
+    /// Scan the store with an explicit page cap. Production always supplies
+    /// [`MAX_PAGES`]; the parameter keeps the load-time capacity rule directly
+    /// testable without manufacturing a 100,001-page fixture.
+    fn scan_disk_up_to(&self, max_pages: usize) -> Snapshot {
         let mut snap = Snapshot::empty();
-        self.scan_pages_into(&mut snap);
-        self.scan_spaces_into(&mut snap);
+        self.scan_pages_into(&mut snap, max_pages);
+        self.scan_spaces_into(&mut snap, max_pages);
         snap
     }
 
     /// Scan the `pages/` tree into `snap`. Each subdirectory is one single-artifact
     /// page; unreadable/corrupt/oversize/invalid pages are skipped + logged.
-    fn scan_pages_into(&self, snap: &mut Snapshot) {
+    fn scan_pages_into(&self, snap: &mut Snapshot, max_pages: usize) {
         let rd = match std::fs::read_dir(&self.pages_dir) {
             Ok(rd) => rd,
             Err(e) => {
@@ -612,13 +619,19 @@ impl Store {
             }
         };
         for entry in rd.flatten() {
+            if snap.spaces.len() >= max_pages {
+                eprintln!(
+                    "glasspad host: page store reached capacity ({max_pages} pages); skipping remaining entries"
+                );
+                return;
+            }
             let dir = entry.path();
             if !dir.is_dir() {
                 continue;
             }
             match self.load_page(&dir) {
                 Ok(Some((meta, space))) => {
-                    snap.spaces.insert(meta.slug.clone(), space);
+                    snap.spaces.insert(meta.slug.clone(), Arc::new(space));
                 }
                 Ok(None) => {}
                 Err(e) => eprintln!(
@@ -819,10 +832,13 @@ impl Store {
         // The page is committed on disk: advance the served snapshot NOW, before any
         // further fallible write, so a later failure can never leave memory serving the
         // old set while disk holds the new page. Clone-modify-swap: readers in flight
-        // keep the old Arc; new readers see the added page. (O(n) rebuild is acceptable
-        // at this scale; a future Arc-shared Space body would make it O(1) — plan §6.)
+        // keep the old Arc; new readers see the added page. The BTreeMap still clones
+        // in O(number of spaces), while each immutable Space body remains Arc-shared.
         let mut spaces = current.spaces.clone();
-        spaces.insert(slug.clone(), one_artifact_space(html, title.clone()));
+        spaces.insert(
+            slug.clone(),
+            Arc::new(one_artifact_space(html, title.clone())),
+        );
         self.host.swap(Snapshot { spaces });
 
         // Durability honesty: if the publishing rename could not be confirmed durable,
@@ -902,7 +918,7 @@ impl Store {
             .map(|a| a.title.clone())
             .unwrap_or_else(|| slug.to_string());
         let mut spaces = current.spaces.clone();
-        spaces.insert(slug.to_string(), one_artifact_space(html, title));
+        spaces.insert(slug.to_string(), Arc::new(one_artifact_space(html, title)));
         self.host.swap(Snapshot { spaces });
 
         // Push the keyed round-swap to any connected shell (reuses the reload SSE).
@@ -1467,6 +1483,7 @@ impl Store {
         // further fallible write, so a later failure can never leave memory serving the
         // old tree while disk holds the new one. Clone-modify-swap (readers in flight
         // keep the old Arc).
+        let space = Arc::new(space);
         let mut spaces = current.spaces.clone();
         spaces.insert(slug.clone(), space.clone());
         self.host.swap(Snapshot { spaces });
@@ -1488,8 +1505,8 @@ impl Store {
 
         Ok(PublishedSpace {
             slug,
-            title: space.title,
-            home: space.home,
+            title: space.title.clone(),
+            home: space.home.clone(),
             pages,
             created,
         })
@@ -1599,6 +1616,7 @@ impl Store {
         // subsequent failure can't leave memory on the old tree while disk holds the
         // new one), THEN surface an unconfirmed commit. Clone-modify-swap (readers in
         // flight keep the old Arc).
+        let space = Arc::new(space);
         let mut spaces = current.spaces.clone();
         spaces.insert(slug.to_string(), space.clone());
         self.host.swap(Snapshot { spaces });
@@ -1609,8 +1627,8 @@ impl Store {
 
         Ok(PublishedSpace {
             slug: slug.to_string(),
-            title: space.title,
-            home: space.home,
+            title: space.title.clone(),
+            home: space.home.clone(),
             pages,
             created: false,
         })
@@ -1619,7 +1637,7 @@ impl Store {
     /// Scan the `spaces/` tree into `snap`. Each subdirectory is one multi-artifact
     /// space; unreadable/corrupt/invalid spaces are skipped + logged (one bad space
     /// never stops the server serving the rest).
-    fn scan_spaces_into(&self, snap: &mut Snapshot) {
+    fn scan_spaces_into(&self, snap: &mut Snapshot, max_pages: usize) {
         let rd = match std::fs::read_dir(&self.spaces_dir) {
             Ok(rd) => rd,
             Err(e) => {
@@ -1631,6 +1649,12 @@ impl Store {
             }
         };
         for entry in rd.flatten() {
+            if snap.spaces.len() >= max_pages {
+                eprintln!(
+                    "glasspad host: page store reached capacity ({max_pages} pages); skipping remaining entries"
+                );
+                return;
+            }
             let dir = entry.path();
             if !dir.is_dir() {
                 continue;
@@ -1649,7 +1673,7 @@ impl Store {
                         );
                         continue;
                     }
-                    snap.spaces.insert(meta.slug.clone(), space);
+                    snap.spaces.insert(meta.slug.clone(), Arc::new(space));
                 }
                 Ok(None) => {}
                 Err(e) => eprintln!(
@@ -2728,6 +2752,49 @@ mod tests {
         let store2 = Store::open(&root, h2.clone()).unwrap();
         assert_eq!(store2.page_count(), 1);
         assert!(h2.snapshot().space(&pub1.slug).is_some());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn scan_disk_enforces_page_cap() {
+        let root = tmp_root("load-page-cap");
+        let h = host();
+        let store = Store::open(&root, h).unwrap();
+        store
+            .publish("acme", "<h1>first</h1>".into(), None, None)
+            .unwrap();
+        store
+            .publish("acme", "<h1>second</h1>".into(), None, None)
+            .unwrap();
+
+        // The production scan uses MAX_PAGES; the parameterized helper exercises the
+        // identical scan/load guard with a compact fixture.
+        let capped = store.scan_disk_up_to(1);
+        assert_eq!(capped.spaces.len(), 1);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn publish_shares_untouched_space_across_snapshots() {
+        let root = tmp_root("arc-share");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let first = store
+            .publish("acme", "<h1>first</h1>".into(), None, None)
+            .unwrap();
+        let first_snapshot = h.snapshot();
+        let first_space = first_snapshot.spaces.get(&first.slug).unwrap().clone();
+
+        store
+            .publish("acme", "<h1>second</h1>".into(), None, None)
+            .unwrap();
+        let second_snapshot = h.snapshot();
+        assert!(Arc::ptr_eq(
+            &first_space,
+            second_snapshot.spaces.get(&first.slug).unwrap()
+        ));
 
         std::fs::remove_dir_all(&root).ok();
     }

@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -156,7 +157,7 @@ impl Space {
 /// An immutable set of spaces. Swapped atomically on rescan.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
-    pub spaces: BTreeMap<String, Space>,
+    pub spaces: BTreeMap<String, Arc<Space>>,
 }
 
 impl Snapshot {
@@ -164,7 +165,7 @@ impl Snapshot {
         Self::default()
     }
     pub fn space(&self, name: &str) -> Option<&Space> {
-        self.spaces.get(name)
+        self.spaces.get(name).map(Arc::as_ref)
     }
 }
 
@@ -1585,6 +1586,31 @@ fn decode_numeric(ent: &str) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_clone_shares_space_body_storage() {
+        let snapshot = Snapshot {
+            spaces: BTreeMap::from([(
+                "demo".to_string(),
+                Arc::new(Space {
+                    artifacts: BTreeMap::from([(
+                        "index".to_string(),
+                        Artifact {
+                            html: "<h1>shared body</h1>".to_string(),
+                            title: "shared body".to_string(),
+                        },
+                    )]),
+                    ..Space::default()
+                }),
+            )]),
+        };
+
+        let cloned = snapshot.clone();
+        let original_space = snapshot.spaces.get("demo").unwrap();
+        let cloned_space = cloned.spaces.get("demo").unwrap();
+        assert!(Arc::ptr_eq(original_space, cloned_space));
+        assert_eq!(Arc::strong_count(original_space), 2);
+    }
 
     #[test]
     fn title_prefers_title_tag_then_h1() {

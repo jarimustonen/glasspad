@@ -973,7 +973,7 @@ mod tests {
         sp.home = Some("index".to_string());
         sp.favicon = Some("🦀".to_string());
         host.swap(Snapshot {
-            spaces: std::iter::once(("myspace".to_string(), sp)).collect(),
+            spaces: std::iter::once(("myspace".to_string(), Arc::new(sp))).collect(),
         });
         let shell = body_string(get_on(host, "/myspace/index").await).await;
         assert_eq!(
@@ -1084,7 +1084,7 @@ mod tests {
     fn host_with_space(name: &str, space: Space) -> Arc<ArtifactHost> {
         let host = Arc::new(ArtifactHost::new(3000));
         let mut snap = Snapshot::empty();
-        snap.spaces.insert(name.to_string(), space);
+        snap.spaces.insert(name.to_string(), Arc::new(space));
         host.swap(snap);
         host
     }
@@ -1198,7 +1198,7 @@ mod tests {
             s.nav = vec!["index".into()];
             s.home = Some("index".into());
             let mut snap = Snapshot::empty();
-            snap.spaces.insert("myspace".into(), s);
+            snap.spaces.insert("myspace".into(), Arc::new(s));
             snap
         };
         let a = "AAAAAAAA";

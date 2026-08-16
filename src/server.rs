@@ -569,7 +569,7 @@ pub fn scan_named(dir: &Path) -> Result<(String, Snapshot), ScanError> {
     let name = space::space_name_for(dir)?;
     let space = space::scan_dir(dir)?;
     let mut snap = Snapshot::empty();
-    snap.spaces.insert(name.clone(), space);
+    snap.spaces.insert(name.clone(), Arc::new(space));
     Ok((name, snap))
 }
 
@@ -593,7 +593,7 @@ pub fn one_artifact_snapshot(name: &str, html: String) -> Snapshot {
     sp.nav = vec![SINGLE_SLUG.to_string()];
     sp.home = Some(SINGLE_SLUG.to_string());
     let mut snap = Snapshot::empty();
-    snap.spaces.insert(name.to_string(), sp);
+    snap.spaces.insert(name.to_string(), Arc::new(sp));
     snap
 }
 
