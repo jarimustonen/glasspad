@@ -3,10 +3,13 @@ created: 2026-08-14
 updated: 2026-08-16
 type: feature
 reporter: jari
-status: open
+status: in-progress
 priority: normal
 lane: space-polish
 lane_seq: 10
+commits:
+- hash: 44299819d3a39fc043b0b586428d23261d60759c
+  summary: 'feat: support custom templates in spaces'
 ---
 
 # Custom/branded template for a whole space (not just built-in prose/dashboard)
