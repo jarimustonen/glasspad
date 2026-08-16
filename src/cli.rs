@@ -552,6 +552,38 @@ fn config_source(flag: Option<String>, env: &str, file_is_set: bool) -> ConfigSo
     }
 }
 
+fn config_origin_path(
+    cfg: &config::ResolvedConfig,
+    origin: Option<config::Origin>,
+) -> Option<String> {
+    match origin {
+        Some(config::Origin::Repo) => cfg.repo_config_path.as_ref(),
+        Some(config::Origin::Home) => cfg.home_config_path.as_ref(),
+        None => None,
+    }
+    .map(|path| path.display().to_string())
+}
+
+/// Check whether a selected API-key source is usable without reading or emitting
+/// secret material. A key file only needs to be a regular file here; `publish`
+/// remains responsible for bounded reading and its precise error diagnostics.
+fn api_key_is_set(source: ConfigSource, cfg: &config::ResolvedConfig) -> bool {
+    match source {
+        ConfigSource::Flag | ConfigSource::Env => true,
+        ConfigSource::Default => false,
+        ConfigSource::ConfigFile => match cfg.api_key.as_ref() {
+            Some(ApiKeySource::Inline(key)) => !key.trim().is_empty(),
+            Some(ApiKeySource::Env(name)) => std::env::var(name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty()),
+            Some(ApiKeySource::File(path)) => {
+                std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
+            }
+            None => false,
+        },
+    }
+}
+
 /// `glasspad config show` — expose effective hosted connection settings and their
 /// provenance. This deliberately never resolves or serializes API-key material:
 /// even a caller-supplied `--api-key` becomes only `<set>` in output.
@@ -571,9 +603,13 @@ pub fn config_show(server_flag: Option<String>, api_key_flag: Option<String>, js
     let server_source = config_source(server_flag.clone(), "GLASSPAD_SERVER", cfg.server.is_some());
     let server = resolve_setting(server_flag, "GLASSPAD_SERVER", cfg.server.clone());
     let api_key_source = config_source(api_key_flag, "GLASSPAD_API_KEY", cfg.api_key.is_some());
-    let api_key_set = !matches!(api_key_source, ConfigSource::Default);
+    let api_key_set = api_key_is_set(api_key_source, &cfg);
     let target_source = config_source(None, "GLASSPAD_TARGET", cfg.target.is_some());
     let target = resolve_target(None, &cfg, json);
+    let mut warnings = Vec::new();
+    if cfg.bind_repo_ignored {
+        warnings.push("repo-local .glasspad.yaml `bind:` was ignored: LAN serving must be enabled by --bind, $GLASSPAD_BIND, or your home config".to_string());
+    }
 
     let data = json!({
         "config_path": config_path,
@@ -581,40 +617,50 @@ pub fn config_show(server_flag: Option<String>, api_key_flag: Option<String>, js
         "server": {
             "value": server,
             "source": server_source.as_str(),
+            "path": config_origin_path(&cfg, cfg.server_origin),
         },
         "api_key": {
             "value": if api_key_set { "<set>" } else { "<unset>" },
             "source": api_key_source.as_str(),
             "secret": true,
+            "path": config_origin_path(&cfg, cfg.api_key_origin),
         },
         "target": {
             "value": match target { Target::Loopback => "loopback", Target::Hosted => "hosted" },
             "source": target_source.as_str(),
+            "path": config_origin_path(&cfg, cfg.target_origin),
         },
         "template": {
             "value": resolve_setting(None, "GLASSPAD_TEMPLATE", cfg.template.clone()),
             "source": config_source(None, "GLASSPAD_TEMPLATE", cfg.template.is_some()).as_str(),
+            "path": config_origin_path(&cfg, cfg.template_origin),
         },
         "space_key": {
             "value": resolve_setting(None, "GLASSPAD_SPACE_KEY", cfg.space_key.clone()),
             "source": config_source(None, "GLASSPAD_SPACE_KEY", cfg.space_key.is_some()).as_str(),
+            "path": config_origin_path(&cfg, cfg.space_key_origin),
         },
         "bind": {
             "value": resolve_setting(None, "GLASSPAD_BIND", cfg.bind.clone()),
             "source": config_source(None, "GLASSPAD_BIND", cfg.bind.is_some()).as_str(),
+            "path": config_origin_path(&cfg, if cfg.bind.is_some() { Some(config::Origin::Home) } else { None }),
         },
         "favicon": {
-            "value": cfg.favicon,
+            "value": cfg.favicon.clone(),
             "source": if cfg.favicon.is_some() { ConfigSource::ConfigFile.as_str() } else { ConfigSource::Default.as_str() },
+            "path": config_origin_path(&cfg, cfg.favicon_origin),
         },
     });
     if json {
         emit_json_line(&json!({
             "schema_version": SCHEMA_VERSION,
             "data": data,
-            "warnings": [],
+            "warnings": warnings,
         }));
     } else {
+        for warning in &warnings {
+            eprintln!("warning: {warning}");
+        }
         println!(
             "config path: {}{}",
             data["config_path"].as_str().unwrap_or_default(),

@@ -79,7 +79,11 @@ pub enum ApiKeySource {
 /// `None`.
 #[derive(Clone, Debug, Default)]
 pub struct ResolvedConfig {
+    /// Paths of the loaded config files, retained for read-only diagnostics.
+    pub repo_config_path: Option<PathBuf>,
+    pub home_config_path: Option<PathBuf>,
     pub target: Option<Target>,
+    pub target_origin: Option<Origin>,
     pub server: Option<String>,
     /// Which file supplied `server` (for the cross-trust credential warning).
     pub server_origin: Option<Origin>,
@@ -87,7 +91,9 @@ pub struct ResolvedConfig {
     /// Which file supplied `api_key` (for the cross-trust credential warning).
     pub api_key_origin: Option<Origin>,
     pub template: Option<String>,
+    pub template_origin: Option<Origin>,
     pub space_key: Option<String>,
+    pub space_key_origin: Option<Origin>,
     /// LAN bind IP for `loopback serve` (loopback-lan-serve): the explicit private
     /// LAN IPv4 other devices reach this machine at. **Honored from the HOME config
     /// only, never the repo-local `.glasspad.yaml`** — LAN exposure is a per-machine
@@ -106,6 +112,7 @@ pub struct ResolvedConfig {
     /// but not yet consumed by a publish path; `allow(dead_code)` until it lands.
     #[allow(dead_code)]
     pub favicon: Option<String>,
+    pub favicon_origin: Option<Origin>,
 }
 
 /// A structured config error carrying a stable `code` + human `message` so the CLI
@@ -263,6 +270,8 @@ pub fn resolve_within(
 /// Merge the (optional) repo and home files per key: for each key, the repo value
 /// wins if set, else the home value, else unset.
 fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, ConfigError> {
+    let repo_config_path = repo.as_ref().map(|l| l.path.clone());
+    let home_config_path = home.as_ref().map(|l| l.path.clone());
     let repo_file = repo.as_ref().map(|l| &l.file);
     let home_file = home.as_ref().map(|l| &l.file);
 
@@ -270,12 +279,8 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
     // (`nonempty` applied per file, before the merge) so a blank value in the
     // higher-priority file does not shadow a real value in the lower one — "first
     // file that SETS a key wins" means sets a non-empty value.
-    let pick = |get: fn(&ConfigFile) -> Option<String>| {
-        repo_file
-            .and_then(|f| nonempty(get(f)))
-            .or_else(|| home_file.and_then(|f| nonempty(get(f))))
-    };
-    // Like `pick`, but also reports which file won (for the credential-trust warning).
+    // Reports both the winning value and file, for credential-trust warnings and
+    // the read-only `glasspad config show` provenance surface.
     let pick_with_origin = |get: fn(&ConfigFile) -> Option<String>| {
         if let Some(v) = repo_file.and_then(|f| nonempty(get(f))) {
             (Some(v), Some(Origin::Repo))
@@ -288,20 +293,21 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
 
     // `target` is validated the moment it is chosen so a bad value in the *winning*
     // file is reported (a bad value in an overridden file is irrelevant).
-    let target = match pick(|f| f.target.clone()) {
+    let (target_raw, target_origin) = pick_with_origin(|f| f.target.clone());
+    let target = match target_raw {
         Some(raw) => Some(Target::parse(&raw).map_err(|m| ConfigError::new("invalid_target", m))?),
         None => None,
     };
 
     let (server, server_origin) = pick_with_origin(|f| f.server.clone());
-    let template = pick(|f| f.template.clone());
-    let space_key = pick(|f| f.space_key.clone());
+    let (template, template_origin) = pick_with_origin(|f| f.template.clone());
+    let (space_key, space_key_origin) = pick_with_origin(|f| f.space_key.clone());
     // `bind` (LAN exposure) is HOME-ONLY — never inherited from the less-trusted
     // repo-local `.glasspad.yaml`, so a cloned repo cannot silently bind a user's
     // machine to the LAN. A repo-local `bind:` is dropped and flagged for a warning.
     let bind = home_file.and_then(|f| nonempty(f.bind.clone()));
     let bind_repo_ignored = repo_file.and_then(|f| nonempty(f.bind.clone())).is_some();
-    let favicon = pick(|f| f.favicon.clone());
+    let (favicon, favicon_origin) = pick_with_origin(|f| f.favicon.clone());
 
     // `api_key` resolves per-file (each file's `api_key`/`api_key_file` is a unit),
     // repo winning over home; an empty inline value is treated as unset inside
@@ -322,16 +328,22 @@ fn merge(repo: Option<Loaded>, home: Option<Loaded>) -> Result<ResolvedConfig, C
     };
 
     Ok(ResolvedConfig {
+        repo_config_path,
+        home_config_path,
         target,
+        target_origin,
         server,
         server_origin,
         api_key,
         api_key_origin,
         template,
+        template_origin,
         space_key,
+        space_key_origin,
         bind,
         bind_repo_ignored,
         favicon,
+        favicon_origin,
     })
 }
 

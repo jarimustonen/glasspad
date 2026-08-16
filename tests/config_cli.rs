@@ -80,11 +80,53 @@ fn config_show_json_has_provenance_envelope_and_redacts_file_secret() {
     assert_eq!(value["warnings"], serde_json::json!([]));
     assert_eq!(value["data"]["server"]["value"], "https://file.example");
     assert_eq!(value["data"]["server"]["source"], "config-file");
+    assert_eq!(
+        value["data"]["server"]["path"],
+        config.to_string_lossy().as_ref()
+    );
     assert_eq!(value["data"]["api_key"]["value"], "<set>");
     assert_eq!(value["data"]["api_key"]["source"], "config-file");
     assert_eq!(value["data"]["api_key"]["secret"], true);
+    assert_eq!(
+        value["data"]["api_key"]["path"],
+        config.to_string_lossy().as_ref()
+    );
     assert_eq!(value["data"]["target"]["value"], "hosted");
     assert_eq!(value["data"]["target"]["source"], "config-file");
+}
+
+#[test]
+fn config_show_reports_repo_origin_and_unresolvable_indirect_key() {
+    let cwd = tmp_dir("repo-cwd");
+    let home = tmp_dir("repo-home");
+    let repo_config = cwd.join(".glasspad.yaml");
+    write(
+        &repo_config,
+        "server: https://repo.example\napi_key: { env: MISSING_CONFIG_KEY }\n",
+    );
+    let out = hermetic(&cwd, &home)
+        .env_remove("MISSING_CONFIG_KEY")
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["data"]["server"]["source"], "config-file");
+    assert_eq!(
+        value["data"]["server"]["path"],
+        fs::canonicalize(&repo_config)
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(value["data"]["api_key"]["value"], "<unset>");
+    assert_eq!(
+        value["data"]["api_key"]["path"],
+        fs::canonicalize(&repo_config)
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
 }
 
 #[test]
