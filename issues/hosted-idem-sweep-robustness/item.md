@@ -1,10 +1,13 @@
 ---
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 type: improvement
 status: open
 priority: normal
 related: ['@hosted-store-generation-pointer']
+lane: hosted-hardening
+lane_seq: 20
+collision: [src/hosted/store.rs]
 ---
 
 # Harden hosted idempotency-mapping sweep (transient-error deletes, invalid-mapping retention, symlink safety, empty-tenant reap)

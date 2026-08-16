@@ -1,10 +1,12 @@
 ---
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-16
 type: feature
 reporter: jari
 status: open
 priority: normal
+lane: space-polish
+lane_seq: 10
 ---
 
 # Custom/branded template for a whole space (not just built-in prose/dashboard)

@@ -1,10 +1,12 @@
 ---
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-16
 type: feature
 reporter: jari
 status: open
 priority: low
+lane: space-polish
+lane_seq: 20
 ---
 
 # Documented producer convention for cross-doc autolink + glossary term linking in spaces

@@ -1,10 +1,13 @@
 ---
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 type: improvement
 status: open
 priority: normal
 related: ['@hosted-store-generation-pointer']
+lane: hosted-hardening
+lane_seq: 30
+collision: [src/hosted/store.rs]
 ---
 
 # Hosted GC: swap the served snapshot before surfacing a post-removal fsync error
