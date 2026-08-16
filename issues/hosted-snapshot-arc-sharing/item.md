@@ -2,12 +2,16 @@
 created: 2026-08-15
 updated: 2026-08-16
 type: improvement
-status: open
+status: done
 priority: normal
 related: ['@hosted-store-generation-pointer']
 lane: hosted-hardening
 lane_seq: 10
 collision: [src/hosted/store.rs]
+commits:
+- hash: a74f9ecfac9203d51bd5d63c7169553a3094d83f
+  summary: 'refactor(hosted): share snapshot spaces with arc'
+closed: 2026-08-16
 ---
 
 # Hosted snapshot: Arc-share Space bodies to make publish/round O(1) (drop O(n) deep clone) + enforce MAX_PAGES on load
