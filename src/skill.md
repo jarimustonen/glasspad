@@ -103,6 +103,15 @@ The loopback↔hosted asymmetry is intended: loopback is live, hosted is a snaps
 replace an existing space by its capability slug); `--title`; `--port` (loopback);
 `--no-open`. The API key is never printed.
 
+## Inspect configuration
+
+Use `glasspad config path` to see the effective home config-file location. It is
+read-only and explicitly says when no file exists. Use `glasspad config show` (or
+`glasspad config show --json`) to inspect the resolved hosted server, API-key
+status, target, template, space key, bind address, and favicon. Each value includes its source: `flag`, `env`, `config-file`,
+or `default`. Pass `--server` / `--api-key` to `config show` only when checking the
+same overrides a publish invocation would use. API-key material is always redacted.
+
 ## Authoring
 
 **Markdown** is rendered through the space's template. For full control, author

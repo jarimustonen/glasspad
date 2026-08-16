@@ -264,6 +264,12 @@ enum Commands {
         #[arg(long)]
         meta: bool,
     },
+    /// Inspect the read-only publish configuration: its effective home-file path or
+    /// resolved hosted connection settings and their provenance.
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
     /// Report the installed CLI version (for version-gating; use --json for a
     /// machine-readable envelope). Mirrors the built-in `--version` / `-V` flag.
     Version,
@@ -289,6 +295,24 @@ enum Commands {
 /// Advanced loopback-server management. Grouped under `glasspad loopback` and
 /// discoverable via `--help` only — the standard flow is `publish` (which, for a
 /// loopback target, folds serve + open into one step).
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Print the effective home config file path without creating it.
+    Path,
+    /// Print effective hosted connection settings and whether each came from a flag,
+    /// environment variable, config file, or built-in default. API keys are redacted.
+    Show {
+        /// Hosted server base URL. Diagnostic-only override: takes precedence over
+        /// $GLASSPAD_SERVER and config, exactly as it does for publish.
+        #[arg(long)]
+        server: Option<String>,
+        /// Hosted API key. Diagnostic-only override: takes precedence over
+        /// $GLASSPAD_API_KEY and config. Its value is always redacted.
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum LoopbackCmd {
     /// Serve a file or directory live on 127.0.0.1 (scan + watch + SSE), blocking
@@ -448,6 +472,10 @@ async fn main() {
             api_key,
         }) => cli::submissions(slug, since, server, api_key, json).await,
         Some(Commands::Data { file, format, meta }) => cli::data(file, format, meta, json),
+        Some(Commands::Config { cmd }) => match cmd {
+            ConfigCmd::Path => cli::config_path(json),
+            ConfigCmd::Show { server, api_key } => cli::config_show(server, api_key, json),
+        },
         Some(Commands::Version) => cli::version(json),
         Some(Commands::Skill {
             install_claude,

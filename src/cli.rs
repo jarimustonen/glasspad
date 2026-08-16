@@ -469,6 +469,182 @@ pub fn version(json: bool) {
     }
 }
 
+// --- config ---------------------------------------------------------------
+
+/// The four resolution layers exposed by `glasspad config show` (AI-first §8).
+/// Kept as strings at the CLI boundary so the JSON contract is explicit and stable.
+#[derive(Clone, Copy)]
+enum ConfigSource {
+    Flag,
+    Env,
+    ConfigFile,
+    Default,
+}
+
+impl ConfigSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Flag => "flag",
+            Self::Env => "env",
+            Self::ConfigFile => "config-file",
+            Self::Default => "default",
+        }
+    }
+}
+
+/// Return the selected home-config path and whether it exists. This reuses the
+/// publish candidate ordering: the first existing path wins; when none exists,
+/// the documented primary path is still useful diagnostic output and is never
+/// created by this read-only command.
+fn effective_home_config_path() -> Option<(PathBuf, bool)> {
+    let candidates = publish_config_candidates();
+    let first = candidates.first()?.clone();
+    let selected = candidates
+        .iter()
+        .find(|path| path.exists())
+        .cloned()
+        .unwrap_or(first);
+    let exists = selected.exists();
+    Some((selected, exists))
+}
+
+/// `glasspad config path` — report the selected home-config location without
+/// reading, creating, or modifying it. A missing file is normal for loopback-only
+/// use, so say that explicitly rather than treating it as an error.
+pub fn config_path(json: bool) {
+    let Some((path, exists)) = effective_home_config_path() else {
+        exit_error(
+            json,
+            2,
+            "config_path_unavailable",
+            "cannot determine a glasspad config path because neither $HOME nor a platform config directory is available",
+            None,
+            None,
+        );
+    };
+    let path = path.display().to_string();
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "data": { "path": path, "exists": exists },
+            "warnings": [],
+        }));
+    } else if exists {
+        println!("config file: {path}");
+    } else {
+        println!("no config file exists; expected path: {path}");
+    }
+}
+
+/// Resolve one diagnostic setting without exposing its value. Empty flags and
+/// environment variables follow the existing publish behavior: they are unset,
+/// allowing the next layer to win.
+fn config_source(flag: Option<String>, env: &str, file_is_set: bool) -> ConfigSource {
+    let set = |value: Option<String>| value.is_some_and(|v| !v.trim().is_empty());
+    if set(flag) {
+        ConfigSource::Flag
+    } else if set(std::env::var(env).ok()) {
+        ConfigSource::Env
+    } else if file_is_set {
+        ConfigSource::ConfigFile
+    } else {
+        ConfigSource::Default
+    }
+}
+
+/// `glasspad config show` — expose effective hosted connection settings and their
+/// provenance. This deliberately never resolves or serializes API-key material:
+/// even a caller-supplied `--api-key` becomes only `<set>` in output.
+pub fn config_show(server_flag: Option<String>, api_key_flag: Option<String>, json: bool) {
+    let cfg = resolve_publish_config(json);
+    let Some((config_path, config_file_exists)) = effective_home_config_path() else {
+        exit_error(
+            json,
+            2,
+            "config_path_unavailable",
+            "cannot determine a glasspad config path because neither $HOME nor a platform config directory is available",
+            None,
+            None,
+        );
+    };
+
+    let server_source = config_source(server_flag.clone(), "GLASSPAD_SERVER", cfg.server.is_some());
+    let server = resolve_setting(server_flag, "GLASSPAD_SERVER", cfg.server.clone());
+    let api_key_source = config_source(api_key_flag, "GLASSPAD_API_KEY", cfg.api_key.is_some());
+    let api_key_set = !matches!(api_key_source, ConfigSource::Default);
+    let target_source = config_source(None, "GLASSPAD_TARGET", cfg.target.is_some());
+    let target = resolve_target(None, &cfg, json);
+
+    let data = json!({
+        "config_path": config_path,
+        "config_file_exists": config_file_exists,
+        "server": {
+            "value": server,
+            "source": server_source.as_str(),
+        },
+        "api_key": {
+            "value": if api_key_set { "<set>" } else { "<unset>" },
+            "source": api_key_source.as_str(),
+            "secret": true,
+        },
+        "target": {
+            "value": match target { Target::Loopback => "loopback", Target::Hosted => "hosted" },
+            "source": target_source.as_str(),
+        },
+        "template": {
+            "value": resolve_setting(None, "GLASSPAD_TEMPLATE", cfg.template.clone()),
+            "source": config_source(None, "GLASSPAD_TEMPLATE", cfg.template.is_some()).as_str(),
+        },
+        "space_key": {
+            "value": resolve_setting(None, "GLASSPAD_SPACE_KEY", cfg.space_key.clone()),
+            "source": config_source(None, "GLASSPAD_SPACE_KEY", cfg.space_key.is_some()).as_str(),
+        },
+        "bind": {
+            "value": resolve_setting(None, "GLASSPAD_BIND", cfg.bind.clone()),
+            "source": config_source(None, "GLASSPAD_BIND", cfg.bind.is_some()).as_str(),
+        },
+        "favicon": {
+            "value": cfg.favicon,
+            "source": if cfg.favicon.is_some() { ConfigSource::ConfigFile.as_str() } else { ConfigSource::Default.as_str() },
+        },
+    });
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "data": data,
+            "warnings": [],
+        }));
+    } else {
+        println!(
+            "config path: {}{}",
+            data["config_path"].as_str().unwrap_or_default(),
+            if config_file_exists { "" } else { " (missing)" }
+        );
+        println!(
+            "server: {} ({})",
+            server.as_deref().unwrap_or("<unset>"),
+            server_source.as_str()
+        );
+        println!(
+            "api_key: {} ({})",
+            if api_key_set { "<set>" } else { "<unset>" },
+            api_key_source.as_str()
+        );
+        println!(
+            "target: {} ({})",
+            data["target"]["value"].as_str().unwrap_or_default(),
+            target_source.as_str()
+        );
+        for key in ["template", "space_key", "bind", "favicon"] {
+            println!(
+                "{key}: {} ({})",
+                data[key]["value"].as_str().unwrap_or("<unset>"),
+                data[key]["source"].as_str().unwrap_or_default()
+            );
+        }
+    }
+}
+
 // --- serve ----------------------------------------------------------------
 
 /// Build the loopback [`ArtifactHost`], attaching the return-channel submission
