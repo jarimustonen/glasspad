@@ -2,11 +2,17 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: improvement
-status: open
+status: done
 priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
 lane_seq: 10
+commits:
+- hash: af401305d26e24d014e366ead0dfaf458a9a9e0d
+  summary: 'feat(cli): add inspectable config commands'
+- hash: 21ec5ba8febfd3aa7038656f85f2bcae40484555
+  summary: 'fix(cli): expose config file provenance'
+closed: 2026-08-16
 ---
 
 # cli-canon: §8 config path / config show --json
