@@ -352,46 +352,20 @@ polish (below).
   read `.cargo_vcs_info.json` for crates.io-tarball provenance. Low.
 - Next forward work: downstream homebase + tilictl consolidation, gated on 0.3.0 (tracked there).
 
-## Execution DAG (2026-08-15)
+## Scheduling
 
-Scheduling PLAN — source of truth for lane + order; issuectl is authoritative for STATUS
-(never copied here). Merge each round (drop landed, add active, keep existing order).
-`▶` = head-of-line snapshot — RE-COMPUTE from issuectl at pick time.
-`after <slug> (needs …)` = logical blocked_by mirror. `collision: <file>` = touches a
-second lane's hot file (spawn-time exclusion).
+Canonical scheduling lives in `issuectl` frontmatter (`lane:`, `lane_seq:`, `blocked_by:`, `collision:`). Do not maintain a markdown DAG or adjacent backlog in this file.
 
-Hot files → lanes. **Lane A (design system)** = `src/artifact_host/assets/base.css`.
-**Lane B (server/CLI/hosted core)** = `src/cli.rs` + `src/main.rs` + `src/server.rs` +
-`src/submissions.rs` + `src/hosted/*` + `src/artifact_host/{shell.rs,guards.rs,headers.rs}` +
-`src/config.rs`. **Lane render (space/markdown render)** = `src/artifact_host/{space.rs,render.rs}`
-+ `base.css`. `src/skill.md` is docs-only. NOTE: `headers.rs` (CSP) is the shared seam
-between Lane B and Lane render — a unit touching the artifact CSP collides across both
-(tag it `collision: headers.rs`). Any two units touching the SAME file are sequenced,
-never parallel (return-channel + space-ingest history showed this family collides easily).
+Use these views instead:
 
-<!-- execution-dag:begin -->
+```bash
+issuectl dag
+issuectl dag --json
+issuectl ls --status open
+issuectl ls --status in-progress
 ```
-GLOBAL HEAD-OF-LINE: hosted-idem-sweep-robustness   ← hosted-store review follow-up, normal priority
 
-LANE B — cli/hosted/server core (cli.rs + hosted/* + server.rs + shell.rs + config.rs)
-  ▶ hosted-idem-sweep-robustness        (improvement, normal — harden hosted idempotency-mapping sweep: transient errors, invalid records, symlinked tenant dirs, empty tenant reap)
-    hosted-gc-swap-on-partial-fsync     (improvement, normal — rebuild+swap served snapshot before surfacing post-removal fsync/read_dir errors)
-    hosted-snapshot-arc-sharing         (improvement, normal — Arc-share Space bodies, reduce mutation-lock clone cost, enforce MAX_PAGES on load)
-    hosted-store-input-revalidation     (improvement, low — store-boundary slug/tenant/path revalidation + per-file symlink checks)
-    hosted-loadbudget-asset-caps        (improvement, low — reject over-cap assets and charge LoadBudget for asset-directory fan-out)
-    hosted-genptr-autoheal              (improvement, low — optional two-slot/sequence pointer auto-heal if `current` is genuinely lost)
-
-LANE render — space/markdown render (space.rs + render.rs + headers.rs + base.css)
-  ▶ docsite-autolink-convention   (feature, low — mostly docs/producer-convention + author link-class theming; aggountant keeps a thin preprocessor. Tracked, no rush)
-    space-custom-template         (feature, normal — AWAITING template-design decision, NOT a ready head. Whole-space branded template; Jari wants a base-templates design process first. File `base-templates-design` + block on it before spawning)
-```
-<!-- execution-dag:end -->
-
-## Adjacent backlog (not in a lane)
-
-- `hosted-multiworker-credentials` (low, **deferred**) — FUTURE secure credential model
-  for many publishers; a constraint on publish-first-surface (`api_key` indirection), not
-  a scheduled unit. Revisit before rolling hosted publish out to a team.
+`TODO.md` is only the session handoff and project notes; issue bodies and `issuectl dag` are the source of truth.
 
 ## How to cut a release (the recipe, now automated)
 
