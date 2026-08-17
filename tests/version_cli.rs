@@ -5,8 +5,9 @@
 //! real CLI surface: the fleet-updater version-gates installs off this output,
 //! so the JSON envelope shape (`{schema_version, data: {name, version, commit,
 //! supported_schemas, skills}, warnings}` — nested under `data`, matching the
-//! sibling CLIs) and the plain-text `glasspad <version>` line are a contract, not an accident. The
-//! version reported must always be the compile-time `CARGO_PKG_VERSION`, and
+//! sibling CLIs) and the plain-text `glasspad <version>` line are a contract, not
+//! an accident. The version reported must always be the compile-time
+//! `CARGO_PKG_VERSION`, and
 //! every JSON spelling — `version --json`, `--json version`, `--json --version`,
 //! `--version --json` — must yield the same envelope (the flag is not a
 //! text-only clap built-in; it routes through the same code as the subcommand).
@@ -47,7 +48,7 @@ fn assert_version_envelope(out: &std::process::Output) -> serde_json::Value {
         .as_array()
         .expect("skills must be an array");
     assert_eq!(skills.len(), 1, "glasspad ships exactly one skill");
-    assert_eq!(skills[0]["name"], "glasspad");
+    assert_eq!(skills[0]["name"], v["data"]["name"]);
     assert_eq!(skills[0]["cli_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(skills[0]["schema_version"], 1);
     // `warnings` is present (empty) for cross-command uniformity.

@@ -7,6 +7,9 @@ priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
 lane_seq: 20
+commits:
+- hash: 00180da2195b5dca44061a81582b2d645dc7232f
+  summary: report supported schemas and bundled skill metadata
 ---
 
 # cli-canon: §10 version --json supported_schemas + skills[]

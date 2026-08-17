@@ -430,9 +430,9 @@ fn emit_json_line(payload: &serde_json::Value) {
 /// Under `--json`, emit the AI-first §10 envelope with the version payload
 /// **nested under `data`** — `{schema_version, data: {name, version, commit,
 /// supported_schemas, skills}, warnings}` — the same shape orchestratectl/ossctl
-/// `version` use, so the cross-tool fleet-updater reads `.data.version` uniformly
-/// across every tool
-/// rather than special-casing glasspad. Otherwise a plain `glasspad <version>`
+/// `version` use, so the cross-tool fleet-updater reads `.data.version`
+/// uniformly across every tool rather than special-casing glasspad. Otherwise a
+/// plain `glasspad <version>`
 /// line on stdout (the data channel). Both the subcommand and the `--version` /
 /// `-V` flag route here (main dispatches the flag manually), so all three honor
 /// `--json` identically.
@@ -467,7 +467,7 @@ pub fn version(json: bool) {
                 // their existing sources of truth rather than adding a registry.
                 "supported_schemas": [SCHEMA_VERSION],
                 "skills": [{
-                    "name": "glasspad",
+                    "name": name,
                     "cli_version": ver,
                     "schema_version": SCHEMA_VERSION,
                 }],
