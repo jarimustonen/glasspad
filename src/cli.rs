@@ -428,9 +428,10 @@ fn emit_json_line(payload: &serde_json::Value) {
 /// `orchestratectl version`).
 ///
 /// Under `--json`, emit the AI-first §10 envelope with the version payload
-/// **nested under `data`** — `{schema_version, data: {name, version, commit},
-/// warnings}` — the same shape orchestratectl/ossctl `version` use, so the
-/// cross-tool fleet-updater reads `.data.version` uniformly across every tool
+/// **nested under `data`** — `{schema_version, data: {name, version, commit,
+/// supported_schemas, skills}, warnings}` — the same shape orchestratectl/ossctl
+/// `version` use, so the cross-tool fleet-updater reads `.data.version` uniformly
+/// across every tool
 /// rather than special-casing glasspad. Otherwise a plain `glasspad <version>`
 /// line on stdout (the data channel). Both the subcommand and the `--version` /
 /// `-V` flag route here (main dispatches the flag manually), so all three honor
@@ -461,6 +462,15 @@ pub fn version(json: bool) {
                 // `Option<&str>` → a JSON string or `null`; the key is always
                 // present so a strict consumer never hits a missing-field error.
                 "commit": commit,
+                // Glasspad currently has one JSON schema and one bundled companion
+                // skill. Reuse the envelope schema and Cargo package metadata as
+                // their existing sources of truth rather than adding a registry.
+                "supported_schemas": [SCHEMA_VERSION],
+                "skills": [{
+                    "name": "glasspad",
+                    "cli_version": ver,
+                    "schema_version": SCHEMA_VERSION,
+                }],
             },
             // Present (empty) for cross-command uniformity: callers read
             // `warnings` unconditionally across every envelope.

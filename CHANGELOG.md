@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   personal machine/path references, an internal hosted URL, and personal contact details were
   replaced with fictional or role-based values. Security and conduct reports now use repository
   private-reporting channels rather than a maintainer email address.
+- **`glasspad version --json` reports schema and skill compatibility**: the version payload now
+  includes `supported_schemas` and bundled skill metadata for one-call drift audits.
 - **Hosted snapshots share page bodies behind `Arc`**: publish, update, and round-push no
   longer deep-copy every page and asset body while holding the mutation lock, making a
   snapshot clone proportional to the number of spaces rather than their total size.
