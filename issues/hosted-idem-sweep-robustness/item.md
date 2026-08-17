@@ -8,6 +8,9 @@ related: ['@hosted-store-generation-pointer']
 lane: hosted-hardening
 lane_seq: 10
 collision: [src/hosted/store.rs]
+commits:
+- hash: 7ee93761a41f344597e5cd094ccfc010176f5ff8
+  summary: preserve idempotency mappings on transient sweep reads
 ---
 
 # Hosted idempotency sweep: don't delete a mapping on a transient read error
