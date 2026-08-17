@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: improvement
-status: in-progress
+status: done
 priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
@@ -12,6 +12,9 @@ commits:
   summary: mark skill subcommand work in progress
 - hash: df5ba63f1c039d07b6f5bd27e7212f99a9c84e54
   summary: add skill list, print, and canonical install commands
+- hash: 2f6400efba50a9cd93b561bd5e80d0df2892e21f
+  summary: apply reviewed install-selection and metadata fixes
+closed: 2026-08-17
 ---
 
 # cli-canon: §15/§16 skill list/print subcommands
