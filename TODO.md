@@ -48,15 +48,14 @@ recommendation to close three as ceremony. Recorded so it is not re-litigated �
 than the issue implies); `s22` is a crate split of a ~4.5k-line `src/cli.rs` that the canon
 itself marks "should", never a release gate. **Decision made — build them.**
 
-**3. `hosted-hardening` → `hosted-idem-sweep-robustness`**, then
-`hosted-gc-swap-on-partial-fsync`. Both carry `collision:src/hosted/store.rs`, so they
-sequence. **Trim `hosted-idem-sweep-robustness` before spawning** (recommended, not yet done):
-keep only the real part — `sweep_mappings` deletes a mapping on *any* `read_capped` error
-including transient EMFILE/EACCES, weakening exactly-once precisely under load; fix is to
-delete only on `NotFound` or an explicit parse/validation failure. **Drop** the symlink and
-empty-tenant-reap parts (same speculative class as the four closed 2026-08-16).
-`hosted-gc-swap-on-partial-fsync` is a cheap ordering fix but its trigger is a failing disk —
-take it in passing, not as a head.
+**3. `hosted-hardening` → `hosted-idem-sweep-robustness`** — now the lane's only issue, and
+already **narrowed** (2026-08-17) to the one real defect: `sweep_mappings` deletes a mapping on
+*any* `read_capped` error including transient EMFILE/EACCES, discarding duplicate-publish
+protection during exactly the retry an idempotency key exists for. Fix: delete only on
+`NotFound` or an explicit parse/validation failure. The symlink, empty-tenant-reap, and
+invalid-record items are recorded as out of scope **in the issue** — do not let a later review
+reintroduce them. `hosted-gc-swap-on-partial-fsync` was closed `wontfix` the same day (failing-
+disk trigger, restart-clearable), which is why this lane is one deep.
 
 **4. `space-polish` → `docsite-autolink-convention`** (feature, low). Mostly docs: describe the
 "preprocess markdown before publish" seam and confirm which author link classes (e.g.
