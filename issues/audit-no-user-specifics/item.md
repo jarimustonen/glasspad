@@ -2,10 +2,14 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: task
-status: in-progress
+status: done
 priority: high
 lane: repo-hygiene
 lane_seq: 10
+commits:
+- hash: dfa9f53
+  summary: neutralize user-specific repository facts and record audit findings
+closed: 2026-08-17
 ---
 
 # Audit: no user-specific facts in a public artifact
