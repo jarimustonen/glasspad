@@ -1,9 +1,11 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: task
 status: open
 priority: high
+lane: repo-hygiene
+lane_seq: 10
 ---
 
 # Audit: no user-specific facts in a public artifact

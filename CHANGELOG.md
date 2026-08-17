@@ -9,7 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`glasspad config path` / `glasspad config show`**: read-only inspection of the effective
+  configuration and where each value came from (flag, environment variable, config file, or
+  default), with a `--json` envelope. `api_key` is reported only as `<set>`/`<unset>` — the
+  secret value is never printed by either output mode.
+- **Custom templates for a whole space**: a space can now declare its own producer-supplied
+  template and have every markdown page render through it, instead of being limited to the
+  built-in `prose` / `dashboard` templates. Grouped sidebar navigation, the generated landing
+  index, and the per-page TOC rail continue to work. A space that declares no template renders
+  exactly as before.
+
 ### Changed
+- **Hosted snapshots share page bodies behind `Arc`**: publish, update, and round-push no
+  longer deep-copy every page and asset body while holding the mutation lock, making a
+  snapshot clone proportional to the number of spaces rather than their total size.
+  `MAX_PAGES` is now enforced on scan/load as well as on write.
+
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
