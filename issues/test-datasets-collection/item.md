@@ -3,7 +3,7 @@ created: 2026-04-11
 updated: 2026-04-11
 closed: 2026-04-11
 type: task
-reporter: jari
+reporter: maintainer
 assignee: jari
 status: done
 priority: normal

@@ -15,7 +15,7 @@ elsewhere"* (skill.md §"Which mode to reach for"). As a result agents reflexive
 The intended **standard** workflow is the opposite: an agent hands glasspad a
 **markdown** file (or a directory of them) and gets back a **URL** the human can
 open from anywhere. The home config `~/.config/glasspad/config.yaml` already points
-at a hosted server (`server: https://glasspad.maalla.dev`), but today it is treated
+at a hosted server (`server: https://share.example.com`), but today it is treated
 only as a *source of server/API-key for `publish`*, never as the signal that
 **hosted publishing is the default way to operate**.
 

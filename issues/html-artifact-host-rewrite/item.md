@@ -2,7 +2,7 @@
 created: 2026-07-22
 updated: 2026-07-24
 type: feature
-reporter: jari
+reporter: maintainer
 assignee: jari
 status: done
 priority: high
@@ -100,6 +100,6 @@ localhost security model.
 
 ## Decisions
 
-### 2026-07-23T06:20:51Z · @jari
+### 2026-07-23T06:20:51Z · @maintainer
 
 Locked v0.2 as localhost-only (dropped team/cloud tiers, accounts, separate content origin, per-space subdomains). Going with review recommendations: D1 null-origin sandbox + CSP:sandbox response header + egress CSP naming the host (allow-same-origin flip kept for later); D2 first-class assets/data (reverses the data-parser cut); D3 serve directory live, no push/no store; relative links replace the glasspad: scheme. plan.md + design.md rewritten accordingly.

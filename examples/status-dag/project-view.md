@@ -47,7 +47,7 @@ pattern in `src/artifact_host/AGENTS-DIAGRAMS.md`.
 
 ## Why not a diagram DSL
 
-The producing agent already renders data-driven SVG (aggountant's `diagrams.py`),
+The producing agent already renders data-driven SVG (producer-example's `diagrams.py`),
 so glasspad stays out of the rendering business and only owns the theme tokens.
 That keeps the security boundary untouched: no new library, no new runtime/eval
 surface, no CSP change.

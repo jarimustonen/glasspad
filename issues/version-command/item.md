@@ -22,7 +22,7 @@ glasspad exposes no way to query its own installed version: `glasspad --version`
 
 ## Impact
 
-The homebase fleet-updater provisions the shared CLIs on Linux (haapa + any Linux clone) via each tool's cargo-dist release installer, version-gated on the latest release tag so a re-run is a cheap no-op. issuectl (`issuectl --version`), ossctl (`ossctl version`), and orchestratectl (`orchestratectl version` → JSON) all expose a version, so their Linux hooks compare installed-vs-latest directly. glasspad does not, so `dotfiles/setup.d/glasspad.sh` had to fall back to writing a marker file (`~/.local/state/glasspad.installed-tag`) after each install to gate the next run — a workaround the siblings don't need.
+Deployment automation provisions the shared CLIs on Linux via each tool's cargo-dist release installer, version-gated on the latest release tag so a re-run is a cheap no-op. issuectl (`issuectl --version`), ossctl (`ossctl version`), and orchestratectl (`orchestratectl version` → JSON) all expose a version, so their Linux hooks compare installed-vs-latest directly. glasspad does not, so the installer had to fall back to writing a marker file (`~/.local/state/glasspad.installed-tag`) after each install to gate the next run, a workaround the siblings don't need.
 
 ## Ask
 

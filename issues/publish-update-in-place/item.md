@@ -2,7 +2,7 @@
 created: 2026-08-14
 updated: 2026-08-15
 type: feature
-reporter: jari
+reporter: maintainer
 status: done
 priority: normal
 labels:
@@ -36,5 +36,5 @@ idempotency-key semantics variant that REPLACES the stored page with the new ren
 returning the first one.
 
 **Exact commands this session:**
-  glasspad publish sales/muistiot/2026-08-06-frondeo-bd-palaveri.md --markdown --title '...' --no-open --json
+  glasspad publish notes/2026-08-06-example-meeting.md --markdown --title '...' --no-open --json
 (ran 3× across edits → 3 different slugs: nmngbhn7…, ydxhpnprn…, 44hgv7qn…)

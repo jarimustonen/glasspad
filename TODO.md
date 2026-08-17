@@ -9,7 +9,7 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 **0.14.0 is released and live** (crates.io + GitHub Release + Homebrew).
 
 **Three units have landed since and are UNRELEASED.** `Cargo.toml` still says `0.14.0`;
-`CHANGELOG.md [Unreleased]` is written and describes the 0.15.0 content. Jari's steer
+`CHANGELOG.md [Unreleased]` is written and describes the 0.15.0 content. The maintainer's steer
 (2026-08-17): **run the next stint first, then release.** Cutting 0.15.0 needs only a version
 bump, changelog finalize, and a tag push — the full green gate was already verified on the
 current `main`.
@@ -37,11 +37,11 @@ any into user config. The rule: *overridability does not launder a user-specific
 unset default is still whatever ships; the correct built-in default is neutral/absent with an
 actionable error naming the config key. **Lead already identified:**
 `dist-workspace.toml`'s `[dist.github-custom-runners]` routes the macOS release build to the
-personal self-hosted `hauis` runner, and `AGENTS.md` itself calls that a "personal /
+personal self-hosted macOS runner, and `AGENTS.md` itself calls that a "personal /
 non-standard infra override" — exactly the pattern the issue forbids.
 
 **2. `cli-canon` → `cli-canon-version-payload`**, then `skill-subcommand`, `doctor`,
-`help-json`, `s22`. **Jari's decision 2026-08-16: all six get done**, over an orchestrator
+`help-json`, `s22`. **The maintainer's decision 2026-08-16: all six get done**, over an orchestrator
 recommendation to close three as ceremony. Recorded so it is not re-litigated —
 `version-payload` would report constants (one schema version, one shipped skill);
 `skill list` would list that one skill (the `skill` verb already exists, so this is smaller
@@ -60,10 +60,10 @@ disk trigger, restart-clearable), which is why this lane is one deep.
 **4. `space-polish` → `docsite-autolink-convention`** (feature, low). Mostly docs: describe the
 "preprocess markdown before publish" seam and confirm which author link classes (e.g.
 `<a class="xref">`) survive into rendered prose for theming. glasspad does not own
-glossary/xref logic; aggountant keeps a thin preprocessor.
+glossary/xref logic; producer-example keeps a thin preprocessor.
 
 **Open decision carried:** file the hosted-submit **async/webhook push**
-(push-to-a-departed-agent) as a future design issue, or drop it? Unfiled, Jari's call.
+(push-to-a-departed-agent) as a future design issue, or drop it? Unfiled, the maintainer's call.
 
 ## Standing lessons
 
@@ -95,7 +95,7 @@ glossary/xref logic; aggountant keeps a thin preprocessor.
   incremental local build — `rm -rf target/debug/build/glasspad-*` and re-run. Clean CI builds
   never hit it. (Also in root `AGENTS.md`.)
 - **Never re-add `GIT_CONFIG_GLOBAL` to a runner `.env`** — that is what broke macOS release
-  builds. Durable fix and full write-up: `homebase/infra/machines/hauis.md`.
+  builds. The durable fix and full write-up live in operator configuration outside this repo.
 
 ## Cutting a release
 
@@ -104,7 +104,7 @@ binaries + Homebrew formula) and `publish-crates.yml` (crates.io). Bump `Cargo.t
 the `CHANGELOG.md` entry, commit, then tag and push. No `gh release create` step: cargo-dist
 creates the Release itself.
 
-- The macOS build runs on the self-hosted `hauis` runner.
+- The macOS build runs on the configured self-hosted runner.
 - Cut a tag **once** and let it finish; don't re-tag mid-run.
 - `release.yml` has **no `workflow_dispatch`** — a failed release can only be re-run
   (`gh run rerun <id> --failed`) or re-triggered by re-pointing the tag.

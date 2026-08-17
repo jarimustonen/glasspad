@@ -3,7 +3,7 @@
 **The supported pattern is inline SVG, themed from the `--gp-*` design system.**
 glasspad does not ship a diagram DSL or a server-side diagram renderer — the
 *producing agent* owns diagram generation (e.g. a data-driven SVG generator like
-aggountant's `diagrams.py`) and embeds the result as inline `<svg>` in a markdown
+producer-example's `diagrams.py`) and embeds the result as inline `<svg>` in a markdown
 body or an HTML artifact. glasspad's only contribution is a small set of
 theme-aware CSS classes so an authored diagram reads correctly in both Glass Light
 and Glass Dark.

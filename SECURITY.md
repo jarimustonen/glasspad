@@ -14,7 +14,8 @@ or pull requests** — that discloses the issue before a fix is available.
 
 Report privately using **GitHub's [Private Vulnerability Reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)**:
 open the repository's **Security** tab → **Report a vulnerability**. If that is
-unavailable, contact **jari@itsellesi.fi** privately.
+unavailable, open a minimal public issue requesting a private contact channel without
+including vulnerability details.
 
 Include, as far as you can:
 

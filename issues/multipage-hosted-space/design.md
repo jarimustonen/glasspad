@@ -156,7 +156,7 @@ POST /api/v1/spaces        (Bearer auth, same as /api/v1/pages)
   "assets": [ { "path": "logo.svg", "content_base64": "..." }, ... ],
   "nav":    ["index", "guide", ...],     // optional; server reconciles
   "title":  "My Docsite",                // optional
-  "space_key": "tilictl-spec-v1"         // optional stable key (update-in-place)
+  "space_key": "example-producer-cli-spec-v1"         // optional stable key (update-in-place)
 }
 ```
 

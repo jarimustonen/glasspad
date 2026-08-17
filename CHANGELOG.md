@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exactly as before.
 
 ### Changed
+- **Public-repository examples and records are environment-neutral**: private project names,
+  personal machine/path references, an internal hosted URL, and personal contact details were
+  replaced with fictional or role-based values. Security and conduct reports now use repository
+  private-reporting channels rather than a maintainer email address.
 - **Hosted snapshots share page bodies behind `Arc`**: publish, update, and round-push no
   longer deep-copy every page and asset body while holding the mutation lock, making a
   snapshot clone proportional to the number of spaces rather than their total size.
@@ -71,7 +75,7 @@ snapshot disagreeing about which space version is live.
 Adds stable-URL hosted republishing: `glasspad publish --update <slug>` can replace a
 published space in place while preserving the same `/p/<slug>` link. This release also
 locks in grouped-sidebar behaviour for hosted spaces with a regression test; the observed
-maalla.dev sidebar loss is a deploy/stored-metadata issue, not a current-code defect.
+share.example.com sidebar loss is a deploy/stored-metadata issue, not a current-code defect.
 
 ### Added
 - **`glasspad publish --update <slug>`**: update an existing hosted space by capability
@@ -86,7 +90,7 @@ maalla.dev sidebar loss is a deploy/stored-metadata issue, not a current-code de
 ### Fixed
 - **Grouped hosted sidebar regression coverage**: added a test proving grouped nav chrome
   is present for every hosted page URL and survives store reopen. The current code already
-  behaves correctly; affected maalla.dev spaces need the hosted server upgraded and then
+  behaves correctly; affected share.example.com spaces need the hosted server upgraded and then
   re-published so `nav_groups` is persisted.
 
 ## [0.11.0] - 2026-08-14
@@ -175,7 +179,7 @@ unchanged (`./test-security.sh` 48 checks + Wave 2a green, plus new LAN-serve pr
 ## [0.8.0] - 2026-08-13
 
 Makes a structured docsite a first-class glasspad space: **grouped/nested navigation
-and a generated landing index**, so a docsite like aggountant's `design-v2` shape
+and a generated landing index**, so a docsite like producer-example's `design-v2` shape
 (grouped spec/ADRs/stints + companion docs) ports onto glasspad driven only by a
 manifest and slug-safe markdown — no bespoke index/sidebar generator. Everything stays
 **structure-only** (no glasspad-owned content). The artifact security contract is

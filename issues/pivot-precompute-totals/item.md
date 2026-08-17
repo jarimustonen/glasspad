@@ -2,7 +2,7 @@
 created: 2026-04-11
 updated: 2026-07-23
 type: improvement
-reporter: jari
+reporter: maintainer
 assignee: jari
 status: obsolete
 priority: low

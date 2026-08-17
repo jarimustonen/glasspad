@@ -6,20 +6,19 @@ status: done
 priority: normal
 commits:
 - hash: 468a26dd4678a3db12bf17e3ec92b2cf84f04eba
-  summary: 'ci(dist): revert mac release build to self-hosted hauis runner'
+  summary: 'ci(dist): revert mac release build to a self-hosted runner'
 closed: 2026-08-09
 ---
 
-# Revert macOS release build back to self-hosted hauis runner
+# Revert macOS release build back to a self-hosted runner
 
 ## Description
 
 `release-mac-github-runner` (commit `9deee1a`) routed the macOS release build to a
 GitHub-hosted `macos-14` runner in `dist-workspace.toml`, because the self-hosted
-`hauis` runner was failing (git HTTP 400 / auth-placeholder errors). That runner is
-now **durably fixed** (2026-08-09: `~/.gitconfig` `[include]` split replaced the broken
-`GIT_CONFIG_GLOBAL` override; write-up in `homebase/infra/machines/hauis.md`) and hauis
-is the **intended** mac build machine. So the `macos-14` routing should be reverted.
+self-hosted runner was failing (git HTTP 400 / auth-placeholder errors). That runner is
+now **durably fixed** (2026-08-09: a global Git configuration override was replaced)
+and is the **intended** mac build machine. So the `macos-14` routing should be reverted.
 
 ## Fix
 
@@ -33,8 +32,8 @@ aarch64-apple-darwin = "self-hosted"
 
 Keep the two Linux targets on GitHub-hosted ubuntu runners (unchanged). Then run
 `dist generate` to regenerate `.github/workflows/release.yml` (the mac matrix row must
-go back to `runner: self-hosted`, which matches hauis — the only self-hosted runner).
-Update the explanatory comment block in `dist-workspace.toml` to reflect that hauis is
+go back to `runner: self-hosted`, which matches the configured runner).
+Update the explanatory comment block in `dist-workspace.toml` to reflect that the runner is
 fixed and owns mac builds again. **Do not** touch `publish-crates.yml`. Green gate:
 `cargo fmt --all --check` + the workflow YAML must be valid (a `dist generate` diff only).
 

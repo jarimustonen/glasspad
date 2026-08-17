@@ -21,7 +21,7 @@ closed: 2026-08-09
 
 Discovered during homebase `digest-cron-to-glasspad` — migrating the openclaw
 digest article publisher from publish-html to `glasspad publish`
-(`glasspad.maalla.dev`). publish-html's `POST /pages` accepts an optional
+(`share.example.com`). publish-html's `POST /pages` accepts an optional
 `idempotency_key`: a repeated create with the same key returns the first page
 (HTTP 200) instead of a new one, durably recording `key → slug` (fsync) only
 after the page files are on disk. This gives the deterministic digest wrapper an
@@ -40,8 +40,8 @@ Add an optional `idempotency_key` field to the `PublishRequest` (bounded length)
 When present, record `key → {slug}` durably (fsync + atomic rename) **after** the
 page is stored, and on a repeat return the same page (200) instead of a new one
 (201) — a dangling key (page GC'd/deleted) falls through to a fresh create. This
-mirrors publish-html's proven design (`software/publish-html` in homebase; see
-`infra/openclaw/AGENTS-DIGEST.md` → "The publish crash window"). It restores
+mirrors the proven design used by a comparable publisher (details kept in
+operator documentation outside this public repository). It restores
 full lost-receipt exactly-once for API-key publishers without changing the
 default (no key → fresh every time, byte-for-byte today's behaviour).
 

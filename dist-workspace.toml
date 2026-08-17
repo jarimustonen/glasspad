@@ -30,10 +30,10 @@ publish-jobs = ["homebrew"]
 # CI setup.) Unlike the pure-Rust ossctl (which uses musl for exactly that
 # glibc-independence), glasspad stays on gnu.
 #
-# x86_64-apple-darwin is intentionally NOT built: the only always-on macOS release
-# runner is `hauis` (Apple Silicon, Homebrew Rust = no rustup / no x86_64 std), so
-# it cannot cross-compile the Intel target. Windows is not a target (Jari installs
-# on macOS + Linux); Windows/Intel-Mac users install via `cargo install glasspad`.
+# x86_64-apple-darwin is intentionally NOT built: the configured macOS release
+# runner is Apple Silicon with Homebrew Rust (no rustup / no x86_64 std), so it
+# cannot cross-compile the Intel target. Windows is not a binary target;
+# Windows/Intel-Mac users install via `cargo install glasspad`.
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
 # Where to host releases
 hosting = "github"
@@ -43,12 +43,10 @@ hosting = "github"
 # id-token / attestations permissions to the publishing job.
 github-attestations = true
 
-# Route the macOS build to the self-hosted `hauis` runner (Apple Silicon), the
-# intended mac build machine — it owns mac builds again. The two Linux targets
-# stay on GitHub-hosted ubuntu runners. hauis previously hit stale-auth-extraheader
-# / git-400 failures from a broken global ~/.gitconfig `GIT_CONFIG_GLOBAL` override;
-# that is durably fixed (2026-08-09 `[include]`-split gitconfig fix — see
-# `homebase/infra/machines/hauis.md`), so the `macos-14` GitHub-hosted routing added
-# in 9deee1a is no longer needed and is reverted here.
+# Route the macOS build to the operator's self-hosted Apple Silicon runner.
+# The two Linux targets stay on GitHub-hosted Ubuntu runners. This personal,
+# non-standard infrastructure override is deliberately under review; do not copy
+# it as a project default. Removing it before a viable macOS replacement exists
+# would break the release's cross-platform binary coverage.
 [dist.github-custom-runners]
 aarch64-apple-darwin = "self-hosted"

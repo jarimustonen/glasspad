@@ -2,7 +2,7 @@
 created: 2026-08-11
 updated: 2026-08-11
 type: feature
-reporter: jari
+reporter: maintainer
 status: done
 priority: normal
 commits:
@@ -26,8 +26,8 @@ closed: 2026-08-11
 # Multi-page hosted publish (space ingest) + markdown-native spaces
 
 ## Use case
-A producer repo (tilictl) maintains a ~62-page spec/design **docsite** whose sources are
-**markdown**. We want to host it on a `host-serve` instance (glasspad.maalla.dev) as a
+A producer repo (example-producer-cli) maintains a ~62-page spec/design **docsite** whose sources are
+**markdown**. We want to host it on a `host-serve` instance (share.example.com) as a
 browsable **multi-page** site with working in-space nav — ideally by handing glasspad the
 **markdown directory** directly. Two capability gaps block this today (glasspad 0.3.1).
 

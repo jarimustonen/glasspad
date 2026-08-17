@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: task
-status: open
+status: in-progress
 priority: high
 lane: repo-hygiene
 lane_seq: 10
@@ -40,14 +40,14 @@ environment.
 and `0.2.0`:
 
 ```rust
-gh_account: "jarimustonen".to_string(),
-repo_root:  "~/Sources".to_string(),
-const DEFAULT_FAMILY_TOOLS: [&str; 7] = [
-    "issuectl", "orchestratectl", "crmctl", "tilictl", "ossctl", "intakectl", "glasspad",
+gh_account: "<personal-account>".to_string(),
+repo_root:  "<personal-source-root>".to_string(),
+const DEFAULT_FAMILY_TOOLS: [&str; 4] = [
+    "public-tool-a", "private-tool-a", "public-tool-b", "private-tool-b",
 ];
 ```
 
-Three of those seven are **private** repositories, so a public crate disclosed the names of
+Two entries were **private** repositories, so a public crate disclosed the names of
 private projects. The defect survived a design pass that explicitly considered portability,
 because the reasoning stopped at "it's overridable".
 
@@ -60,9 +60,9 @@ Grep the whole repo — source, defaults, templates, generated output, docs, REA
 golden fixtures, skill content — for:
 
 - the maintainer's account handle / name / email
-- names of **private** family repos: `crmctl`, `tilictl`, `intakectl`, `aggountant`
-  (public siblings are fine to reference where genuinely relevant, e.g. a real dependency)
-- personal path conventions (`~/Sources`, `/Users/<name>`, personal machine hostnames)
+- names of private family repositories (public siblings are fine to reference where
+  genuinely relevant, e.g. a real dependency)
+- personal source-root conventions, named home directories, and personal machine hostnames
 - internal URLs, internal service names, org-internal identifiers
 - any built-in default that encodes one person's environment rather than a neutral value
 

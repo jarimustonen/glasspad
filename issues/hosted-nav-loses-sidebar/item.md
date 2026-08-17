@@ -2,24 +2,24 @@
 created: 2026-08-14
 updated: 2026-08-15
 type: bug
-reporter: jari
+reporter: maintainer
 status: cannot-reproduce
 priority: normal
 closed: 2026-08-15
 ---
 
-# Hosted: navigating to a page can lose the grouped sidebar (observed on maalla.dev, 0.10.0 client)
+# Hosted: navigating to a page can lose the grouped sidebar (observed on share.example.com, 0.10.0 client)
 
-_Source: aggountant project-view_
+_Source: producer-example project-view_
 
 ## Description
 
-**Observed:** a space published to https://glasspad.maalla.dev (client 0.10.0) shows the grouped sidebar on the home page, but clicking a nav entry (e.g. the `latest` page) lands on the page **without the sidebar**. The served HTML for that page DOES contain the sidebar (`curl .../latest` shows `gp-sidebar`), and the same space served via local `glasspad loopback serve` (0.10.0) renders the sidebar correctly on every page — so this looks specific to the **hosted maalla.dev server**, which appears to run a build behind the 0.10.0 client (it also renders the shell chrome less refined than local). **Likely fix:** upgrade the hosted maalla.dev glasspad to match the client; verify the shell wraps every page URL, not just the home. Needs in-browser confirmation of the exact failing interaction. Tracked in aggountant `project-view`.
+**Observed:** a space published to https://share.example.com (client 0.10.0) shows the grouped sidebar on the home page, but clicking a nav entry (e.g. the `latest` page) lands on the page **without the sidebar**. The served HTML for that page DOES contain the sidebar (`curl .../latest` shows `gp-sidebar`), and the same space served via local `glasspad loopback serve` (0.10.0) renders the sidebar correctly on every page — so this looks specific to the **hosted share.example.com server**, which appears to run a build behind the 0.10.0 client (it also renders the shell chrome less refined than local). **Likely fix:** upgrade the hosted share.example.com glasspad to match the client; verify the shell wraps every page URL, not just the home. Needs in-browser confirmation of the exact failing interaction. Tracked in producer-example `project-view`.
 
 ## Investigation (2026-08-15) — no code defect in current `main`; deploy/ops action required
 
 **Conclusion: not reproducible as a code bug in current `main` (0.11.0). The
-symptom is a deployed-version / stored-metadata mismatch on maalla.dev, not a
+symptom is a deployed-version / stored-metadata mismatch on share.example.com, not a
 defect in the shell/space rendering.** A regression test was added to lock in the
 correct behaviour so a future change can't silently reintroduce it.
 
@@ -56,7 +56,7 @@ the reporter saw was most likely the **generated landing page's own TOC** (an
 artifact fragment inside the iframe, home-only by nature), while the shell-chrome
 sidebar was never populated because the hosted `GROUPS` was empty.
 
-**Root cause on maalla.dev — one of (both fixed by the same ops action):**
+**Root cause on share.example.com — one of (both fixed by the same ops action):**
 
 1. The hosted **glasspad server** predates 0.8.0 (grouped nav + generated landing
    landed in **v0.8.0**, commit `366a0cf`) — its ingest has no `groups` field, so
@@ -70,17 +70,17 @@ sidebar was never populated because the hosted `GROUPS` was empty.
 
 ### Required deploy / ops action (outside this repo's code)
 
-1. **Upgrade the hosted glasspad on maalla.dev to the current release (≥ 0.11.0).**
+1. **Upgrade the hosted glasspad on share.example.com to the current release (≥ 0.11.0).**
    `/healthz` returns only `ok` (no version), so verify the running build another
    way — see the check below.
 2. **Re-publish the affected space** with a current (≥ 0.8.0) client so the server
    accepts + persists `groups`/`nav_groups`.
-3. **Verify:** `curl -s https://glasspad.maalla.dev/p/<space>/<non-home-page>` and
+3. **Verify:** `curl -s https://share.example.com/p/<space>/<non-home-page>` and
    confirm the shell embeds a **non-empty `var GROUPS = […]`** literal carrying the
    group labels (not merely the empty `gp-sidebar` container). Equivalently,
    in-browser, a non-home page must show the grouped sidebar chrome. If `GROUPS` is
    `[]` on a non-home page after the upgrade, step 2 (re-publish) is still pending.
 
-No terminal maalla.dev deploy is performed from this repo (there is no remote
+No terminal share.example.com deploy is performed from this repo (there is no remote
 deploy in this project — see CLAUDE.md "Deploy = localhost"). The ops action above
-is the remaining work; it is tracked for the reporter in aggountant `project-view`.
+is the remaining work; it is tracked for the reporter in producer-example `project-view`.

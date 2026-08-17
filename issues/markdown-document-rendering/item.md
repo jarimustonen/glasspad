@@ -2,7 +2,7 @@
 created: 2026-04-09
 updated: 2026-04-09
 type: feature
-reporter: jari
+reporter: maintainer
 assignee: jari
 status: done
 priority: normal

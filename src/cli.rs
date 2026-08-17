@@ -423,7 +423,7 @@ fn emit_json_line(payload: &serde_json::Value) {
 // --- version --------------------------------------------------------------
 
 /// `glasspad version` (and `glasspad --version` / `-V`) — report the installed
-/// CLI version so tooling (the homebase fleet-updater) can version-gate installs,
+/// CLI version so tooling (the deployment fleet updater) can version-gate installs,
 /// matching the sibling CLIs (`issuectl --version`, `ossctl version`,
 /// `orchestratectl version`).
 ///
@@ -4158,7 +4158,7 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
 /// `~/.pi/agent/skills/<name>/SKILL.md` (and invokes it as `/skill:name`). Rather
 /// than force the caller to run the installer twice, `--agent all` (the default)
 /// *dual-homes* — one invocation writes both. This mirrors the agent-target
-/// convention already used by homebase / orchestratectl (`--agent claude|…|all`).
+/// convention already used by deployment automation (`--agent claude|…|all`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum SkillAgent {
     /// Claude Code skills dir (`~/.claude/skills/` for `--user`, else `./.claude/skills/`).

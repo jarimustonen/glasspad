@@ -18,7 +18,7 @@ closed: 2026-08-14
 
 ## Motivation (Jari 2026-08-13)
 
-Jari works from a **different machine on the same LAN** than the one running `glasspad`. Today the loopback `serve` binds `127.0.0.1`, so the served space is only viewable on the host machine — **unusable** for Jari's actual setup. He wants the local serve to be **shared on the LAN**: reachable from other devices on the same local network. (Chosen path "L" over "push everything to hosted".)
+The operator works from a **different machine on the same LAN** than the one running `glasspad`. Today the loopback `serve` binds `127.0.0.1`, so the served space is only viewable on the host machine and is **unusable** for that setup. The local serve needs to be **shared on the LAN**: reachable from other devices on the same local network. (Chosen path "L" over "push everything to hosted".)
 
 ## The constraint this fights — do NOT just bind 0.0.0.0
 
@@ -42,7 +42,7 @@ Design and implement a **LAN-reachable serve mode** that keeps the security post
 
 ## Related / lands
 - Lane B (server/CLI/loopback core): `src/cli.rs`, `src/server.rs`, the loopback Host guard, config (`src/config.rs`).
-- Historically `tw view` bridged server→seat for exactly this reason; this makes the local serve natively LAN-reachable instead.
+- Historically a remote-view helper bridged server to browser for exactly this reason; this makes the local serve natively LAN-reachable instead.
 
 ## Design decisions (implementation, 2026-08-14)
 

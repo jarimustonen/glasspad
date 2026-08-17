@@ -89,8 +89,7 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
 - ✅ **Tagged `v0.2.0`** + **GitHub Release** created (CHANGELOG notes).
 - ✅ **Published to crates.io** — `glasspad 0.2.0` is **live** (`cargo install glasspad`).
   Publish ran **in CI** via `.github/workflows/publish-crates.yml` on release-published,
-  using the `CARGO_REGISTRY_TOKEN` repo secret (provisioned from
-  `infra/secrets/crates-io.yaml`) — same mechanism as ossctl/issuectl. (A local
+  using the `CARGO_REGISTRY_TOKEN` repository secret. (A local
   `cargo publish` 403'd on a stale `~/.cargo/credentials.toml`; CI is the correct path.)
 
 ### 🚀 0.2.1 SHIPPED — all three channels live (2026-08-05)
@@ -98,20 +97,20 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
   arm64/x86_64 binaries, checksums, build-provenance attestations, installer script), and
   **Homebrew** `brew install jarimustonen/glasspad/glasspad` (formula in
   `jarimustonen/homebrew-glasspad`).
-- ✅ **cargo-dist** wired (`dist-workspace.toml` → `release.yml`); macOS on self-hosted
-  `hauis`; `HOMEBREW_TAP_TOKEN` set (via `gh auth token`).
+- ✅ **cargo-dist** wired (`dist-workspace.toml` → `release.yml`); macOS on a self-hosted
+  runner; `HOMEBREW_TAP_TOKEN` set (via `gh auth token`).
 - Bumps hit along the way (all fixed): missing `[profile.dist]`; unused `reqwest` pulling
-  `openssl-sys` (broke arm64-linux cross-compile) → removed; hauis git-400 from overlapping
+  `openssl-sys` (broke arm64-linux cross-compile) → removed; runner git-400 from overlapping
   mac jobs (rapid re-tag) → cleaned + run-once; empty tap repo (no `main`) → initialized;
   repo made **public** (needed for attestations); crates trigger moved to tag-push (the
   GITHUB_TOKEN release event never fired `publish-crates.yml`).
 - **Release recipe now:** `git push origin vX.Y.Z` → release.yml (binaries + Homebrew) +
   publish-crates.yml (crates.io), both on the tag push. Cut a tag once; don't re-tag while a
-  hauis mac job is in flight.
+  macOS job is in flight.
 
 ### Still open (polish — not release-blockers)
-- **Confirm placeholders:** LICENSE holder ("Jari Mustonen"), SECURITY/CoC contact
-  (`jari@itsellesi.fi`) — cosmetic.
+- **Confirm release metadata:** LICENSE attribution and private SECURITY/CoC reporting
+  channel.
 - **Round-it-out items** (`glasspad stop`, `GLASSPAD_PORT`, PID file) — deferred to 0.2.2.
 
 ## Comments

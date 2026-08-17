@@ -15,12 +15,12 @@ closed_by: claude
 
 ## Symptom
 On a hosted page, clicking a link that points to ANOTHER hosted page
-(`https://glasspad.maalla.dev/p/<slug>/`) yields a blank body with Chrome's
-**"glasspad.maalla.dev refused to connect."** The outer shell/header renders; only the
+(`https://share.example.com/p/<slug>/`) yields a blank body with Chrome's
+**"share.example.com refused to connect."** The outer shell/header renders; only the
 in-frame navigation fails. Real case: a digest index page's "Lue syväluotaus »" link →
 its deep-dive page. Repro:
 - index shell `…/p/ka3n23d2grsq4g6cterpvttxae/`, its content `/_c/index` contains
-  `<a href="https://glasspad.maalla.dev/p/nzmfhhskgustkzlknzktygy6uu/">Lue syväluotaus »</a>`.
+  `<a href="https://share.example.com/p/nzmfhhskgustkzlknzktygy6uu/">Lue syväluotaus »</a>`.
 - All three URLs return **200 via curl** — the target is served fine.
 
 ## Root cause

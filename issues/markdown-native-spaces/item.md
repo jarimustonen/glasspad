@@ -17,7 +17,7 @@ closed: 2026-08-11
 
 ## Description
 
-Gap 2 of the tilictl-docsite use case (split from multipage-hosted-space, which is Gap 1).
+Gap 2 of the example-producer-cli-docsite use case (split from multipage-hosted-space, which is Gap 1).
 
 Today serve/build scan .html artifacts ONLY — a directory of .md renders 0 pages. Only single-file 'render <x.md> --template' handles markdown.
 

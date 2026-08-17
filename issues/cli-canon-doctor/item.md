@@ -24,7 +24,7 @@ re-verification 2026-08-16. Canon: `AGENTS-AI-FIRST-CLI.md`. This is a **fix** i
 Agents have no cheap "is this tool healthy / correctly configured?" probe.
 
 **Do:** add a read-only `doctor` (with `--json` per-check `{id,status,message,fix_suggestion}`
-+ a `summary{ok,warn,fail}`, exit 1 on fail; optional `--fix`), matching the intakectl/issuectl
++ a `summary{ok,warn,fail}`, exit 1 on fail; optional `--fix`), matching the example-intake-tool/issuectl
 exemplars.
 
 **Current state (evidence):** `glasspad doctor` → unrecognized subcommand.

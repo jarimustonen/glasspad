@@ -332,14 +332,14 @@ mod tests {
         // navigates the top-level tab, not the sandboxed frame (whose target shell is
         // served `x-frame-options: DENY` → "refused to connect"). The absolute link
         // itself is preserved verbatim; only the default target changes.
-        let frag = r#"<a href="https://glasspad.maalla.dev/p/nzmfhhskgustkzlknzktygy6uu/">Lue syväluotaus »</a>"#;
+        let frag = r#"<a href="https://share.example.com/p/nzmfhhskgustkzlknzktygy6uu/">Lue syväluotaus »</a>"#;
         let out = render_artifact(frag, Theme::Auto);
         assert!(
             out.contains(r#"<base target="_top">"#),
             "inter-page link must carry top-level navigation intent"
         );
         assert!(
-            out.contains(r#"href="https://glasspad.maalla.dev/p/nzmfhhskgustkzlknzktygy6uu/""#),
+            out.contains(r#"href="https://share.example.com/p/nzmfhhskgustkzlknzktygy6uu/""#),
             "the link itself must be preserved"
         );
     }

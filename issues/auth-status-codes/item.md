@@ -2,7 +2,7 @@
 created: 2026-04-11
 updated: 2026-07-24
 type: decision
-reporter: jari
+reporter: maintainer
 assignee: jari
 status: wontfix
 priority: normal

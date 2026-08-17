@@ -2,7 +2,7 @@
 created: 2026-04-13
 updated: 2026-07-23
 type: task
-reporter: jari
+reporter: maintainer
 assignee: jari
 status: obsolete
 priority: high
