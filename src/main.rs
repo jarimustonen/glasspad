@@ -270,6 +270,9 @@ enum Commands {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
+    /// Run read-only configuration and bundled-skill self-diagnostics. Exits 1 if
+    /// any check fails; warnings alone still exit 0.
+    Doctor,
     /// Report the installed CLI version (for version-gating; use --json for a
     /// machine-readable envelope). Mirrors the built-in `--version` / `-V` flag.
     Version,
@@ -495,6 +498,7 @@ async fn main() {
             ConfigCmd::Path => cli::config_path(json),
             ConfigCmd::Show { server, api_key } => cli::config_show(server, api_key, json),
         },
+        Some(Commands::Doctor) => cli::doctor(json),
         Some(Commands::Version) => cli::version(json),
         Some(Commands::Skill {
             cmd,

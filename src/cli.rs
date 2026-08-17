@@ -699,6 +699,246 @@ pub fn config_show(server_flag: Option<String>, api_key_flag: Option<String>, js
     }
 }
 
+// --- doctor (AI-first §18) -------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct DoctorCheck {
+    id: &'static str,
+    status: &'static str,
+    message: String,
+    fix_suggestion: Option<String>,
+}
+
+impl DoctorCheck {
+    fn ok(id: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            id,
+            status: "ok",
+            message: message.into(),
+            fix_suggestion: None,
+        }
+    }
+
+    fn fail(
+        id: &'static str,
+        message: impl Into<String>,
+        fix_suggestion: impl Into<String>,
+    ) -> Self {
+        Self {
+            id,
+            status: "fail",
+            message: message.into(),
+            fix_suggestion: Some(fix_suggestion.into()),
+        }
+    }
+}
+
+/// Validate the metadata in the compiled skill bytes against the catalog used by
+/// `skill list` and `version`. This reads no installed skill and writes nothing.
+fn doctor_skill_check() -> DoctorCheck {
+    for skill in bundled_skills() {
+        let Some(frontmatter) = skill
+            .content
+            .strip_prefix("---\n")
+            .and_then(|body| body.split_once("\n---\n"))
+            .map(|(frontmatter, _)| frontmatter)
+        else {
+            return DoctorCheck::fail(
+                "skill.bundle",
+                format!(
+                    "bundled skill {:?} has no readable YAML frontmatter",
+                    skill.name
+                ),
+                "Reinstall glasspad from a verified release.",
+            );
+        };
+        let metadata: serde_yaml::Value = match serde_yaml::from_str(frontmatter) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                return DoctorCheck::fail(
+                    "skill.bundle",
+                    format!(
+                        "bundled skill {:?} has malformed YAML frontmatter: {error}",
+                        skill.name
+                    ),
+                    "Reinstall glasspad from a verified release.",
+                );
+            }
+        };
+        let string_field = |key| metadata.get(key).and_then(serde_yaml::Value::as_str);
+        let schema_version = metadata
+            .get("schema_version")
+            .and_then(serde_yaml::Value::as_u64);
+        if string_field("name") != Some(skill.name)
+            || string_field("cli_version") != Some(skill.cli_version)
+            || schema_version != Some(u64::from(skill.schema_version))
+        {
+            return DoctorCheck::fail(
+                "skill.bundle",
+                format!(
+                    "bundled skill {:?} metadata does not match the running CLI catalog",
+                    skill.name
+                ),
+                "Reinstall glasspad from a verified release.",
+            );
+        }
+    }
+    DoctorCheck::ok(
+        "skill.bundle",
+        format!(
+            "{} bundled skill(s) readable and synchronized with glasspad {}",
+            bundled_skills().len(),
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+}
+
+/// Diagnose hosted settings without resolving API-key material. The returned
+/// message exposes only `<set>` / `<unset>`, matching `config show`'s secret rule.
+fn doctor_hosted_check(cfg: &config::ResolvedConfig) -> DoctorCheck {
+    let target = match resolve_setting(None, "GLASSPAD_TARGET", None) {
+        Some(raw) => match Target::parse(&raw) {
+            Ok(target) => target,
+            Err(message) => {
+                return DoctorCheck::fail(
+                    "config.hosted",
+                    message,
+                    "Set $GLASSPAD_TARGET or config key `target` to `loopback` or `hosted`.",
+                );
+            }
+        },
+        None => cfg.target.unwrap_or(Target::Loopback),
+    };
+    let api_key_source = config_source(None, "GLASSPAD_API_KEY", cfg.api_key.is_some());
+    let api_key_set = api_key_is_set(api_key_source, cfg);
+    if target == Target::Loopback {
+        return DoctorCheck::ok(
+            "config.hosted",
+            format!(
+                "target is loopback; hosted settings are not required (api_key {})",
+                if api_key_set { "<set>" } else { "<unset>" }
+            ),
+        );
+    }
+
+    let server = resolve_setting(None, "GLASSPAD_SERVER", cfg.server.clone());
+    match (server, api_key_set) {
+        (Some(server), true) => DoctorCheck::ok(
+            "config.hosted",
+            format!("hosted settings ready: server {server}, api_key <set>"),
+        ),
+        (server, key_set) => {
+            let missing = match (server.is_none(), key_set) {
+                (true, false) => "config keys `server` and `api_key` are unset",
+                (true, true) => "config key `server` is unset",
+                (false, false) => {
+                    "config key `api_key` is unset or its env/file source is unavailable"
+                }
+                (false, true) => unreachable!(),
+            };
+            DoctorCheck::fail(
+                "config.hosted",
+                format!("hosted target is not ready: {missing}; api_key <unset>"),
+                "Set config keys `server` and `api_key`, or $GLASSPAD_SERVER and $GLASSPAD_API_KEY.",
+            )
+        }
+    }
+}
+
+/// `glasspad doctor` runs a small, operationally meaningful self-check. It is
+/// strictly read-only: config files and compiled skill bytes are only inspected.
+/// Every check runs even after a failure so one invocation gives a complete report.
+pub fn doctor(json: bool) {
+    let mut checks = Vec::new();
+    let config_result = match std::env::current_dir() {
+        Ok(cwd) => config::resolve(&cwd, &publish_config_candidates()),
+        Err(error) => {
+            checks.push(DoctorCheck::fail(
+                "config.file",
+                format!("cannot determine the current directory: {error}"),
+                "Run glasspad from an accessible directory.",
+            ));
+            Err(config::ConfigError {
+                code: "cwd_unavailable",
+                message: error.to_string(),
+            })
+        }
+    };
+
+    match config_result {
+        Ok(cfg) => {
+            let mut loaded = Vec::new();
+            if let Some(path) = &cfg.repo_config_path {
+                loaded.push(format!("repo config {}", path.display()));
+            }
+            if let Some(path) = &cfg.home_config_path {
+                loaded.push(format!("home config {}", path.display()));
+            }
+            match effective_home_config_path() {
+                Some((path, _)) if loaded.is_empty() => checks.push(DoctorCheck::ok(
+                    "config.file",
+                    format!(
+                        "no config file present (expected home config {}); loopback defaults remain available",
+                        path.display()
+                    ),
+                )),
+                Some(_) => checks.push(DoctorCheck::ok(
+                    "config.file",
+                    format!("configuration parsed from {}", loaded.join(" and ")),
+                )),
+                None => checks.push(DoctorCheck::fail(
+                    "config.file",
+                    "configuration parsed, but no home config path can be resolved",
+                    "Set $HOME or an absolute $XDG_CONFIG_HOME, then rerun `glasspad doctor`.",
+                )),
+            }
+            checks.push(doctor_hosted_check(&cfg));
+        }
+        Err(error) => {
+            if !checks.iter().any(|check| check.id == "config.file") {
+                checks.push(DoctorCheck::fail(
+                    "config.file",
+                    error.message,
+                    "Correct the reported config file; inspect its location with `glasspad config path`.",
+                ));
+            }
+            checks.push(DoctorCheck::fail(
+                "config.hosted",
+                "hosted settings could not be checked because configuration resolution failed",
+                "Fix `config.file`, then rerun `glasspad doctor`.",
+            ));
+        }
+    }
+    checks.push(doctor_skill_check());
+
+    let ok = checks.iter().filter(|check| check.status == "ok").count();
+    let warn = checks.iter().filter(|check| check.status == "warn").count();
+    let fail = checks.iter().filter(|check| check.status == "fail").count();
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "checks": checks,
+            "summary": { "ok": ok, "warn": warn, "fail": fail },
+        }));
+    } else {
+        for check in &checks {
+            println!(
+                "{} [{}] {}",
+                check.status.to_ascii_uppercase(),
+                check.id,
+                check.message
+            );
+            if let Some(suggestion) = &check.fix_suggestion {
+                println!("  fix: {suggestion}");
+            }
+        }
+        println!("summary: {ok} ok, {warn} warn, {fail} fail");
+    }
+    if fail > 0 {
+        std::process::exit(1);
+    }
+}
+
 // --- serve ----------------------------------------------------------------
 
 /// Build the loopback [`ArtifactHost`], attaching the return-channel submission
