@@ -6,7 +6,12 @@ ecosystems: [rust]
 targets:
   - {ecosystem: rust, package: glasspad, registry: crates.io, adapter: cargo-publish}
   - {ecosystem: rust, package: glasspad, registry: gh-releases, adapter: cargo-dist}
-  - {ecosystem: rust, package: glasspad, registry: homebrew, adapter: homebrew-tap}
+  # NO homebrew target: the tap (jarimustonen/homebrew-glasspad) is published by
+  # cargo-dist's publish-homebrew-formula CI job (dist-workspace.toml), NOT by the
+  # ossctl engine's tap-write. Declaring it as adapter homebrew-tap would make the
+  # engine a SECOND writer of the same formula (and its ownership-marker check would
+  # refuse the CI-written file mid-cut). Re-declare it as a CI-delegated homebrew
+  # target once ossctl ships one (ossctl issue homebrew-ci-delegated-adapter).
 versioning: semver
 changelog:
   mode: curated
