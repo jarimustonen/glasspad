@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: improvement
-status: in-progress
+status: done
 priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
@@ -12,6 +12,9 @@ commits:
   summary: mark help JSON issue in progress
 - hash: 025b0a6
   summary: add machine-readable JSON help
+- hash: fbd2d6c
+  summary: harden structured help discovery after review
+closed: 2026-08-17
 ---
 
 # cli-canon: §14 --help --json machine-readable help
