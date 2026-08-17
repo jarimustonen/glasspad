@@ -1346,6 +1346,13 @@ impl Store {
     /// page-idempotency and stable-space-key trees (a mapping is dead once its target
     /// slug leaves the served snapshot).
     fn sweep_mappings(&self, base_dir: &Path, live: &Snapshot) {
+        self.sweep_mappings_with_reader(base_dir, live, read_capped);
+    }
+
+    fn sweep_mappings_with_reader<F>(&self, base_dir: &Path, live: &Snapshot, mut read: F)
+    where
+        F: FnMut(&Path, u64) -> std::io::Result<Vec<u8>>,
+    {
         let tenants = match std::fs::read_dir(base_dir) {
             Ok(rd) => rd,
             Err(e) => {
@@ -1374,16 +1381,19 @@ impl Store {
                     let _ = std::fs::remove_file(&path);
                     continue;
                 }
-                // Delete a mapping whose target slug is no longer served, or which is
-                // unreadable/corrupt (either way it can no longer resolve to a page).
-                let dead = match read_capped(&path, MAX_META_BYTES) {
+                // Delete only when the mapping is positively dead or invalid. A
+                // transient read failure leaves its state unknown, so preserve it for
+                // the next sweep rather than discarding duplicate-publish protection.
+                let dead = match read(&path, MAX_META_BYTES) {
                     Ok(b) if b.len() as u64 <= MAX_META_BYTES => {
                         match serde_json::from_slice::<IdemRecord>(&b) {
                             Ok(rec) => !live.spaces.contains_key(&rec.slug),
                             Err(_) => true,
                         }
                     }
-                    _ => true,
+                    Ok(_) => true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                    Err(_) => false,
                 };
                 if dead {
                     let _ = std::fs::remove_file(&path);
@@ -3339,6 +3349,46 @@ mod tests {
         assert_eq!(
             store2.page_body(&p.slug, None).as_deref(),
             Some("<h1>recovered</h1>")
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn mapping_sweep_preserves_mapping_on_transient_read_error() {
+        let root = tmp_root("idem-sweep-transient");
+        let store = Store::open(&root, host()).unwrap();
+        store
+            .write_mapping(&store.idem_dir, "acme", "k", "deadslug")
+            .unwrap();
+        let mapping = store.idem_path("acme", "k");
+
+        store.sweep_mappings_with_reader(&store.idem_dir, &Snapshot::empty(), |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+
+        assert!(
+            mapping.is_file(),
+            "a transient read error must leave the mapping for a later sweep"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn mapping_sweep_removes_mapping_on_not_found_read_error() {
+        let root = tmp_root("idem-sweep-not-found");
+        let store = Store::open(&root, host()).unwrap();
+        store
+            .write_mapping(&store.idem_dir, "acme", "k", "deadslug")
+            .unwrap();
+        let mapping = store.idem_path("acme", "k");
+
+        store.sweep_mappings_with_reader(&store.idem_dir, &Snapshot::empty(), |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+        });
+
+        assert!(
+            !mapping.exists(),
+            "NotFound confirms that the mapping can be removed"
         );
         std::fs::remove_dir_all(&root).ok();
     }

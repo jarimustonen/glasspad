@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MAX_PAGES` is now enforced on scan/load as well as on write.
 
 ### Fixed
+- **Hosted idempotency sweeps preserve mappings on transient read errors**: GC now removes a
+  mapping only when it is missing, invalid, or positively points at a dead page, so temporary
+  filesystem failures cannot discard duplicate-publish protection.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.14.0] - 2026-08-15

@@ -2,7 +2,7 @@
 created: 2026-08-15
 updated: 2026-08-17
 type: improvement
-status: open
+status: in-progress
 priority: normal
 related: ['@hosted-store-generation-pointer']
 lane: hosted-hardening
