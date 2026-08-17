@@ -5,12 +5,64 @@ authoritative detail lives in the issue tracker (`issuectl`), not here.
 
 ## Where we are
 
-**CURRENT: glasspad 0.14.0 is FULLY RELEASED + verified live** (2026-08-15): crates.io
-`0.14.0` (sparse index via `cargo search`), GitHub Release `v0.14.0` (12 assets, not draft),
-Homebrew `version "0.14.0"`. Clean tag-triggered release, mac built clean on hauis.
-Next: Lane B hosted-store follow-ups, starting with `hosted-idem-sweep-robustness` unless
-Jari redirects to template design. The 0.3.0→0.13.0 release history is preserved below for
-context.
+**CURRENT: 0.14.0 is released + live; three units have landed on `main` since and are
+UNRELEASED.** `Cargo.toml` still says `0.14.0`; `CHANGELOG.md [Unreleased]` is written and
+describes what a `0.15.0` would ship. Jari's steer at the 2026-08-16/17 handoff: **do the
+next stint first, then release** — so 0.15.0 is deliberately not cut yet, and cutting it is
+the natural first or last act of the next round. Full green gate was verified on `main`
+after the three units integrated (see the round entry below). The 0.3.0→0.14.0 release
+history is preserved below for context.
+
+## Round 2026-08-16/17 — issue-queue triage + 3 parallel lanes landed (UNRELEASED)
+
+A triage-led round. The queue was audited before any code was written, then three lanes ran
+in parallel. **Nothing released** — see "CURRENT" above.
+
+**Triage: the queue was two-thirds noise.** Of 15 open issues, six came from the single
+`hosted-store-generation-pointer` review panel. **Four were closed `wontfix` without code**
+(`b55bca0`), each disqualified by justification the panel had itself written into the issue
+body: `hosted-store-input-revalidation` ("the HTTP layer validates and the store is
+server-private"), `hosted-loadbudget-asset-caps` (over-cap assets "re-rejected downstream by
+build_space_bundle"), `hosted-genptr-autoheal` ("won't happen on ext4 default", loses no
+data), `hosted-multiworker-credentials` (designs for a team that does not exist — its design
+constraint stays recorded in `issues/publish-first-surface/design.md`; refile if a second
+publisher appears). **Jari's rule, standing:** an issue whose own text says "another layer
+already validates this" or "does not happen on default settings" is not work. Filed upstream
+as homebase `triage-plausibility-filter` so `/triage-unlaned-issues` stops surfacing this
+class as lane-able.
+
+**Three units landed green (all self-merged, all verified by content on `main`):**
+- ✅ `cli-canon-config` (`049a5ba`+`86a1c48`) — `glasspad config path` / `config show`
+  (`--json`), reporting each effective value plus its provenance (flag / env / config file /
+  default). **`api_key` is reported only as `<set>`/`<unset>`** — never the secret, enforced
+  by `tests/config_cli.rs:60`. This gap was validated in-session: finding the effective
+  config cost four guessed paths.
+- ✅ `hosted-snapshot-arc-sharing` (`a74f9ec`) — `Snapshot.spaces` is now
+  `BTreeMap<String, Arc<Space>>`, so publish/update/round-push no longer deep-copy every
+  body under the mutation lock; `MAX_PAGES` now enforced on scan/load too. **Scope was
+  deliberately trimmed:** the issue also bundled narrowing the global mutation lock's
+  critical section — that was cut from the brief as crash-consistency-sensitive work
+  deserving its own unit and review. **It was never filed** (the worker returned an empty
+  `spinoff_proposals`), so it exists only in this note — Jari's open call, see Start here.
+- ✅ `space-custom-template` (`96dd8a3`+`0073173`) — a space can declare a producer-supplied
+  template applied to every markdown page; grouped sidebar, landing index, and TOC rail all
+  still work, and a space declaring no template renders byte-identically to before. Note this
+  landed **without** the `base-templates-design` process the prior handoff recommended.
+
+**Integrated green gate on `main`** (run under `rustup run stable`): `cargo fmt --all
+--check` + `cargo clippy --all-targets -- -D warnings` + `cargo test` (504 tests) +
+`./test-security.sh` (41 + Wave 2a, all PASS).
+
+**Docs/infra fixed this round:** the operating policy's stale "Deploy = localhost. There is
+no remote deploy." claim was removed (`3682d6a`) — `host-serve` is a public-bind mode meant
+for real deployment, and the false claim actively skewed threat-model reasoning during
+triage. The stale local toolchain (`rustup default` pinned to 1.85.0 while dependencies
+require ≥1.86, so `cargo build` failed out of the box) was fixed outside the repo; `rustup
+default` is now `stable` (1.97.1) and a plain `cargo build` succeeds.
+
+**Process gap found:** none of the three units wrote a `CHANGELOG.md` entry, because the
+briefs did not ask for one — `[Unreleased]` was still empty after three landings. Written by
+hand at handoff (`cfb5fcd`). **Put a changelog line in every worker brief.**
 
 ## Round 2026-08-15 — 0.14.0 shipped (generation-pointer hosted store)
 
@@ -313,35 +365,77 @@ onto glasspad. Two separate reasons, verified empirically against glasspad 0.7.0
 
 ## ▶ Start here (on return)
 
-`main == origin`, clean tree, nothing in flight, 0.14.0 released + verified live.
-Next ready hosted-core heads are `hosted-idem-sweep-robustness`,
-`hosted-gc-swap-on-partial-fsync`, and `hosted-snapshot-arc-sharing`. They all touch
-`src/hosted/*`, so sequence them in Lane B. `space-custom-template` still waits for a base
-templates design process before spawning.
+Clean tree, nothing in flight. **`main` was pushed to origin at this handoff.** Three units
+have landed since 0.14.0 and are **unreleased** — `Cargo.toml` is still `0.14.0` while
+`CHANGELOG.md [Unreleased]` describes the 0.15.0 content. **Jari's steer: run the next stint
+first, then release.** Cutting 0.15.0 needs only a version bump + `--finalize` of the
+changelog + tag push; the green gate was already verified on the current `main`.
 
-**Done this round:** `hosted-store-generation-pointer` closed `done`; 0.14.0 shipped and verified
-on crates.io, GitHub Release, and Homebrew.
+**Run the gate under `rustup run stable`** if a plain `cargo` ever fails on MSRV — the
+dependency chain (`idna_adapter` → `icu_*`) needs ≥1.86. The machine default was corrected to
+`stable` this round, so this should no longer bite.
 
-**2. `space-custom-template`** (feature, normal — **awaiting a template-design decision**,
-NOT a ready head). Whole-space **branded** template (sidebar/landing/prose as a unit), beyond
-the per-page built-in `prose`/`dashboard`. **Jari's steer: do a separate design process for
-templates first — a set of base templates** (current built-ins are skeletal: `prose` =
-`<article class="gp-prose">`, `dashboard` = `<div class="gp-card">`, plus arbitrary
-single-`{{content}}` HTML file templates via `--template`). Recommended next step: file a
-`base-templates-design` (design-first) issue and block `space-custom-template` on it, rather
-than building custom-per-space directly. Lane render. Do NOT spawn until the design exists.
+**Four lanes, four ready heads** (`issuectl dag` is authoritative — this is orientation only):
 
-**4. `docsite-autolink-convention`** (feature, low) — tracked, no rush. Mostly a DOCS/producer
-convention: document the "preprocess markdown before publish" seam for spaces, and allow a
-small set of author-supplied link classes (e.g. `<a class="xref">`) to survive into rendered
-prose for theming. glasspad does NOT own glossary/xref logic; aggountant keeps a thin
-preprocessor. Not this agenda's priority.
+**1. `repo-hygiene` → `audit-no-user-specifics`** (task, **high** — the only high-priority
+item open). The repo is public; audit it for user-specific facts that must not ship, and move
+any found into user config. The rule: *overridability does not launder a user-specific
+default* — an unset default is still whatever ships in the package; the correct built-in
+default is neutral/absent with an actionable error naming the config key. **Concrete lead
+already identified:** `dist-workspace.toml`'s `[dist.github-custom-runners]` routes the macOS
+release build to the personal self-hosted `hauis` runner, and `AGENTS.md` itself calls that a
+"personal / non-standard infra override". That is exactly the pattern the issue forbids.
 
-**Open decision (carried, not blocking):** file the hosted-submit **async/webhook push**
-(push-to-a-departed-agent) as a future design issue, or drop it? Left unfiled — Jari's call.
+**2. `cli-canon` → `cli-canon-version-payload`**, then `skill-subcommand`, `doctor`,
+`help-json`, `s22`. **Jari's decision 2026-08-16: all six cli-canon items get done**, over an
+orchestrator recommendation to close three as ceremony. That recommendation is recorded here
+only so the next agent does not re-litigate it: `version-payload` would add
+`supported_schemas`/`skills[]` that are a constant (one schema version, one shipped skill in
+`src/skill.md`); `skill list` would list that one skill (the `skill` verb with
+`--install-claude`/`--user`/`--agent` already exists, so this is smaller than the issue
+implies); `s22` is a core/cli crate split of a ~4.5k-line `src/cli.rs` that the canon itself
+marks "should" and never a release gate. **The decision is made — build them.**
+
+**3. `hosted-hardening` → `hosted-idem-sweep-robustness`**, then
+`hosted-gc-swap-on-partial-fsync`. Both carry `collision:src/hosted/store.rs`, so they
+sequence. **Trim `hosted-idem-sweep-robustness` before spawning** (recommended, not yet
+done): keep only the real part — `sweep_mappings` deletes a mapping on *any* `read_capped`
+error including transient EMFILE/EACCES, weakening exactly-once precisely under load; fix is
+to delete only on `NotFound` or an explicit parse/validation failure. **Drop** the symlink
+and empty-tenant-reap parts: same speculative class as the four closed this round.
+`hosted-gc-swap-on-partial-fsync` is a cheap ordering fix (swap the rebuilt snapshot before
+surfacing the post-removal fsync error) but its trigger is a failing disk — low priority,
+take it in passing, not as a head.
+
+**4. `space-polish` → `docsite-autolink-convention`** (feature, low). Mostly a DOCS/producer
+convention: document the "preprocess markdown before publish" seam, and allow a small set of
+author link classes (e.g. `<a class="xref">`) to survive into rendered prose for theming.
+glasspad does NOT own glossary/xref logic; aggountant keeps a thin preprocessor. Now that
+`space-custom-template` has landed, this is largely a paragraph of docs plus confirming which
+classes survive.
+
+**Open decisions carried for Jari (neither blocking):**
+1. **File the hosted-snapshot mutation-lock narrowing, or drop it?** Staging/fsync outside the
+   lock, holding it only for the pointer flip + snapshot swap. Cut from the arc-sharing brief
+   on purpose and **never filed** — it exists nowhere but this file. Orchestrator's view: file
+   it. It is a genuine throughput constraint (not speculative), but it touches crash-
+   consistency code and deserves its own review.
+2. **File the hosted-submit async/webhook push** (push-to-a-departed-agent) as a future design
+   issue, or drop it? Carried from earlier stints, still unfiled.
 
 _Older candidates still valid:_ tilictl docsite migration (tracked in tilictl); optional
 polish (below).
+
+### Standing lessons for worker briefs
+
+- **Every brief gets a `CHANGELOG.md` line in its done criteria.** Three units landed this
+  round without one.
+- **Every brief that includes `/llm-review` gets the plausibility filter**: reject findings
+  whose own justification is "another layer already validates this", "does not happen on
+  default settings", or that require an attacker who already has write access to the server's
+  own storage. Without it, the next review round regenerates the four issues closed this round.
+- **Prefer frequency over severity** when ranking: "happens on every publish" beat "could
+  corrupt data under a rare crash" in every call this round.
 
 ### Optional polish (no hard gate)
 
