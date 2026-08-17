@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Producer preprocessing convention for markdown spaces**: documents where glossary
+  autolinking and cross-reference resolution belong, with a worked example of semantic link
+  classes that a custom space template can style.
 - **`glasspad config path` / `glasspad config show`**: read-only inspection of the effective
   configuration and where each value came from (flag, environment variable, config file, or
   default), with a `--json` envelope. `api_key` is reported only as `<set>`/`<unset>` — the

@@ -1,9 +1,9 @@
 ---
 created: 2026-08-14
-updated: 2026-08-16
+updated: 2026-08-17
 type: feature
 reporter: maintainer
-status: open
+status: in-progress
 priority: low
 lane: space-polish
 lane_seq: 20
