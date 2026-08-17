@@ -65,10 +65,10 @@ built-in fragment template into a page (slug = filename stem), so a producer can
 glasspad the markdown directly instead of pre-rendered HTML. `.md` and `.html` pages
 coexist in one space — each file becomes a page keyed by its stem; a `.md` and `.html`
 that share a stem is a hard collision (rename one). Pick the reading theme per-space in
-`glasspad.yaml` with `template: prose` (the default) or `template: dashboard`; a fully
-custom template is authored via the single-file `glasspad render <file.md> --template
-<path>` path, or by pre-rendering to `.html`. Rendered markdown becomes an artifact in
-the **same** null-origin frozen sandbox as any other page — hostile HTML/script embedded
+`glasspad.yaml` with `template: prose` (the default), `template: dashboard`, or a relative
+fragment path such as `template: templates/prose.html`. Single-file markdown accepts the
+same custom-template seam via `glasspad render <file.md> --template <path>`. Rendered
+markdown becomes an artifact in the **same** null-origin frozen sandbox as any other page — hostile HTML/script embedded
 in the markdown cannot escape it or open an exfil channel (`connect-src 'none'` holds).
 
 #### Producer preprocessing: glossary autolinks and cross-references
