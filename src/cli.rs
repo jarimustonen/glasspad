@@ -733,34 +733,29 @@ impl DoctorCheck {
     }
 }
 
+fn parse_skill_frontmatter(content: &str) -> Result<serde_yaml::Value, String> {
+    // `include_str!` preserves checkout line endings. Accept CRLF so a healthy
+    // source build on Windows diagnoses the same bundled skill as an LF build.
+    let normalized = content.replace("\r\n", "\n");
+    let frontmatter = normalized
+        .strip_prefix("---\n")
+        .and_then(|body| body.split_once("\n---\n"))
+        .map(|(frontmatter, _)| frontmatter)
+        .ok_or_else(|| "no readable YAML frontmatter".to_string())?;
+    serde_yaml::from_str(frontmatter)
+        .map_err(|error| format!("malformed YAML frontmatter: {error}"))
+}
+
 /// Validate the metadata in the compiled skill bytes against the catalog used by
 /// `skill list` and `version`. This reads no installed skill and writes nothing.
 fn doctor_skill_check() -> DoctorCheck {
     for skill in bundled_skills() {
-        let Some(frontmatter) = skill
-            .content
-            .strip_prefix("---\n")
-            .and_then(|body| body.split_once("\n---\n"))
-            .map(|(frontmatter, _)| frontmatter)
-        else {
-            return DoctorCheck::fail(
-                "skill.bundle",
-                format!(
-                    "bundled skill {:?} has no readable YAML frontmatter",
-                    skill.name
-                ),
-                "Reinstall glasspad from a verified release.",
-            );
-        };
-        let metadata: serde_yaml::Value = match serde_yaml::from_str(frontmatter) {
+        let metadata = match parse_skill_frontmatter(skill.content) {
             Ok(metadata) => metadata,
             Err(error) => {
                 return DoctorCheck::fail(
                     "skill.bundle",
-                    format!(
-                        "bundled skill {:?} has malformed YAML frontmatter: {error}",
-                        skill.name
-                    ),
+                    format!("bundled skill {:?} has {error}", skill.name),
                     "Reinstall glasspad from a verified release.",
                 );
             }
@@ -838,7 +833,10 @@ fn doctor_hosted_check(cfg: &config::ResolvedConfig) -> DoctorCheck {
             };
             DoctorCheck::fail(
                 "config.hosted",
-                format!("hosted target is not ready: {missing}; api_key <unset>"),
+                format!(
+                    "hosted target is not ready: {missing}; api_key {}",
+                    if key_set { "<set>" } else { "<unset>" }
+                ),
                 "Set config keys `server` and `api_key`, or $GLASSPAD_SERVER and $GLASSPAD_API_KEY.",
             )
         }
@@ -874,22 +872,21 @@ pub fn doctor(json: bool) {
             if let Some(path) = &cfg.home_config_path {
                 loaded.push(format!("home config {}", path.display()));
             }
-            match effective_home_config_path() {
-                Some((path, _)) if loaded.is_empty() => checks.push(DoctorCheck::ok(
+            match (loaded.is_empty(), effective_home_config_path()) {
+                (false, _) => checks.push(DoctorCheck::ok(
+                    "config.file",
+                    format!("configuration parsed from {}", loaded.join(" and ")),
+                )),
+                (true, Some((path, _))) => checks.push(DoctorCheck::ok(
                     "config.file",
                     format!(
                         "no config file present (expected home config {}); loopback defaults remain available",
                         path.display()
                     ),
                 )),
-                Some(_) => checks.push(DoctorCheck::ok(
+                (true, None) => checks.push(DoctorCheck::ok(
                     "config.file",
-                    format!("configuration parsed from {}", loaded.join(" and ")),
-                )),
-                None => checks.push(DoctorCheck::fail(
-                    "config.file",
-                    "configuration parsed, but no home config path can be resolved",
-                    "Set $HOME or an absolute $XDG_CONFIG_HOME, then rerun `glasspad doctor`.",
+                    "no config file or home config path is available; loopback defaults remain available",
                 )),
             }
             checks.push(doctor_hosted_check(&cfg));
@@ -4763,6 +4760,16 @@ pub fn skill_compat(install: bool, user: bool, agent: Option<SkillAgent>, json: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_frontmatter_parser_accepts_lf_and_crlf() {
+        let lf = "---\nname: glasspad\ncli_version: 1.2.3\nschema_version: 1\n---\nbody\n";
+        let crlf = lf.replace('\n', "\r\n");
+        assert_eq!(
+            parse_skill_frontmatter(lf).unwrap(),
+            parse_skill_frontmatter(&crlf).unwrap()
+        );
+    }
 
     /// Feed `chunks` to a fresh decoder and collect the ids it surfaces.
     fn decode_ids(chunks: &[&[u8]]) -> Result<Vec<u64>, ()> {

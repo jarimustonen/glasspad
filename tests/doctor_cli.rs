@@ -23,12 +23,22 @@ fn write(path: &Path, body: &str) {
     fs::write(path, body).unwrap();
 }
 
+fn test_dirs(tag: &str) -> (PathBuf, PathBuf) {
+    let root = tmp_dir(tag);
+    let home = root.join("home");
+    let cwd = home.join("workspace");
+    fs::create_dir_all(&cwd).unwrap();
+    (cwd, home)
+}
+
 fn hermetic(cwd: &Path, home: &Path) -> Command {
     let mut command = bin();
     command
         .current_dir(cwd)
         .env("HOME", home)
+        .env("USERPROFILE", home)
         .env("XDG_CONFIG_HOME", home)
+        .env("APPDATA", home)
         .env_remove("GLASSPAD_TARGET")
         .env_remove("GLASSPAD_SERVER")
         .env_remove("GLASSPAD_API_KEY");
@@ -61,8 +71,7 @@ fn tree_snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 
 #[test]
 fn doctor_all_green_is_read_only() {
-    let cwd = tmp_dir("green-cwd");
-    let home = tmp_dir("green-home");
+    let (cwd, home) = test_dirs("green");
     write(&cwd.join("sentinel.txt"), "unchanged");
     write(&home.join("sentinel.txt"), "unchanged");
     let before_cwd = tree_snapshot(&cwd);
@@ -107,12 +116,13 @@ fn doctor_all_green_is_read_only() {
 
 #[test]
 fn doctor_failure_exits_one_with_canonical_json_shape() {
-    let cwd = tmp_dir("fail-cwd");
-    let home = tmp_dir("fail-home");
+    let (cwd, home) = test_dirs("fail");
     write(
         &home.join("glasspad/config.yaml"),
         "target: [not valid here\n",
     );
+    let before_cwd = tree_snapshot(&cwd);
+    let before_home = tree_snapshot(&home);
 
     let out = hermetic(&cwd, &home)
         .args(["doctor", "--json"])
@@ -140,12 +150,52 @@ fn doctor_failure_exits_one_with_canonical_json_shape() {
         .unwrap();
     assert_eq!(config["status"], "fail");
     assert!(config["fix_suggestion"].is_string());
+    assert_eq!(
+        tree_snapshot(&cwd),
+        before_cwd,
+        "doctor modified the cwd tree"
+    );
+    assert_eq!(
+        tree_snapshot(&home),
+        before_home,
+        "doctor modified the home tree"
+    );
+}
+
+#[test]
+fn hosted_failure_reports_the_redacted_key_state_accurately() {
+    let (cwd, home) = test_dirs("missing-server");
+    write(
+        &home.join("glasspad/config.yaml"),
+        "target: hosted\napi_key: configured-secret\n",
+    );
+
+    let out = hermetic(&cwd, &home)
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(!stdout.contains("configured-secret"));
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let hosted = value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "config.hosted")
+        .unwrap();
+    assert_eq!(hosted["status"], "fail");
+    assert!(
+        hosted["message"]
+            .as_str()
+            .unwrap()
+            .contains("api_key <set>")
+    );
 }
 
 #[test]
 fn doctor_never_prints_api_key_material() {
-    let cwd = tmp_dir("secret-cwd");
-    let home = tmp_dir("secret-home");
+    let (cwd, home) = test_dirs("secret");
     let secret = "doctor-secret-must-never-appear";
     write(
         &home.join("glasspad/config.yaml"),
