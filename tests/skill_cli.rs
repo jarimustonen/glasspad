@@ -26,6 +26,21 @@ fn temp_dir(tag: &str) -> PathBuf {
     p
 }
 
+fn frontmatter_field<'a>(content: &'a str, key: &str) -> &'a str {
+    let frontmatter = content
+        .strip_prefix("---\n")
+        .and_then(|body| body.split_once("\n---\n"))
+        .map(|(frontmatter, _)| frontmatter)
+        .expect("skill content must start with YAML frontmatter");
+    frontmatter
+        .lines()
+        .find_map(|line| {
+            let (field, value) = line.split_once(':')?;
+            (field == key).then(|| value.trim().trim_matches('"'))
+        })
+        .unwrap_or_else(|| panic!("skill frontmatter must contain {key}"))
+}
+
 #[test]
 fn skill_list_json_agrees_with_version_metadata() {
     let list_out = bin().args(["skill", "list", "--json"]).output().unwrap();
@@ -39,7 +54,20 @@ fn skill_list_json_agrees_with_version_metadata() {
     assert_eq!(listed[0]["name"], "glasspad");
     assert_eq!(listed[0]["cli_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(listed[0]["schema_version"], 1);
-    assert!(listed[0]["description"].as_str().unwrap().contains("HTML"));
+    let content = include_str!("../src/skill.md");
+    assert_eq!(listed[0]["name"], frontmatter_field(content, "name"));
+    assert_eq!(
+        listed[0]["description"],
+        frontmatter_field(content, "description")
+    );
+    assert_eq!(
+        listed[0]["cli_version"],
+        frontmatter_field(content, "cli_version")
+    );
+    assert_eq!(
+        listed[0]["schema_version"].to_string(),
+        frontmatter_field(content, "schema_version")
+    );
 
     let version_out = bin().args(["version", "--json"]).output().unwrap();
     assert!(version_out.status.success());
@@ -107,6 +135,43 @@ fn skill_print_unknown_name_is_structured_caller_error() {
 }
 
 #[test]
+fn canonical_no_name_install_covers_the_listed_inventory() {
+    let root = temp_dir("canonical-install-all");
+    let list_out = bin().args(["skill", "list", "--json"]).output().unwrap();
+    let list: serde_json::Value = serde_json::from_slice(&list_out.stdout).unwrap();
+    let listed_names: Vec<&str> = list["data"]["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|skill| skill["name"].as_str().unwrap())
+        .collect();
+
+    let out = bin()
+        .current_dir(&root)
+        .args(["skill", "install", "--agent", "pi", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let installed_names: Vec<&str> = value["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|target| target["skill"].as_str().unwrap())
+        .collect();
+    assert_eq!(installed_names, listed_names);
+    for name in listed_names {
+        assert!(
+            root.join(".pi/skills")
+                .join(name)
+                .join("SKILL.md")
+                .is_file()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn canonical_skill_install_routes_to_existing_installer() {
     let root = temp_dir("canonical-install");
     let out = bin()
@@ -123,6 +188,47 @@ fn canonical_skill_install_routes_to_existing_installer() {
         include_str!("../src/skill.md")
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn canonical_install_unknown_name_is_structured_caller_error() {
+    let out = bin()
+        .args(["skill", "install", "not-bundled", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "skill_not_found");
+    assert_eq!(error["error"]["invalid_value"], "not-bundled");
+}
+
+#[test]
+fn bare_skill_compatibility_remains_a_raw_dump() {
+    for args in [&["skill"][..], &["skill", "--json"][..]] {
+        let out = bin().args(args).output().unwrap();
+        assert!(out.status.success(), "stderr: {:?}", out.stderr);
+        assert_eq!(out.stdout, include_bytes!("../src/skill.md"));
+        assert!(out.stderr.is_empty());
+    }
+}
+
+#[test]
+fn compatibility_install_flag_conflicts_with_subcommands() {
+    for flag in ["--install", "--install-claude"] {
+        let out = bin()
+            .args(["--json", "skill", flag, "list"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "flag: {flag}");
+        assert!(out.stdout.is_empty(), "flag: {flag}");
+        let error: serde_json::Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "invalid_skill_invocation");
+        assert_eq!(
+            error["error"]["invalid_value"],
+            "compatibility install flag"
+        );
+    }
 }
 
 #[test]

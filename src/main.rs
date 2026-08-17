@@ -507,8 +507,8 @@ async fn main() {
                     json,
                     1,
                     "invalid_skill_invocation",
-                    "the compatibility --install/--install-claude flag cannot be combined with a skill subcommand; use `glasspad skill install`",
-                    Some("--install-claude"),
+                    "a compatibility install flag cannot be combined with a skill subcommand; use `glasspad skill install`",
+                    Some("compatibility install flag"),
                     None,
                 );
             }

@@ -4155,9 +4155,8 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
 
 // --- skill (AI-first §15/§16) ---------------------------------------------
 
-/// One skill compiled into the binary. Content, versions, and the source path live
-/// together so `version --json`, `skill list`, `skill print`, and `skill install`
-/// cannot drift onto separate inventories.
+/// One skill compiled into the binary. Content, versions, and source path live
+/// together as the shared inventory for `version`, `list`, `print`, and `install`.
 struct BundledSkill {
     name: &'static str,
     description: &'static str,
@@ -4169,28 +4168,29 @@ struct BundledSkill {
 
 const BUNDLED_SKILLS: &[BundledSkill] = &[BundledSkill {
     name: "glasspad",
-    description: "Show rich visual HTML views and publish markdown or HTML artifacts for users to open in a browser.",
+    description: "Show rich visual HTML views (dashboards, charts, interactive UIs) to the user in their browser. Use when asked to visualize, plot, chart, dashboard, or \"show me\" something.",
     cli_version: env!("CARGO_PKG_VERSION"),
     schema_version: 1,
     content: include_str!("skill.md"),
     path_in_repo: "src/skill.md",
 }];
 
+const DEFAULT_SKILL: &str = BUNDLED_SKILLS[0].name;
+
 fn bundled_skills() -> &'static [BundledSkill] {
     BUNDLED_SKILLS
 }
 
+fn skill_metadata(skill: &BundledSkill) -> serde_json::Value {
+    json!({
+        "name": skill.name,
+        "cli_version": skill.cli_version,
+        "schema_version": skill.schema_version,
+    })
+}
+
 fn bundled_skill_metadata() -> Vec<serde_json::Value> {
-    bundled_skills()
-        .iter()
-        .map(|skill| {
-            json!({
-                "name": skill.name,
-                "cli_version": skill.cli_version,
-                "schema_version": skill.schema_version,
-            })
-        })
-        .collect()
+    bundled_skills().iter().map(skill_metadata).collect()
 }
 
 fn find_bundled_skill(name: &str, json: bool) -> &'static BundledSkill {
@@ -4214,19 +4214,16 @@ fn find_bundled_skill(name: &str, json: bool) -> &'static BundledSkill {
     );
 }
 
-/// `glasspad skill list` — list the skills compiled into this binary. The JSON
+/// `glasspad skill list` lists the skills compiled into this binary. The JSON
 /// envelope exposes the exact metadata also returned by `version --json`.
 pub fn skill_list(json: bool) {
     if json {
         let skills: Vec<_> = bundled_skills()
             .iter()
             .map(|skill| {
-                json!({
-                    "name": skill.name,
-                    "description": skill.description,
-                    "cli_version": skill.cli_version,
-                    "schema_version": skill.schema_version,
-                })
+                let mut metadata = skill_metadata(skill);
+                metadata["description"] = json!(skill.description);
+                metadata
             })
             .collect();
         emit_json_line(&json!({
@@ -4244,7 +4241,7 @@ pub fn skill_list(json: bool) {
     }
 }
 
-/// `glasspad skill print <name>` — stream the canonical bundled bytes without any
+/// `glasspad skill print <name>` streams the canonical bundled bytes without any
 /// filesystem or network access. JSON mode separates metadata from content.
 pub fn skill_print(name: &str, json: bool) {
     let skill = find_bundled_skill(name, json);
@@ -4373,9 +4370,9 @@ fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
     (resolved, created)
 }
 
-/// `glasspad skill install [glasspad]` — install the companion `SKILL.md` into
-/// one or more agent skill directories (`--user` for the home dir;
-/// `--agent {claude|pi|all}` selects the target(s), default dual-home both).
+/// `glasspad skill install [<name>]` installs one bundled skill, or every bundled
+/// skill when the name is omitted. `--user` selects home scope and
+/// `--agent {claude|pi|all}` selects the runtime directories.
 ///
 /// Under `--json`, an install emits the AI-first §10 success envelope
 /// (`{schema_version, installed, scope, path, created, targets, cli_version,
@@ -4385,14 +4382,14 @@ fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
 /// symlinked destination) uses the shared [`exit_error`] contract (structured
 /// error on stderr, non-zero exit).
 ///
-/// Partial-failure semantics: targets are written in order (Claude, then pi). If a
-/// later target's write fails the command exits non-zero via `exit_error` and any
-/// earlier target already written is left in place — the install is not
-/// transactional. This is safe because every install is idempotent: re-running
-/// completes the remaining target(s) without disturbing the ones already written.
+/// Partial-failure semantics: skills use inventory order, with Claude then pi for
+/// each skill. If a later write fails, earlier targets remain in place. The install
+/// is idempotent, so re-running completes or refreshes every selected target.
 pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, json: bool) {
-    let skill = find_bundled_skill(name.unwrap_or("glasspad"), json);
-    let skill_content = skill.content;
+    let selected: Vec<&BundledSkill> = match name {
+        Some(name) => vec![find_bundled_skill(name, json)],
+        None => bundled_skills().iter().collect(),
+    };
 
     // `--agent` defaults to dual-home when omitted. Resolving it here (rather than
     // via a clap `default_value_t`) keeps the flag genuinely optional so its
@@ -4400,10 +4397,7 @@ pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, 
     let agent = agent.unwrap_or(SkillAgent::All);
     let scope = if user { "user" } else { "project" };
 
-    // Resolve HOME once — both agent targets share it under `--user`. A missing
-    // home dir is a system-level failure the caller cannot fix by correcting
-    // input → structured error, exit 2 (never panic, which would bypass the
-    // --json contract with a raw backtrace).
+    // Resolve HOME once because both agent targets share it under `--user`.
     let home = if user {
         match dirs::home_dir() {
             Some(h) => Some(h),
@@ -4422,19 +4416,10 @@ pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, 
 
     let want_claude = matches!(agent, SkillAgent::Claude | SkillAgent::All);
     let want_pi = matches!(agent, SkillAgent::Pi | SkillAgent::All);
-
-    // Claude is written first so its top-level envelope fields (path/scope/created)
-    // and the human "Installed skill to …" line stay backward-compatible: an
-    // existing `skill --install-claude [--user]` invocation writes the same Claude
-    // path with the same reported shape; the pi target is added alongside it.
-    let mut targets: Vec<(&str, PathBuf, bool)> = Vec::new();
-
-    if want_claude {
-        let base = match &home {
+    let claude_base = if want_claude {
+        Some(match &home {
             Some(h) => h.join(".claude"),
             None => {
-                // Project scope keeps the "are you in a project root?" guard: a
-                // missing `.claude/` is a user error (exit 1), not a system fault.
                 let claude_dir = PathBuf::from(".claude");
                 if !claude_dir.exists() {
                     exit_error(
@@ -4450,46 +4435,49 @@ pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, 
                 }
                 claude_dir
             }
-        };
-        let (path, created) = write_skill_file(&base.join("skills/glasspad"), skill_content, json);
-        targets.push(("claude", path, created));
-    }
-
-    if want_pi {
-        // pi.dev: `~/.pi/agent/skills/` (user) or `./.pi/skills/` (project). Unlike
-        // Claude's project guard, the pi project dir is created on demand — pi has
-        // no established project-root marker to key off, and creating `.pi/skills/`
-        // is the least-surprise behavior for a pi-only project install.
-        let base = match &home {
+        })
+    } else {
+        None
+    };
+    let pi_base = if want_pi {
+        Some(match &home {
             Some(h) => h.join(".pi/agent"),
             None => PathBuf::from(".pi"),
-        };
-        let (path, created) = write_skill_file(&base.join("skills/glasspad"), skill_content, json);
-        targets.push(("pi", path, created));
+        })
+    } else {
+        None
+    };
+
+    // Inventory order is stable. For each skill, Claude precedes pi, preserving
+    // the legacy first-target fields for today's default skill.
+    let mut targets: Vec<(&str, &str, PathBuf, bool)> = Vec::new();
+    for skill in selected {
+        if let Some(base) = &claude_base {
+            let (path, created) =
+                write_skill_file(&base.join("skills").join(skill.name), skill.content, json);
+            targets.push((skill.name, "claude", path, created));
+        }
+        if let Some(base) = &pi_base {
+            let (path, created) =
+                write_skill_file(&base.join("skills").join(skill.name), skill.content, json);
+            targets.push((skill.name, "pi", path, created));
+        }
     }
 
     if json {
-        // Per AI-first §10: report every path written — never silently write a
-        // second target the envelope omits. The top-level path/created describe the
-        // first target (Claude when present) for backward compatibility; `targets`
-        // enumerates all of them.
         let targets_json: Vec<_> = targets
             .iter()
-            .map(|(a, p, c)| {
+            .map(|(skill, agent, path, created)| {
                 json!({
-                    "agent": a,
+                    "skill": skill,
+                    "agent": agent,
                     "scope": scope,
-                    "path": p.display().to_string(),
-                    "created": c,
+                    "path": path.display().to_string(),
+                    "created": created,
                 })
             })
             .collect();
-        // At least one of want_claude / want_pi is always true for the three
-        // `SkillAgent` variants, so `targets` is non-empty here — but reach for the
-        // first entry via `first()` rather than an index so a future variant that
-        // selects nothing surfaces the shared structured-error contract instead of
-        // an out-of-bounds panic that would bypass the --json envelope.
-        let (_, first_path, first_created) = match targets.first() {
+        let (_, _, first_path, first_created) = match targets.first() {
             Some(t) => t,
             None => exit_error(
                 json,
@@ -4500,7 +4488,7 @@ pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, 
                 None,
             ),
         };
-        let payload = json!({
+        emit_json_line(&json!({
             "schema_version": SCHEMA_VERSION,
             "installed": true,
             "scope": scope,
@@ -4508,13 +4496,10 @@ pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, 
             "created": first_created,
             "targets": targets_json,
             "cli_version": env!("CARGO_PKG_VERSION"),
-            // Present (empty) for cross-command uniformity: callers read
-            // `warnings` unconditionally across every envelope (see `data`).
             "warnings": [],
-        });
-        emit_json_line(&payload);
+        }));
     } else {
-        for (_, path, _) in &targets {
+        for (_, _, path, _) in &targets {
             println!("Installed skill to {}", path.display());
         }
     }
@@ -4525,9 +4510,13 @@ pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, 
 /// the canonical installer implementation.
 pub fn skill_compat(install: bool, user: bool, agent: Option<SkillAgent>, json: bool) {
     if install {
-        skill_install(None, user, agent, json);
+        // The flattened compatibility surface predates install-all semantics and
+        // continues to install only glasspad if more skills are bundled later.
+        skill_install(Some(DEFAULT_SKILL), user, agent, json);
     } else {
-        skill_print("glasspad", false);
+        // Legacy `skill --json` also emitted raw markdown. Preserve those bytes;
+        // canonical structured inspection is `skill print glasspad --json`.
+        skill_print(DEFAULT_SKILL, false);
     }
 }
 
