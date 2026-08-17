@@ -7,6 +7,9 @@ priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
 lane_seq: 50
+commits:
+- hash: 0059ad10c74c08e82825d454d1d859f7b86ad0e6
+  summary: add read-only doctor diagnostics
 ---
 
 # cli-canon: §18 doctor self-diagnostic
