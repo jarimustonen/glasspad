@@ -3362,10 +3362,15 @@ mod tests {
             .unwrap();
         let mapping = store.idem_path("acme", "k");
 
-        store.sweep_mappings_with_reader(&store.idem_dir, &Snapshot::empty(), |_, _| {
+        let mut reads = 0;
+        store.sweep_mappings_with_reader(&store.idem_dir, &Snapshot::empty(), |path, cap| {
+            reads += 1;
+            assert_eq!(path, mapping);
+            assert_eq!(cap, MAX_META_BYTES);
             Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
         });
 
+        assert_eq!(reads, 1, "the sweep must attempt to read the mapping");
         assert!(
             mapping.is_file(),
             "a transient read error must leave the mapping for a later sweep"
