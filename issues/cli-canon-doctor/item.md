@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: improvement
-status: in-progress
+status: done
 priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
@@ -12,6 +12,7 @@ commits:
   summary: add read-only doctor diagnostics
 - hash: 70ecc07060fb2e677faa6e1b7e808483e3384fc9
   summary: apply doctor review findings
+closed: 2026-08-17
 ---
 
 # cli-canon: §18 doctor self-diagnostic
