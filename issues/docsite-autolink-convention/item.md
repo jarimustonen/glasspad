@@ -3,10 +3,16 @@ created: 2026-08-14
 updated: 2026-08-17
 type: feature
 reporter: maintainer
-status: in-progress
+status: done
 priority: low
 lane: space-polish
 lane_seq: 20
+commits:
+- hash: d2191df
+  summary: document producer preprocessing seam and link-class contract
+- hash: 18acc11
+  summary: clarify custom directory template configuration
+closed: 2026-08-17
 ---
 
 # Documented producer convention for cross-doc autolink + glossary term linking in spaces
