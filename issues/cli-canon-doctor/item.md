@@ -10,6 +10,8 @@ lane_seq: 50
 commits:
 - hash: 0059ad10c74c08e82825d454d1d859f7b86ad0e6
   summary: add read-only doctor diagnostics
+- hash: 70ecc07060fb2e677faa6e1b7e808483e3384fc9
+  summary: apply doctor review findings
 ---
 
 # cli-canon: §18 doctor self-diagnostic
