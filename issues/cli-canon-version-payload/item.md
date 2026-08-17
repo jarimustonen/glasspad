@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: improvement
-status: in-progress
+status: done
 priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
@@ -10,6 +10,9 @@ lane_seq: 20
 commits:
 - hash: 00180da2195b5dca44061a81582b2d645dc7232f
   summary: report supported schemas and bundled skill metadata
+- hash: 8a5e55941a7bc0cb0ed83794fd5f1f2fd9dfb319
+  summary: align skill identity metadata after review
+closed: 2026-08-17
 ---
 
 # cli-canon: §10 version --json supported_schemas + skills[]
