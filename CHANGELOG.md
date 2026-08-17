@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
+
+### Added
+- **Companion skill discovery and inspection**: `glasspad skill list`, `skill print`,
+  and `skill install` expose the bundled AI operating manual without breaking the
+  existing flattened install flags. Printing is read-only and supports a versioned
+  `--json` payload.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.15.0] - 2026-08-17

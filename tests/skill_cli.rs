@@ -1,4 +1,5 @@
-//! End-to-end contract tests for `glasspad skill --install-claude [--json]`.
+//! End-to-end contract tests for the canonical `glasspad skill` subcommands and
+//! the backward-compatible `skill --install-claude [--json]` surface.
 //!
 //! Drives the built binary (`CARGO_BIN_EXE_glasspad`) so the tests exercise the
 //! real CLI surface: under `--json` the install emits ONLY a versioned envelope
@@ -23,6 +24,105 @@ fn temp_dir(tag: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
     p
+}
+
+#[test]
+fn skill_list_json_agrees_with_version_metadata() {
+    let list_out = bin().args(["skill", "list", "--json"]).output().unwrap();
+    assert!(list_out.status.success(), "stderr: {:?}", list_out.stderr);
+    assert!(list_out.stderr.is_empty());
+    let list: serde_json::Value = serde_json::from_slice(&list_out.stdout).unwrap();
+    assert_eq!(list["schema_version"], 1);
+    assert_eq!(list["warnings"], serde_json::json!([]));
+    let listed = list["data"]["skills"].as_array().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["name"], "glasspad");
+    assert_eq!(listed[0]["cli_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(listed[0]["schema_version"], 1);
+    assert!(listed[0]["description"].as_str().unwrap().contains("HTML"));
+
+    let version_out = bin().args(["version", "--json"]).output().unwrap();
+    assert!(version_out.status.success());
+    let version: serde_json::Value = serde_json::from_slice(&version_out.stdout).unwrap();
+    let listed_metadata: Vec<_> = listed
+        .iter()
+        .map(|skill| {
+            serde_json::json!({
+                "name": skill["name"],
+                "cli_version": skill["cli_version"],
+                "schema_version": skill["schema_version"],
+            })
+        })
+        .collect();
+    assert_eq!(
+        version["data"]["skills"],
+        serde_json::json!(listed_metadata)
+    );
+}
+
+#[test]
+fn skill_print_streams_exact_content_without_side_effects() {
+    let root = temp_dir("print-read-only");
+    let out = bin()
+        .current_dir(&root)
+        .args(["skill", "print", "glasspad"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(out.stdout, include_bytes!("../src/skill.md"));
+    assert!(out.stderr.is_empty());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+
+    let json_out = bin()
+        .current_dir(&root)
+        .args(["skill", "print", "glasspad", "--json"])
+        .output()
+        .unwrap();
+    assert!(json_out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&json_out.stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["name"], "glasspad");
+    assert_eq!(value["cli_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["schema_version_skill"], 1);
+    assert_eq!(value["content"], include_str!("../src/skill.md"));
+    assert_eq!(value["path_in_repo"], "src/skill.md");
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn skill_print_unknown_name_is_structured_caller_error() {
+    let out = bin()
+        .args(["skill", "print", "not-bundled", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&out.stderr).unwrap();
+    assert_eq!(error["schema_version"], 1);
+    assert_eq!(error["error"]["code"], "skill_not_found");
+    assert_eq!(error["error"]["invalid_value"], "not-bundled");
+    assert_eq!(error["error"]["expected"], serde_json::json!(["glasspad"]));
+}
+
+#[test]
+fn canonical_skill_install_routes_to_existing_installer() {
+    let root = temp_dir("canonical-install");
+    let out = bin()
+        .current_dir(&root)
+        .args(["skill", "install", "glasspad", "--agent", "pi", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["installed"], true);
+    assert_eq!(value["targets"][0]["agent"], "pi");
+    assert_eq!(
+        std::fs::read_to_string(root.join(".pi/skills/glasspad/SKILL.md")).unwrap(),
+        include_str!("../src/skill.md")
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

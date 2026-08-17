@@ -273,21 +273,40 @@ enum Commands {
     /// Report the installed CLI version (for version-gating; use --json for a
     /// machine-readable envelope). Mirrors the built-in `--version` / `-V` flag.
     Version,
-    /// Output or install the CLI's companion skill (its operating manual).
+    /// List, print, or install the companion AI skill bundled with this binary.
     Skill {
-        /// Install the skill file. Project-level by default, --user for the home dir.
-        /// (`--install` is the preferred spelling now that the install dual-homes
-        /// beyond Claude Code; `--install-claude` is kept as a compatibility alias.)
+        #[command(subcommand)]
+        cmd: Option<SkillCmd>,
+        /// Compatibility alias for `skill install`. Project-level by default.
         #[arg(long = "install-claude", alias = "install")]
         install_claude: bool,
-        /// Use with --install: install under the home dir instead of the project
+        /// Use with the compatibility install flag: install under the home dir.
         #[arg(long, requires = "install_claude")]
         user: bool,
-        /// With --install: which agent skill dir(s) to install into — `claude`
-        /// (~/.claude or ./.claude), `pi` (~/.pi/agent or ./.pi), or `all` (dual-home
-        /// both). Omit to dual-home (the default). Optional so that passing it
-        /// without --install is a usage error rather than a silent no-op.
+        /// With the compatibility install flag: select `claude`, `pi`, or `all`.
         #[arg(long, value_enum, requires = "install_claude")]
+        agent: Option<cli::SkillAgent>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCmd {
+    /// List skills embedded in this binary and their version metadata.
+    List,
+    /// Stream a bundled SKILL.md to stdout without installing it.
+    Print {
+        /// Skill name (see `skill list`).
+        name: String,
+    },
+    /// Install one bundled skill, or every bundled skill when NAME is omitted.
+    Install {
+        /// Skill name (see `skill list`). Omit to install every skill.
+        name: Option<String>,
+        /// Install under the home dir instead of the current project.
+        #[arg(long)]
+        user: bool,
+        /// Select the agent skill directory: `claude`, `pi`, or `all`.
+        #[arg(long, value_enum)]
         agent: Option<cli::SkillAgent>,
     },
 }
@@ -478,10 +497,30 @@ async fn main() {
         },
         Some(Commands::Version) => cli::version(json),
         Some(Commands::Skill {
+            cmd,
             install_claude,
             user,
             agent,
-        }) => cli::skill(install_claude, user, agent, json),
+        }) => {
+            if cmd.is_some() && install_claude {
+                cli::exit_error(
+                    json,
+                    1,
+                    "invalid_skill_invocation",
+                    "the compatibility --install/--install-claude flag cannot be combined with a skill subcommand; use `glasspad skill install`",
+                    Some("--install-claude"),
+                    None,
+                );
+            }
+            match cmd {
+                Some(SkillCmd::List) => cli::skill_list(json),
+                Some(SkillCmd::Print { name }) => cli::skill_print(&name, json),
+                Some(SkillCmd::Install { name, user, agent }) => {
+                    cli::skill_install(name.as_deref(), user, agent, json)
+                }
+                None => cli::skill_compat(install_claude, user, agent, json),
+            }
+        }
         // `arg_required_else_help` covers a bare `glasspad`; this reaches only a
         // no-subcommand invocation that still carried an arg (e.g. `glasspad
         // --json`). Print help and exit non-zero (a usage error, like clap's).

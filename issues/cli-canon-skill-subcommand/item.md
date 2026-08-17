@@ -7,6 +7,9 @@ priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
 lane_seq: 40
+commits:
+- hash: 6d30d4e76920c444abe99958d5b8230b0e80d7c1
+  summary: mark skill subcommand work in progress
 ---
 
 # cli-canon: §15/§16 skill list/print subcommands

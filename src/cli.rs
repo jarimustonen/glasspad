@@ -462,15 +462,10 @@ pub fn version(json: bool) {
                 // `Option<&str>` → a JSON string or `null`; the key is always
                 // present so a strict consumer never hits a missing-field error.
                 "commit": commit,
-                // Glasspad currently has one JSON schema and one bundled companion
-                // skill. Reuse the envelope schema and Cargo package metadata as
-                // their existing sources of truth rather than adding a registry.
                 "supported_schemas": [SCHEMA_VERSION],
-                "skills": [{
-                    "name": name,
-                    "cli_version": ver,
-                    "schema_version": SCHEMA_VERSION,
-                }],
+                // `skill list` uses this same accessor, so version drift audits and
+                // skill discovery cannot report divergent bundled-skill metadata.
+                "skills": bundled_skill_metadata(),
             },
             // Present (empty) for cross-command uniformity: callers read
             // `warnings` unconditionally across every envelope.
@@ -4158,9 +4153,116 @@ fn read_data_file(file: &Path, json: bool) -> Vec<u8> {
     }
 }
 
-// --- skill (AI-first §15) -------------------------------------------------
+// --- skill (AI-first §15/§16) ---------------------------------------------
 
-/// Which agent skill directory(ies) `skill --install-claude` writes into.
+/// One skill compiled into the binary. Content, versions, and the source path live
+/// together so `version --json`, `skill list`, `skill print`, and `skill install`
+/// cannot drift onto separate inventories.
+struct BundledSkill {
+    name: &'static str,
+    description: &'static str,
+    cli_version: &'static str,
+    schema_version: u32,
+    content: &'static str,
+    path_in_repo: &'static str,
+}
+
+const BUNDLED_SKILLS: &[BundledSkill] = &[BundledSkill {
+    name: "glasspad",
+    description: "Show rich visual HTML views and publish markdown or HTML artifacts for users to open in a browser.",
+    cli_version: env!("CARGO_PKG_VERSION"),
+    schema_version: 1,
+    content: include_str!("skill.md"),
+    path_in_repo: "src/skill.md",
+}];
+
+fn bundled_skills() -> &'static [BundledSkill] {
+    BUNDLED_SKILLS
+}
+
+fn bundled_skill_metadata() -> Vec<serde_json::Value> {
+    bundled_skills()
+        .iter()
+        .map(|skill| {
+            json!({
+                "name": skill.name,
+                "cli_version": skill.cli_version,
+                "schema_version": skill.schema_version,
+            })
+        })
+        .collect()
+}
+
+fn find_bundled_skill(name: &str, json: bool) -> &'static BundledSkill {
+    if let Some(skill) = bundled_skills().iter().find(|skill| skill.name == name) {
+        return skill;
+    }
+    let available: Vec<String> = bundled_skills()
+        .iter()
+        .map(|skill| skill.name.to_string())
+        .collect();
+    exit_error(
+        json,
+        1,
+        "skill_not_found",
+        &format!(
+            "no bundled skill named {name:?}; available: {}",
+            available.join(", ")
+        ),
+        Some(name),
+        Some(available),
+    );
+}
+
+/// `glasspad skill list` — list the skills compiled into this binary. The JSON
+/// envelope exposes the exact metadata also returned by `version --json`.
+pub fn skill_list(json: bool) {
+    if json {
+        let skills: Vec<_> = bundled_skills()
+            .iter()
+            .map(|skill| {
+                json!({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "cli_version": skill.cli_version,
+                    "schema_version": skill.schema_version,
+                })
+            })
+            .collect();
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "data": { "skills": skills },
+            "warnings": [],
+        }));
+    } else {
+        for skill in bundled_skills() {
+            println!(
+                "{}\tcli {}\tschema {}\t{}",
+                skill.name, skill.cli_version, skill.schema_version, skill.description
+            );
+        }
+    }
+}
+
+/// `glasspad skill print <name>` — stream the canonical bundled bytes without any
+/// filesystem or network access. JSON mode separates metadata from content.
+pub fn skill_print(name: &str, json: bool) {
+    let skill = find_bundled_skill(name, json);
+    if json {
+        emit_json_line(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "name": skill.name,
+            "cli_version": skill.cli_version,
+            "schema_version_skill": skill.schema_version,
+            "content": skill.content,
+            "path_in_repo": skill.path_in_repo,
+        }));
+    } else {
+        print!("{}", skill.content);
+    }
+}
+
+/// Which agent skill directory(ies) `skill install` writes into.
 ///
 /// The CLI ships one companion skill (`SKILL.md`); the migration from Claude Code
 /// to pi.dev means the *same* skill must be discoverable under both harnesses.
@@ -4271,10 +4373,9 @@ fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
     (resolved, created)
 }
 
-/// `glasspad skill` — print the companion `SKILL.md`, or install it into one or
-/// more agent skill directories (`--install-claude`; `--user` for the home dir;
-/// `--agent {claude|pi|all}` selects the target(s), default dual-home both — see
-/// [`SkillAgent`]).
+/// `glasspad skill install [glasspad]` — install the companion `SKILL.md` into
+/// one or more agent skill directories (`--user` for the home dir;
+/// `--agent {claude|pi|all}` selects the target(s), default dual-home both).
 ///
 /// Under `--json`, an install emits the AI-first §10 success envelope
 /// (`{schema_version, installed, scope, path, created, targets, cli_version,
@@ -4282,24 +4383,16 @@ fn write_skill_file(dir: &Path, content: &str, json: bool) -> (PathBuf, bool) {
 /// (Claude when selected) for backward compatibility, while `targets[]` reports
 /// every path written. The error path (missing `.claude/`, unwritable HOME, a
 /// symlinked destination) uses the shared [`exit_error`] contract (structured
-/// error on stderr, non-zero exit). The bare, non-install `skill` stays a pure
-/// content dump on stdout in both modes.
+/// error on stderr, non-zero exit).
 ///
 /// Partial-failure semantics: targets are written in order (Claude, then pi). If a
 /// later target's write fails the command exits non-zero via `exit_error` and any
 /// earlier target already written is left in place — the install is not
 /// transactional. This is safe because every install is idempotent: re-running
 /// completes the remaining target(s) without disturbing the ones already written.
-pub fn skill(install_claude: bool, user: bool, agent: Option<SkillAgent>, json: bool) {
-    let skill_content = include_str!("skill.md");
-
-    // `--user` and `--agent` both require `--install-claude` (clap-enforced), so
-    // `install_claude` alone gates the install branch. Without it we just print the
-    // skill; `--agent` is meaningless there and clap already rejected it.
-    if !install_claude {
-        print!("{skill_content}");
-        return;
-    }
+pub fn skill_install(name: Option<&str>, user: bool, agent: Option<SkillAgent>, json: bool) {
+    let skill = find_bundled_skill(name.unwrap_or("glasspad"), json);
+    let skill_content = skill.content;
 
     // `--agent` defaults to dual-home when omitted. Resolving it here (rather than
     // via a clap `default_value_t`) keeps the flag genuinely optional so its
@@ -4424,6 +4517,17 @@ pub fn skill(install_claude: bool, user: bool, agent: Option<SkillAgent>, json: 
         for (_, path, _) in &targets {
             println!("Installed skill to {}", path.display());
         }
+    }
+}
+
+/// Preserve the pre-subcommand surface. Bare `glasspad skill` remains the original
+/// side-effect-free content dump, while `--install` / `--install-claude` route to
+/// the canonical installer implementation.
+pub fn skill_compat(install: bool, user: bool, agent: Option<SkillAgent>, json: bool) {
+    if install {
+        skill_install(None, user, agent, json);
+    } else {
+        skill_print("glasspad", false);
     }
 }
 
