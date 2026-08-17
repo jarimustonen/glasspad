@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
+<!-- oss-changelog:unreleased-end -->
+
+## [0.15.0] - 2026-08-17
+
+Adds space-wide custom templates, read-only configuration inspection, and a documented
+producer-preprocessing convention for markdown spaces; makes the public repository
+environment-neutral; and hardens hosted idempotency sweeps against transient read errors.
 
 ### Added
 - **Producer preprocessing convention for markdown spaces**: documents where glossary
@@ -38,7 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hosted idempotency sweeps preserve mappings on transient read errors**: GC now removes a
   mapping only when it is missing, invalid, or positively points at a dead page, so temporary
   filesystem failures cannot discard duplicate-publish protection.
-<!-- oss-changelog:unreleased-end -->
 
 ## [0.14.0] - 2026-08-15
 
