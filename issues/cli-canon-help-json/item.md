@@ -10,6 +10,8 @@ lane_seq: 60
 commits:
 - hash: cf67157
   summary: mark help JSON issue in progress
+- hash: 025b0a6
+  summary: add machine-readable JSON help
 ---
 
 # cli-canon: §14 --help --json machine-readable help
