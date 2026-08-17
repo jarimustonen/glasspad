@@ -114,13 +114,12 @@ The `/oss-*` skills are installed (thin wrappers over `ossctl` 0.1.0). Ran the f
   (`jari@itsellesi.fi`) — cosmetic.
 - **Round-it-out items** (`glasspad stop`, `GLASSPAD_PORT`, PID file) — deferred to 0.2.2.
 
-## Notes
+## Comments
+
 - No MCP — the `mcp-integration` epic was closed obsolete (2026-07-24). glasspad
   is a CLI tool.
 - The old `finalization-release` epic is closed obsolete; its process-management
   items are re-captured above.
-
-## Comments
 
 ### 2026-08-06T06:52:38Z · @claude
 

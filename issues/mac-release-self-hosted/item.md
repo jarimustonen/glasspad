@@ -38,7 +38,7 @@ Update the explanatory comment block in `dist-workspace.toml` to reflect that ha
 fixed and owns mac builds again. **Do not** touch `publish-crates.yml`. Green gate:
 `cargo fmt --all --check` + the workflow YAML must be valid (a `dist generate` diff only).
 
-## Notes
+## Comments
 
 - No version bump; this is CI-config only. Verify `git diff` touches only
   `dist-workspace.toml` + `.github/workflows/release.yml`.
