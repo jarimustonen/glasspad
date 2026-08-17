@@ -7,6 +7,9 @@ priority: normal
 labels: [cli-canon, tooling]
 lane: cli-canon
 lane_seq: 60
+commits:
+- hash: cf67157
+  summary: mark help JSON issue in progress
 ---
 
 # cli-canon: §14 --help --json machine-readable help

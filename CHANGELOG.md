@@ -45,6 +45,9 @@ environment-neutral; and hardens hosted idempotency sweeps against transient rea
   private-reporting channels rather than a maintainer email address.
 - **`glasspad version --json` reports schema and skill compatibility**: the version payload now
   includes `supported_schemas` and bundled skill metadata for one-call drift audits.
+- **CLI help is machine-readable**: `glasspad --help --json` and nested command help now expose
+  the clap-derived command tree, flags, arguments, examples, environment mappings, and help
+  schema version without prose scraping.
 - **Hosted snapshots share page bodies behind `Arc`**: publish, update, and round-push no
   longer deep-copy every page and asset body while holding the mutation lock, making a
   snapshot clone proportional to the number of spaces rather than their total size.

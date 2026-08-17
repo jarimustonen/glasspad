@@ -46,6 +46,11 @@ use crate::submissions::SubmissionStore;
 /// envelope: removed/renamed field, changed type/nullability, or changed meaning.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Supported schema versions by payload family. These constants are the single
+/// source used by `version --json` and the corresponding emitters.
+pub const SUPPORTED_ENVELOPE_SCHEMAS: &[u32] = &[SCHEMA_VERSION];
+pub const SUPPORTED_HELP_SCHEMAS: &[u32] = &[crate::help::SCHEMA_VERSION_HELP];
+
 /// The loopback port used when neither `--port` nor `$GLASSPAD_PORT` is set.
 pub const DEFAULT_PORT: u16 = 3000;
 
@@ -420,6 +425,16 @@ fn emit_json_line(payload: &serde_json::Value) {
     let _ = std::io::stdout().flush();
 }
 
+/// Emit the structured-help document through the same success envelope as the
+/// other read-only CLI surfaces.
+pub fn help_json(data: serde_json::Value) {
+    emit_json_line(&json!({
+        "schema_version": SCHEMA_VERSION,
+        "data": data,
+        "warnings": [],
+    }));
+}
+
 // --- version --------------------------------------------------------------
 
 /// `glasspad version` (and `glasspad --version` / `-V`) — report the installed
@@ -462,7 +477,11 @@ pub fn version(json: bool) {
                 // `Option<&str>` → a JSON string or `null`; the key is always
                 // present so a strict consumer never hits a missing-field error.
                 "commit": commit,
-                "supported_schemas": [SCHEMA_VERSION],
+                "supported_schemas": SUPPORTED_ENVELOPE_SCHEMAS,
+                "supported_schemas_by_name": {
+                    "envelope": SUPPORTED_ENVELOPE_SCHEMAS,
+                    "help": SUPPORTED_HELP_SCHEMAS,
+                },
                 // `skill list` uses this same accessor, so version drift audits and
                 // skill discovery cannot report divergent bundled-skill metadata.
                 "skills": bundled_skill_metadata(),

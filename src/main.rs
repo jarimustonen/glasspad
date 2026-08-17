@@ -9,6 +9,7 @@ mod build;
 mod cli;
 mod config;
 mod favicon;
+mod help;
 mod hosted;
 mod pidfile;
 mod server;
@@ -392,8 +393,206 @@ enum LoopbackCmd {
     Stop,
 }
 
+// `examples[]` cannot be recovered from clap, so keep this sole hand-authored
+// help metadata adjacent to the command definitions it documents. Every node in
+// the clap tree has an entry; the test below walks that tree to prevent drift.
+const fn example(description: &'static str, argv: &'static [&'static str]) -> help::Example {
+    help::Example { description, argv }
+}
+
+fn help_examples(command: &str) -> Vec<help::Example> {
+    match command {
+        "glasspad" => vec![example(
+            "Publish a markdown report",
+            &["glasspad", "publish", "./report.md"],
+        )],
+        "glasspad help" => vec![example(
+            "Show text help for publish",
+            &["glasspad", "help", "publish"],
+        )],
+        "glasspad build" => vec![example(
+            "Build an offline copy of a space",
+            &["glasspad", "build", "./site", "./dist"],
+        )],
+        "glasspad host-serve" => vec![example(
+            "Run a hosted server",
+            &[
+                "glasspad",
+                "host-serve",
+                "--bind",
+                "0.0.0.0:8080",
+                "--public-host",
+                "https://glasspad.example.com",
+                "--api-key-file",
+                "./keys.txt",
+                "--store",
+                "./store",
+            ],
+        )],
+        "glasspad publish" => vec![example(
+            "Publish a markdown file without opening a browser",
+            &["glasspad", "publish", "./report.md", "--no-open"],
+        )],
+        "glasspad loopback" => vec![example(
+            "Serve a space on loopback",
+            &["glasspad", "loopback", "serve", "./site"],
+        )],
+        "glasspad loopback help" => vec![example(
+            "Show text help for loopback serve",
+            &["glasspad", "loopback", "help", "serve"],
+        )],
+        "glasspad loopback serve" => vec![example(
+            "Serve a space on a chosen port",
+            &["glasspad", "loopback", "serve", "./site", "--port", "4100"],
+        )],
+        "glasspad loopback open" => vec![example(
+            "Print a served space URL",
+            &["glasspad", "loopback", "open", "demo", "--no-browser"],
+        )],
+        "glasspad loopback stop" => vec![example(
+            "Stop the loopback server",
+            &["glasspad", "loopback", "stop"],
+        )],
+        "glasspad push-round" => vec![example(
+            "Push a new HTML round",
+            &[
+                "glasspad",
+                "push-round",
+                "demo-page",
+                "./round.html",
+                "--server",
+                "https://glasspad.example.com",
+            ],
+        )],
+        "glasspad await-submission" => vec![example(
+            "Wait for the next hosted submission",
+            &[
+                "glasspad",
+                "await-submission",
+                "demo-page",
+                "--server",
+                "https://glasspad.example.com",
+                "--json",
+            ],
+        )],
+        "glasspad submissions" => vec![example(
+            "Drain hosted submissions",
+            &[
+                "glasspad",
+                "submissions",
+                "demo-page",
+                "--server",
+                "https://glasspad.example.com",
+                "--json",
+            ],
+        )],
+        "glasspad data" => vec![example(
+            "Parse CSV rows as JSON",
+            &["glasspad", "data", "./records.csv", "--json"],
+        )],
+        "glasspad config" => vec![example(
+            "Inspect effective configuration",
+            &["glasspad", "config", "show", "--json"],
+        )],
+        "glasspad config help" => vec![example(
+            "Show text help for config show",
+            &["glasspad", "config", "help", "show"],
+        )],
+        "glasspad config path" => vec![example(
+            "Print the home config path",
+            &["glasspad", "config", "path"],
+        )],
+        "glasspad config show" => vec![example(
+            "Inspect effective configuration as JSON",
+            &["glasspad", "config", "show", "--json"],
+        )],
+        "glasspad doctor" => vec![example(
+            "Run self-diagnostics as JSON",
+            &["glasspad", "doctor", "--json"],
+        )],
+        "glasspad version" => vec![example(
+            "Inspect version and schema support",
+            &["glasspad", "version", "--json"],
+        )],
+        "glasspad skill" => vec![example(
+            "List bundled skills",
+            &["glasspad", "skill", "list", "--json"],
+        )],
+        "glasspad skill help" => vec![example(
+            "Show text help for skill install",
+            &["glasspad", "skill", "help", "install"],
+        )],
+        "glasspad skill list" => vec![example(
+            "List bundled skills as JSON",
+            &["glasspad", "skill", "list", "--json"],
+        )],
+        "glasspad skill print" => vec![example(
+            "Print the bundled glasspad skill",
+            &["glasspad", "skill", "print", "glasspad"],
+        )],
+        "glasspad skill install" => vec![example(
+            "Install the bundled skill into a project",
+            &["glasspad", "skill", "install", "glasspad"],
+        )],
+        // clap's generated `help` command mirrors the full nested tree. Its cloned
+        // descendants are still real command nodes, so give each a valid generic
+        // text-help example without hand-duplicating that generated mirror.
+        _ if command.split_whitespace().any(|part| part == "help") => vec![example(
+            "Show text help for this command tree",
+            &["glasspad", "--help"],
+        )],
+        _ => vec![],
+    }
+}
+
+// Environment resolution predates clap's declarations in this CLI. Keep the
+// mapping explicit and path-sensitive so help describes only settings each
+// handler actually resolves. Values are never read here, especially API keys.
+fn help_env(command: &str, arg: &str) -> Option<&'static str> {
+    match (command, arg) {
+        ("glasspad publish", "target") => Some("GLASSPAD_TARGET"),
+        ("glasspad publish", "template") => Some("GLASSPAD_TEMPLATE"),
+        ("glasspad publish", "space_key") => Some("GLASSPAD_SPACE_KEY"),
+        (
+            "glasspad publish"
+            | "glasspad push-round"
+            | "glasspad await-submission"
+            | "glasspad submissions"
+            | "glasspad config show",
+            "server",
+        ) => Some("GLASSPAD_SERVER"),
+        (
+            "glasspad publish"
+            | "glasspad push-round"
+            | "glasspad await-submission"
+            | "glasspad submissions"
+            | "glasspad config show",
+            "api_key",
+        ) => Some("GLASSPAD_API_KEY"),
+        (
+            "glasspad publish"
+            | "glasspad loopback serve"
+            | "glasspad loopback open"
+            | "glasspad await-submission",
+            "port",
+        ) => Some("GLASSPAD_PORT"),
+        ("glasspad loopback serve", "bind") => Some("GLASSPAD_BIND"),
+        _ => None,
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let mut command_tree = Cli::command();
+    if let Some(path) = help::resolve_request(&command_tree, &raw_args) {
+        command_tree.build();
+        let (command, command_path) = help::navigate(&command_tree, &path);
+        let data = help::build(command, &command_path, help_examples, help_env);
+        cli::help_json(serde_json::to_value(data).expect("help document serializes"));
+        return;
+    }
+
     let args = Cli::parse();
     let json = args.json;
 
@@ -532,5 +731,41 @@ async fn main() {
             let _ = Cli::command().print_help();
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod structured_help_tests {
+    use super::*;
+
+    fn walk(command: &clap::Command, path: &str) {
+        let value = serde_json::to_value(help::build(command, path, help_examples, help_env))
+            .expect("help serializes");
+        let documented: Vec<_> = value["subcommands"]
+            .as_array()
+            .expect("subcommands")
+            .iter()
+            .map(|entry| entry["command"].as_str().expect("command").to_string())
+            .collect();
+        let mut expected: Vec<_> = command
+            .get_subcommands()
+            .map(|child| format!("{path} {}", child.get_name()))
+            .collect();
+        expected.sort();
+        assert_eq!(documented, expected, "subcommand drift at {path}");
+        assert!(
+            !value["examples"].as_array().expect("examples").is_empty(),
+            "{path} must have at least one structured example"
+        );
+        for child in command.get_subcommands() {
+            walk(child, &format!("{path} {}", child.get_name()));
+        }
+    }
+
+    #[test]
+    fn every_clap_command_is_documented_with_an_example() {
+        let mut root = Cli::command();
+        root.build();
+        walk(&root, "glasspad");
     }
 }

@@ -44,6 +44,10 @@ fn assert_version_envelope(out: &std::process::Output) -> serde_json::Value {
         "commit must be string or null: {commit:?}"
     );
     assert_eq!(v["data"]["supported_schemas"], serde_json::json!([1]));
+    assert_eq!(
+        v["data"]["supported_schemas_by_name"],
+        serde_json::json!({"envelope": [1], "help": [3]})
+    );
     let skills = v["data"]["skills"]
         .as_array()
         .expect("skills must be an array");
