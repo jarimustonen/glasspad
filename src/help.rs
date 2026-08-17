@@ -4,6 +4,8 @@
 //! environment mappings, metadata clap does not own for this CLI, are supplied by
 //! small declarative registries next to the command definitions in `main.rs`.
 
+use std::ffi::{OsStr, OsString};
+
 use clap::builder::ValueHint;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde::Serialize;
@@ -118,14 +120,30 @@ struct PositionalInfo {
 
 const HELP_ID: &str = "__glasspad_structured_help";
 
+/// Cheap token check used before constructing clap's command tree. Exact tokens
+/// preserve `--` semantics; glasspad has no short alias for `--json`, so no valid
+/// short cluster is excluded.
+pub fn looks_like_request(args: &[OsString]) -> bool {
+    let before_separator = || {
+        args.iter()
+            .take_while(|arg| arg.as_os_str() != OsStr::new("--"))
+    };
+    before_separator().any(|arg| arg == "--json")
+        && before_separator().any(|arg| arg == "--help" || arg == "-h")
+}
+
 /// Resolve `--help --json` before clap's built-in help action exits.
-pub fn resolve_request(root: &Command, args: &[String]) -> Option<Vec<String>> {
-    if !args
-        .iter()
-        .take_while(|a| a.as_str() != "--")
-        .any(|a| a == "--json")
-    {
+pub fn resolve_request(root: &Command, args: &[OsString]) -> Option<Vec<String>> {
+    if !looks_like_request(args) {
         return None;
+    }
+
+    // clap's generated `help <command>` branch executes its display action while
+    // parsing, before the synthetic global help flag can be inspected. Resolve
+    // that generated branch directly so nodes advertised from the built tree are
+    // drillable under the same `--help --json` contract.
+    if let Some(path) = generated_help_path(args) {
+        return Some(path);
     }
 
     let mut lenient = root
@@ -141,13 +159,38 @@ pub fn resolve_request(root: &Command, args: &[String]) -> Option<Vec<String>> {
                 .global(true),
         );
     allow_external_recursively(&mut lenient);
-    let argv = std::iter::once(root.get_name().to_string()).chain(args.iter().cloned());
+    let argv = std::iter::once(OsString::from(root.get_name())).chain(args.iter().cloned());
     let matches = lenient.try_get_matches_from_mut(argv).ok()?;
     if !matches.get_flag(HELP_ID) || !matches.get_flag("json") {
         return None;
     }
 
-    canonical_path(root, &matches)
+    // `try_get_matches_from_mut` builds this clone, including clap's generated
+    // `help` subcommand. Resolve against that same tree so every advertised node
+    // can be drilled into instead of diverging between built and unbuilt trees.
+    canonical_path(&lenient, &matches)
+}
+
+fn generated_help_path(args: &[OsString]) -> Option<Vec<String>> {
+    let mut found_help = false;
+    let mut path = Vec::new();
+    for arg in args
+        .iter()
+        .take_while(|arg| arg.as_os_str() != OsStr::new("--"))
+    {
+        if arg == "--json" || arg == "--help" || arg == "-h" {
+            continue;
+        }
+        let token = arg.to_str()?;
+        if !found_help {
+            if token != "help" {
+                return None;
+            }
+            found_help = true;
+        }
+        path.push(token.to_string());
+    }
+    found_help.then_some(path)
 }
 
 fn allow_external_recursively(command: &mut Command) {
@@ -172,16 +215,15 @@ fn canonical_path(root: &Command, matches: &ArgMatches) -> Option<Vec<String>> {
     Some(path)
 }
 
-pub fn navigate<'a>(root: &'a Command, path: &[String]) -> (&'a Command, String) {
+pub fn navigate<'a>(root: &'a Command, path: &[String]) -> Option<(&'a Command, String)> {
     let mut command = root;
     let mut names = vec![root.get_name().to_string()];
     for name in path {
-        if let Some(child) = command.find_subcommand(name) {
-            command = child;
-            names.push(child.get_name().to_string());
-        }
+        let child = command.find_subcommand(name)?;
+        command = child;
+        names.push(child.get_name().to_string());
     }
-    (command, names.join(" "))
+    Some((command, names.join(" ")))
 }
 
 pub fn build(
@@ -273,6 +315,7 @@ fn flag_info(
     let range = arg.get_num_args();
     let raw_max = range.map_or(0, |r| r.max_values());
     let max = (raw_max != usize::MAX).then_some(raw_max);
+    let (requires, required_unless_present) = requirement_edges(arg);
 
     FlagInfo {
         name: arg.get_id().as_str().to_string(),
@@ -296,8 +339,8 @@ fn flag_info(
         accepted_values: accepted_values(arg),
         accepts_file_paths: accepts_file_paths(arg),
         conflicts_with: conflicts_with(command, arg),
-        requires: requirement_edges(arg).0,
-        required_unless_present: requirement_edges(arg).1,
+        requires,
+        required_unless_present,
         arity: Arity {
             min: range.map_or(0, |r| r.min_values()),
             max,
@@ -388,8 +431,10 @@ fn conflicts_with(command: &Command, arg: &Arg) -> Vec<String> {
     values
 }
 
-// clap exposes no requirement getters. Recover the real derive metadata through
-// Arg's Debug projection, guarded by tests, rather than maintaining a second list.
+// clap exposes no requirement getters. Recover unconditional `requires` and
+// any-of `required_unless_present` through Arg's Debug projection, guarded by
+// focused tests, rather than maintaining a second list. Conditional `requires_if`
+// and all-of `required_unless_present_all` are intentionally not represented.
 fn requirement_edges(arg: &Arg) -> (Vec<String>, Vec<String>) {
     let debug = format!("{arg:?}");
     let requires = debug_field_list(&debug, "requires").map_or_else(Vec::new, |segment| {
@@ -467,4 +512,30 @@ fn sorted_dedup(mut values: Vec<String>) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requirement_projection_is_pinned_to_clap_debug_shape() {
+        let required = Arg::new("a").long("a").requires("b").requires("c");
+        assert_eq!(requirement_edges(&required).0, ["b", "c"]);
+
+        let unless = Arg::new("u").long("u").required_unless_present("v");
+        assert_eq!(requirement_edges(&unless).1, ["v"]);
+        assert_eq!(
+            requirement_edges(&Arg::new("z").long("z")),
+            (Vec::new(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn api_key_defaults_are_never_serialized() {
+        let arg = Arg::new("api_key")
+            .long("api-key")
+            .default_value("SECRET_SENTINEL");
+        assert_eq!(safe_defaults(&arg), ["<set>"]);
+    }
 }

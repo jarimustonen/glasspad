@@ -548,49 +548,132 @@ fn help_examples(command: &str) -> Vec<help::Example> {
 // Environment resolution predates clap's declarations in this CLI. Keep the
 // mapping explicit and path-sensitive so help describes only settings each
 // handler actually resolves. Values are never read here, especially API keys.
+struct HelpEnvMapping {
+    command: &'static str,
+    arg: &'static str,
+    env: &'static str,
+}
+
+const HELP_ENV_MAPPINGS: &[HelpEnvMapping] = &[
+    HelpEnvMapping {
+        command: "glasspad publish",
+        arg: "target",
+        env: "GLASSPAD_TARGET",
+    },
+    HelpEnvMapping {
+        command: "glasspad publish",
+        arg: "server",
+        env: "GLASSPAD_SERVER",
+    },
+    HelpEnvMapping {
+        command: "glasspad publish",
+        arg: "api_key",
+        env: "GLASSPAD_API_KEY",
+    },
+    HelpEnvMapping {
+        command: "glasspad publish",
+        arg: "template",
+        env: "GLASSPAD_TEMPLATE",
+    },
+    HelpEnvMapping {
+        command: "glasspad publish",
+        arg: "space_key",
+        env: "GLASSPAD_SPACE_KEY",
+    },
+    HelpEnvMapping {
+        command: "glasspad publish",
+        arg: "port",
+        env: "GLASSPAD_PORT",
+    },
+    HelpEnvMapping {
+        command: "glasspad push-round",
+        arg: "server",
+        env: "GLASSPAD_SERVER",
+    },
+    HelpEnvMapping {
+        command: "glasspad push-round",
+        arg: "api_key",
+        env: "GLASSPAD_API_KEY",
+    },
+    HelpEnvMapping {
+        command: "glasspad await-submission",
+        arg: "server",
+        env: "GLASSPAD_SERVER",
+    },
+    HelpEnvMapping {
+        command: "glasspad await-submission",
+        arg: "api_key",
+        env: "GLASSPAD_API_KEY",
+    },
+    HelpEnvMapping {
+        command: "glasspad await-submission",
+        arg: "port",
+        env: "GLASSPAD_PORT",
+    },
+    HelpEnvMapping {
+        command: "glasspad submissions",
+        arg: "server",
+        env: "GLASSPAD_SERVER",
+    },
+    HelpEnvMapping {
+        command: "glasspad submissions",
+        arg: "api_key",
+        env: "GLASSPAD_API_KEY",
+    },
+    HelpEnvMapping {
+        command: "glasspad config show",
+        arg: "server",
+        env: "GLASSPAD_SERVER",
+    },
+    HelpEnvMapping {
+        command: "glasspad config show",
+        arg: "api_key",
+        env: "GLASSPAD_API_KEY",
+    },
+    HelpEnvMapping {
+        command: "glasspad loopback serve",
+        arg: "port",
+        env: "GLASSPAD_PORT",
+    },
+    HelpEnvMapping {
+        command: "glasspad loopback serve",
+        arg: "bind",
+        env: "GLASSPAD_BIND",
+    },
+    HelpEnvMapping {
+        command: "glasspad loopback open",
+        arg: "port",
+        env: "GLASSPAD_PORT",
+    },
+];
+
 fn help_env(command: &str, arg: &str) -> Option<&'static str> {
-    match (command, arg) {
-        ("glasspad publish", "target") => Some("GLASSPAD_TARGET"),
-        ("glasspad publish", "template") => Some("GLASSPAD_TEMPLATE"),
-        ("glasspad publish", "space_key") => Some("GLASSPAD_SPACE_KEY"),
-        (
-            "glasspad publish"
-            | "glasspad push-round"
-            | "glasspad await-submission"
-            | "glasspad submissions"
-            | "glasspad config show",
-            "server",
-        ) => Some("GLASSPAD_SERVER"),
-        (
-            "glasspad publish"
-            | "glasspad push-round"
-            | "glasspad await-submission"
-            | "glasspad submissions"
-            | "glasspad config show",
-            "api_key",
-        ) => Some("GLASSPAD_API_KEY"),
-        (
-            "glasspad publish"
-            | "glasspad loopback serve"
-            | "glasspad loopback open"
-            | "glasspad await-submission",
-            "port",
-        ) => Some("GLASSPAD_PORT"),
-        ("glasspad loopback serve", "bind") => Some("GLASSPAD_BIND"),
-        _ => None,
-    }
+    // clap's generated `help` subcommand mirrors canonical descendants. Map
+    // those mirrors back to their handler path so their metadata agrees.
+    let logical = command
+        .split_whitespace()
+        .filter(|part| *part != "help")
+        .collect::<Vec<_>>()
+        .join(" ");
+    HELP_ENV_MAPPINGS
+        .iter()
+        .find(|mapping| mapping.command == logical && mapping.arg == arg)
+        .map(|mapping| mapping.env)
 }
 
 #[tokio::main]
 async fn main() {
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let mut command_tree = Cli::command();
-    if let Some(path) = help::resolve_request(&command_tree, &raw_args) {
-        command_tree.build();
-        let (command, command_path) = help::navigate(&command_tree, &path);
-        let data = help::build(command, &command_path, help_examples, help_env);
-        cli::help_json(serde_json::to_value(data).expect("help document serializes"));
-        return;
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if help::looks_like_request(&raw_args) {
+        let mut command_tree = Cli::command();
+        if let Some(path) = help::resolve_request(&command_tree, &raw_args) {
+            command_tree.build();
+            if let Some((command, command_path)) = help::navigate(&command_tree, &path) {
+                let data = help::build(command, &command_path, help_examples, help_env);
+                cli::help_json(serde_json::to_value(data).expect("help document serializes"));
+                return;
+            }
+        }
     }
 
     let args = Cli::parse();
@@ -767,5 +850,31 @@ mod structured_help_tests {
         let mut root = Cli::command();
         root.build();
         walk(&root, "glasspad");
+    }
+
+    #[test]
+    fn every_env_mapping_targets_a_real_clap_argument() {
+        let mut root = Cli::command();
+        root.build();
+        for mapping in HELP_ENV_MAPPINGS {
+            let path: Vec<String> = mapping
+                .command
+                .split_whitespace()
+                .skip(1)
+                .map(ToString::to_string)
+                .collect();
+            let (command, resolved) = help::navigate(&root, &path)
+                .unwrap_or_else(|| panic!("missing command {}", mapping.command));
+            assert_eq!(resolved, mapping.command);
+            assert!(
+                command
+                    .get_arguments()
+                    .any(|arg| arg.get_id().as_str() == mapping.arg),
+                "{} has no argument {}",
+                mapping.command,
+                mapping.arg
+            );
+            assert_eq!(help_env(mapping.command, mapping.arg), Some(mapping.env));
+        }
     }
 }
