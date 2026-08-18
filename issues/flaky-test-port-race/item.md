@@ -4,6 +4,9 @@ updated: 2026-08-18
 type: bug
 status: in-progress
 priority: normal
+commits:
+- hash: a5fd99b
+  summary: bind host-serve once on an OS-assigned port and test the full return-channel round trip
 ---
 
 # Flaky test: free_port() TOCTOU race makes submissions_cli fail under load
