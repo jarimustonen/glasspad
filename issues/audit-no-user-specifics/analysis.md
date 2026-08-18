@@ -27,7 +27,30 @@ conventions, machine names, internal domains, repository URLs, and environment-d
 
 After these fixes, targeted searches are clean except for the deliberately escalated items below.
 
-## Deliberately retained pending discussion
+## Maintainer decisions (2026-08-18) — all three escalations RESOLVED, retained as-is
+
+Jari resolved all three items below. **None of them is to be changed**, and the sharpened rule
+that decided them is recorded in `TODO.md` → Standing lessons. Do not re-escalate these on a
+future audit pass.
+
+**The governing distinction (Jari, 2026-08-18):** *the repo living under a personal account is
+fine; documentation describing the maintainer's personal setup and configuration is not.*
+"Install this on the haapa server" is a defect. `github.com/jarimustonen/glasspad` is not. The
+issue's literal wording ("no personal account handles anywhere") over-reaches — taken at face
+value it would require breaking real install coordinates. Apply the distinction above instead.
+
+- **macOS release runner — KEEP the self-hosted routing.** "Se ei haittaa että buildia tehdään
+  mun omalla koneella." No change to `dist-workspace.toml`.
+- **GitHub/Homebrew namespace — KEEP the personal namespace.** "Tietenkin repo voi olla mun
+  omalla tunnuksella." No org migration.
+- **LICENSE copyright — KEEP the legal name.** Accurate attribution stands.
+
+What the audit *correctly* fixed and what must stay fixed: personal machine names, personal
+filesystem paths, private sibling-repo names, the internal hosted URL, and personal contact
+addresses in docs/examples/records. Those are the real defect class — install and setup
+documentation must never instruct a reader to use the maintainer's own infrastructure.
+
+## Original escalations (superseded by the decisions above — kept for provenance)
 
 ### macOS release runner
 

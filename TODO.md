@@ -80,6 +80,17 @@ glossary/xref logic; producer-example keeps a thin preprocessor.
 - **Re-verify a worker's green claim against the FULL `./test-security.sh`** (Phase 1 + Wave
   2a), never Phase 1 alone. A release was once halted because a worker's "green" covered only
   part of the suite.
+- **"User-specific" means the maintainer's SETUP, not the maintainer's ACCOUNT (Jari,
+  2026-08-18).** The repo living under a personal GitHub account is fine; documentation that
+  describes the maintainer's personal machines and configuration is not. *"On aivan eri asia
+  että se on näin kun että projektissa puhuttaisiin mun omasta henkilökohtaisesta setupista ja
+  konffeista."* Concretely: "install this on the haapa server" is a defect;
+  `github.com/jarimustonen/glasspad` in an install command is not. The real defect class is
+  personal machine names, personal filesystem paths, private sibling-repo names, internal URLs,
+  and personal contact addresses. **Decided and closed 2026-08-18: keep the self-hosted macOS
+  runner, keep the personal GitHub/Homebrew namespace, keep the LICENSE legal name.** Do not
+  re-escalate these; `audit-no-user-specifics` over-reached by forbidding account handles
+  outright. Also: history is fine — old records need no scrubbing for their own sake.
 - **Decided 2026-08-17 — do NOT file the hosted mutation-lock narrowing.** Staging/fsync
   outside the lock, holding it only for the pointer flip, would only pay off under *concurrent*
   publishes, and there is one publisher. It also breaks GC's "any dotted staging dir is a crash
