@@ -307,7 +307,12 @@ pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle,
         .map_err(|e| format!("cannot read bound address: {e}"))?;
     let public_origin = match config.public_origin {
         Some(origin) => origin,
-        None if local_addr.ip().is_loopback() => format!("http://{local_addr}"),
+        None if local_addr.ip().to_canonical().is_loopback() => {
+            let canonical_addr = SocketAddr::new(local_addr.ip().to_canonical(), local_addr.port());
+            let derived = format!("http://{canonical_addr}");
+            validate_public_origin(&derived)
+                .map_err(|e| format!("cannot derive public origin from {local_addr}: {e}"))?
+        }
         None => {
             return Err(
                 "--public-host is required unless --bind names a loopback address".to_string(),

@@ -2323,7 +2323,8 @@ pub async fn host_serve(
     retention_days: i64,
     json: bool,
 ) {
-    if bind.ip().is_unspecified() {
+    let bind_ip = bind.ip().to_canonical();
+    if bind_ip.is_unspecified() {
         exit_error(
             json,
             1,
@@ -2335,7 +2336,7 @@ pub async fn host_serve(
             None,
         );
     }
-    if public_host.is_none() && !bind.ip().is_loopback() {
+    if public_host.is_none() && !bind_ip.is_loopback() {
         exit_error(
             json,
             1,

@@ -70,10 +70,9 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Operator: run the hosted share server (public bind, API-key ingest,
-    /// capability-slug public read) that `publish` (hosted target) uploads TO. A
-    /// separate run mode from loopback: it binds the given public address and does
-    /// NOT use the loopback DNS-rebinding guard. Runs until killed.
+    /// Operator: run the hosted share server (API-key ingest, capability-slug
+    /// public read) that `publish` (hosted target) uploads to. This is a separate
+    /// run mode from loopback serving and runs until killed.
     HostServe {
         /// Bind address, e.g. 127.0.0.1:8080. Port 0 requests an OS-assigned
         /// ephemeral port. Wildcard addresses are always refused.

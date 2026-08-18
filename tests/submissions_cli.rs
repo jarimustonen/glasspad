@@ -20,6 +20,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 fn bin() -> Command {
@@ -48,6 +49,46 @@ fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
 const KEY_A: &str = "alice-key-0123456789abcdefghijklmnop";
 const KEY_B: &str = "bob-key-0123456789abcdefghijklmnopqrst";
 
+fn read_startup(child: &mut Child) -> serde_json::Value {
+    let logs = Arc::new(Mutex::new(String::new()));
+    let stderr = child.stderr.take().expect("host stderr");
+    let stderr_logs = logs.clone();
+    let stderr_thread = std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut text = String::new();
+        let _ = reader.read_to_string(&mut text);
+        *stderr_logs.lock().expect("stderr log lock") = text;
+    });
+
+    let stdout = child.stdout.take().expect("host stdout");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = reader.read_line(&mut line).map(|_| line);
+        let _ = tx.send(result);
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+    });
+    let line = match rx.recv_timeout(Duration::from_secs(15)) {
+        Ok(Ok(line)) if !line.is_empty() => line,
+        result => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_thread.join();
+            let stderr = logs.lock().expect("stderr log lock").clone();
+            panic!("host-serve did not report its bind ({result:?}); stderr: {stderr}");
+        }
+    };
+    match serde_json::from_str(&line) {
+        Ok(value) => value,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("invalid host startup JSON ({e}): {line:?}");
+        }
+    }
+}
+
 /// Spawn `host-serve` on an OS-assigned loopback port, read its flushed startup
 /// envelope, and return the child plus the origin derived from the reported bind.
 fn spawn_host(tag: &str, retention_days: i64) -> (Child, String, PathBuf) {
@@ -67,21 +108,7 @@ fn spawn_host(tag: &str, retention_days: i64) -> (Child, String, PathBuf) {
         .spawn()
         .expect("spawn host-serve");
 
-    let mut line = String::new();
-    BufReader::new(child.stdout.take().expect("host stdout"))
-        .read_line(&mut line)
-        .expect("read host startup envelope");
-    if line.is_empty() {
-        let mut stderr = String::new();
-        child
-            .stderr
-            .take()
-            .expect("host stderr")
-            .read_to_string(&mut stderr)
-            .expect("read host stderr");
-        panic!("host-serve exited before reporting its bind: {stderr}");
-    }
-    let startup: serde_json::Value = serde_json::from_str(&line).expect("startup JSON");
+    let startup = read_startup(&mut child);
     let bind: SocketAddr = startup["bind"]
         .as_str()
         .expect("startup bind")
@@ -285,27 +312,61 @@ fn submissions_drains_backlog_and_enforces_tenant_isolation() {
 }
 
 #[test]
-fn host_serve_refuses_wildcard_with_ephemeral_port() {
-    let root = tmp_dir("wildcard");
+fn explicit_public_host_stays_authoritative_with_ephemeral_bind() {
+    let root = tmp_dir("explicit-origin");
     let key_file = write(&root, "keys.txt", &format!("alice:{KEY_A}\n"));
-    let out = bin()
-        .args(["--json", "host-serve", "--bind", "0.0.0.0:0"])
+    let mut child = bin()
+        .args(["--json", "host-serve", "--bind", "127.0.0.1:0"])
+        .args(["--public-host", "https://glasspad.example.com"])
         .arg("--api-key-file")
         .arg(&key_file)
         .arg("--store")
         .arg(root.join("store"))
-        .output()
-        .expect("run host-serve with wildcard bind");
-    assert_eq!(out.status.code(), Some(1));
-    let err = parse(&out.stderr);
-    assert_eq!(err["error"]["code"], "invalid_bind");
-    assert!(
-        err["error"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("wildcard"),
-        "wildcard refusal must be informative: {err}"
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn host-serve");
+    let startup = read_startup(&mut child);
+    let bind: SocketAddr = startup["bind"]
+        .as_str()
+        .expect("startup bind")
+        .parse()
+        .expect("startup bind address");
+    assert_ne!(bind.port(), 0);
+    assert_eq!(
+        startup["public_host"].as_str(),
+        Some("https://glasspad.example.com")
     );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn host_serve_refuses_wildcard_with_ephemeral_port() {
+    let root = tmp_dir("wildcard");
+    let key_file = write(&root, "keys.txt", &format!("alice:{KEY_A}\n"));
+    for bind in ["0.0.0.0:0", "[::ffff:0.0.0.0]:0"] {
+        let out = bin()
+            .args(["--json", "host-serve", "--bind", bind])
+            .arg("--public-host")
+            .arg("https://glasspad.example.com")
+            .arg("--api-key-file")
+            .arg(&key_file)
+            .arg("--store")
+            .arg(root.join("store"))
+            .output()
+            .expect("run host-serve with wildcard bind");
+        assert_eq!(out.status.code(), Some(1), "bind {bind}");
+        let err = parse(&out.stderr);
+        assert_eq!(err["error"]["code"], "invalid_bind", "bind {bind}");
+        assert!(
+            err["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("wildcard"),
+            "wildcard refusal must be informative: {err}"
+        );
+    }
 }
 
 #[test]
