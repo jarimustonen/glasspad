@@ -75,14 +75,15 @@ enum Commands {
     /// separate run mode from loopback: it binds the given public address and does
     /// NOT use the loopback DNS-rebinding guard. Runs until killed.
     HostServe {
-        /// Public bind address, e.g. 0.0.0.0:8080. Explicit — never defaulted to a
-        /// routable interface.
+        /// Bind address, e.g. 127.0.0.1:8080. Port 0 requests an OS-assigned
+        /// ephemeral port. Wildcard addresses are always refused.
         #[arg(long)]
         bind: SocketAddr,
         /// Canonical public origin for the artifact CSP + returned URLs, e.g.
-        /// https://pad.example.com (scheme://host[:port], no path).
+        /// https://pad.example.com (scheme://host[:port], no path). When omitted
+        /// for a loopback bind, it is derived from the actual bound address.
         #[arg(long)]
-        public_host: String,
+        public_host: Option<String>,
         /// Operator API-key file: `<tenant>:<key>` lines. Fail-closed if
         /// missing/empty/malformed.
         #[arg(long)]
@@ -420,7 +421,7 @@ fn help_examples(command: &str) -> Vec<help::Example> {
                 "glasspad",
                 "host-serve",
                 "--bind",
-                "0.0.0.0:8080",
+                "127.0.0.1:8080",
                 "--public-host",
                 "https://glasspad.example.com",
                 "--api-key-file",

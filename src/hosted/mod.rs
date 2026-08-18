@@ -97,7 +97,9 @@ pub struct HostedState {
 /// Validated run configuration for the hosted server.
 pub struct HostedConfig {
     pub bind: SocketAddr,
-    pub public_origin: String,
+    /// An explicitly configured origin, or `None` to derive one after binding an
+    /// ephemeral loopback port.
+    pub public_origin: Option<String>,
     pub store_root: std::path::PathBuf,
     pub retention_days: i64,
 }
@@ -295,8 +297,26 @@ fn host_label(authority: &str) -> &str {
 /// pages), bind the public address, spawn the retention-GC task, and serve.
 /// Returns an error the CLI surfaces as its structured envelope (never panics).
 pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle, String> {
+    // Bind exactly once. In particular, port 0 remains held from OS allocation
+    // through serving, so callers never need a free-port probe and rebind.
+    let listener = TcpListener::bind(config.bind)
+        .await
+        .map_err(|e| format!("cannot bind {}: {e}", config.bind))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| format!("cannot read bound address: {e}"))?;
+    let public_origin = match config.public_origin {
+        Some(origin) => origin,
+        None if local_addr.ip().is_loopback() => format!("http://{local_addr}"),
+        None => {
+            return Err(
+                "--public-host is required unless --bind names a loopback address".to_string(),
+            );
+        }
+    };
+
     let host = Arc::new(ArtifactHost::new_public(
-        config.public_origin.clone(),
+        public_origin.clone(),
         MOUNT.to_string(),
     ));
     let store = Arc::new(
@@ -317,17 +337,13 @@ pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle,
     }
     let pages = store.page_count();
 
-    let listener = TcpListener::bind(config.bind)
-        .await
-        .map_err(|e| format!("cannot bind {}: {e}", config.bind))?;
-
     // Retention GC: hourly thereafter, off the async workers (fs on the blocking pool).
     spawn_gc(store.clone(), submissions.clone(), retention);
 
     let state = HostedState {
         store: store.clone(),
         submissions,
-        public_origin: config.public_origin.clone(),
+        public_origin: public_origin.clone(),
         mount: MOUNT.to_string(),
         retention_days: config.retention_days,
     };
@@ -337,6 +353,7 @@ pub async fn run(config: HostedConfig, keys: Arc<KeyTable>) -> Result<RunHandle,
         listener,
         app,
         pages,
+        public_origin,
     })
 }
 
@@ -346,6 +363,7 @@ pub struct RunHandle {
     listener: TcpListener,
     app: Router,
     pub pages: usize,
+    pub public_origin: String,
 }
 
 impl RunHandle {

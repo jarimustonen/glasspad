@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read-only self-diagnostics**: `glasspad doctor` checks configuration resolution,
   hosted publishing readiness, and bundled skill metadata, with stable per-check
   records under `--json` and exit 1 when any check fails.
+
+### Fixed
+- **Race-free ephemeral hosted binds**: `host-serve --bind 127.0.0.1:0` now keeps the
+  OS-assigned listener open, reports its actual address, and derives the matching public
+  origin when `--public-host` is omitted. Wildcard binds remain refused.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.15.0] - 2026-08-17

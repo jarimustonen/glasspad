@@ -2310,34 +2310,48 @@ fn launch_browser(url: &str) -> bool {
 
 // --- host-serve (hosted share server) -------------------------------------
 
-/// `glasspad host-serve --bind <ip:port> --public-host <origin> --api-key-file
-/// <path> --store <dir> [--retention-days <n>]` — run the long-lived hosted share
-/// server (0.3.0): API-key-authenticated ingest + unguessable capability-slug
-/// public read. A *separate run mode* from loopback `serve` — it binds the given
-/// public address and never uses the loopback DNS-rebinding guard (see
-/// `hosted` module docs / `plan.md` §8). Fail-fast + fail-closed: a bad origin, an
-/// unreadable/empty/malformed key file, or an un-openable store each exit with an
-/// informative envelope *before* the server binds.
+/// `glasspad host-serve --bind <ip:port> [--public-host <origin>] --api-key-file
+/// <path> --store <dir> [--retention-days <n>]` runs the long-lived hosted share
+/// server. A loopback port of 0 is bound once and its OS-assigned address is
+/// reported; without an explicit public host, that real address becomes the public
+/// origin. Wildcard binds are always refused.
 pub async fn host_serve(
     bind: SocketAddr,
-    public_host: String,
+    public_host: Option<String>,
     api_key_file: PathBuf,
     store: PathBuf,
     retention_days: i64,
     json: bool,
 ) {
-    // Validate the public origin (AI-first §1 fail-fast) before any I/O.
-    let public_origin = match hosted::validate_public_origin(&public_host) {
-        Ok(o) => o,
-        Err(msg) => exit_error(
+    if bind.ip().is_unspecified() {
+        exit_error(
             json,
             1,
-            "invalid_public_host",
-            &msg,
-            Some(&public_host),
+            "invalid_bind",
+            &format!(
+                "refusing to bind wildcard address {bind}: name a concrete loopback or interface address"
+            ),
+            Some(&bind.to_string()),
             None,
-        ),
-    };
+        );
+    }
+    if public_host.is_none() && !bind.ip().is_loopback() {
+        exit_error(
+            json,
+            1,
+            "missing_public_host",
+            "--public-host is required unless --bind names a loopback address",
+            Some(&bind.to_string()),
+            None,
+        );
+    }
+
+    // Validate an explicit public origin before any I/O. When absent, hosted::run
+    // derives it only after the loopback listener has obtained its real port.
+    let public_origin = public_host.as_deref().map(|raw| {
+        hosted::validate_public_origin(raw)
+            .unwrap_or_else(|msg| exit_error(json, 1, "invalid_public_host", &msg, Some(raw), None))
+    });
 
     // Load the operator key file — fail-closed: the server never comes up with an
     // ingest surface no key (or any key) can authenticate.
@@ -2362,7 +2376,7 @@ pub async fn host_serve(
 
     let config = HostedConfig {
         bind,
-        public_origin: public_origin.clone(),
+        public_origin,
         store_root: store,
         retention_days,
     };
@@ -2378,7 +2392,7 @@ pub async fn host_serve(
     emit_host_serving(
         json,
         &local,
-        &public_origin,
+        &handle.public_origin,
         handle.pages,
         key_count,
         retention_days,

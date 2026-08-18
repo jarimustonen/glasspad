@@ -16,11 +16,11 @@
 //! * The drain is per-tenant scoped: a slug the key's tenant does not own is an
 //!   opaque `no_such_page` (exit 1) — never a cross-tenant read.
 
-use std::io::Write;
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_glasspad"))
@@ -44,56 +44,59 @@ fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
     p
 }
 
-/// Grab a currently-free loopback port by binding to :0 and immediately releasing
-/// it. A short race window before `host-serve` rebinds is acceptable for tests.
-fn free_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn wait_until(max: Duration, mut cond: impl FnMut() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < max {
-        if cond() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
-}
-
 /// A high-entropy (≥32-char) API key per tenant, as the key file requires.
 const KEY_A: &str = "alice-key-0123456789abcdefghijklmnop";
 const KEY_B: &str = "bob-key-0123456789abcdefghijklmnopqrst";
 
-/// Spawn `host-serve` on `port` with a two-tenant key file, wait until it binds, and
-/// return the child + its public origin. The child is killed on drop by the caller.
-fn spawn_host(tag: &str, port: u16, retention_days: i64) -> (Child, String, PathBuf) {
+/// Spawn `host-serve` on an OS-assigned loopback port, read its flushed startup
+/// envelope, and return the child plus the origin derived from the reported bind.
+fn spawn_host(tag: &str, retention_days: i64) -> (Child, String, PathBuf) {
     let root = tmp_dir(tag);
     let key_file = write(&root, "keys.txt", &format!("alice:{KEY_A}\nbob:{KEY_B}\n"));
     let store = root.join("store");
     std::fs::create_dir_all(&store).unwrap();
-    let public = format!("http://127.0.0.1:{port}");
-    let child = bin()
-        .args(["host-serve", "--bind"])
-        .arg(format!("127.0.0.1:{port}"))
-        .args(["--public-host", &public, "--api-key-file"])
+    let mut child = bin()
+        .args(["--json", "host-serve", "--bind", "127.0.0.1:0"])
+        .arg("--api-key-file")
         .arg(&key_file)
         .arg("--store")
         .arg(&store)
         .args(["--retention-days", &retention_days.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn host-serve");
-    let bound = wait_until(Duration::from_secs(15), || {
-        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
-    });
-    assert!(bound, "host-serve must bind");
-    (child, public, root)
+
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().expect("host stdout"))
+        .read_line(&mut line)
+        .expect("read host startup envelope");
+    if line.is_empty() {
+        let mut stderr = String::new();
+        child
+            .stderr
+            .take()
+            .expect("host stderr")
+            .read_to_string(&mut stderr)
+            .expect("read host stderr");
+        panic!("host-serve exited before reporting its bind: {stderr}");
+    }
+    let startup: serde_json::Value = serde_json::from_str(&line).expect("startup JSON");
+    let bind: SocketAddr = startup["bind"]
+        .as_str()
+        .expect("startup bind")
+        .parse()
+        .expect("startup bind address");
+    assert_eq!(bind.ip().to_string(), "127.0.0.1");
+    assert_ne!(
+        bind.port(),
+        0,
+        "reported bind must contain the assigned port"
+    );
+    let server = format!("http://{bind}");
+    assert_eq!(startup["public_host"].as_str(), Some(server.as_str()));
+
+    (child, server, root)
 }
 
 /// A hermetic `glasspad` command: no ambient config/env can leak the server/key in.
@@ -182,9 +185,8 @@ fn drain(server: &str, slug: &str, key: &str, extra: &[&str]) -> std::process::O
 }
 
 #[test]
-fn publish_prints_await_and_drain_invocations_with_configured_host() {
-    let port = free_port();
-    let (mut child, server, _root) = spawn_host("publish-hint", port, 7);
+fn publish_prints_await_and_drain_invocations_with_reported_host() {
+    let (mut child, server, _root) = spawn_host("publish-hint", 7);
     let page_dir = tmp_dir("page");
     write(&page_dir, "index.html", "<h1>form</h1>");
 
@@ -192,7 +194,7 @@ fn publish_prints_await_and_drain_invocations_with_configured_host() {
     let slug = v["slug"].as_str().expect("slug").to_string();
 
     // The publish envelope carries a copy-pasteable await-submission + drain command
-    // pinned to the CONFIGURED public host (never a hardcoded one) and the slug.
+    // pinned to the reported public host (never a hardcoded one) and the slug.
     let await_cmd = v["await_submission"]
         .as_str()
         .expect("await_submission field");
@@ -232,8 +234,7 @@ fn publish_prints_await_and_drain_invocations_with_configured_host() {
 
 #[test]
 fn submissions_drains_backlog_and_enforces_tenant_isolation() {
-    let port = free_port();
-    let (mut child, server, _root) = spawn_host("drain", port, 90);
+    let (mut child, server, _root) = spawn_host("drain", 90);
     let page_dir = tmp_dir("page");
     write(&page_dir, "index.html", "<h1>form</h1>");
 
@@ -281,6 +282,30 @@ fn submissions_drains_backlog_and_enforces_tenant_isolation() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn host_serve_refuses_wildcard_with_ephemeral_port() {
+    let root = tmp_dir("wildcard");
+    let key_file = write(&root, "keys.txt", &format!("alice:{KEY_A}\n"));
+    let out = bin()
+        .args(["--json", "host-serve", "--bind", "0.0.0.0:0"])
+        .arg("--api-key-file")
+        .arg(&key_file)
+        .arg("--store")
+        .arg(root.join("store"))
+        .output()
+        .expect("run host-serve with wildcard bind");
+    assert_eq!(out.status.code(), Some(1));
+    let err = parse(&out.stderr);
+    assert_eq!(err["error"]["code"], "invalid_bind");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("wildcard"),
+        "wildcard refusal must be informative: {err}"
+    );
 }
 
 #[test]
