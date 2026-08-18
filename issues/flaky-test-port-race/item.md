@@ -7,6 +7,8 @@ priority: normal
 commits:
 - hash: a5fd99b
   summary: bind host-serve once on an OS-assigned port and test the full return-channel round trip
+- hash: 447d021
+  summary: canonicalize derived origins and harden startup contract tests after review
 ---
 
 # Flaky test: free_port() TOCTOU race makes submissions_cli fail under load
