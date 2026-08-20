@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-20
 type: improvement
-status: in-progress
+status: done
 priority: normal
 labels: [tooling, cli-canon]
 lane: cli-canon
@@ -14,6 +14,7 @@ commits:
   summary: split pure core from CLI shell without changing package identity
 - hash: 1ad9b190e840198d2eba600043dcab4abd69029e
   summary: restore pure mbox API and document bytes-only CSV boundary
+closed: 2026-08-20
 ---
 
 # cli-canon: §22 Internal layout: library-first core/cli split
