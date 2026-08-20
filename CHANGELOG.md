@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
+<!-- oss-changelog:unreleased-end -->
+
+## [0.16.0] - 2026-08-20
+
+Makes glasspad self-describing for AI agents: the bundled operating manual, the effective
+configuration, and the whole command surface can now be inspected through the CLI instead of
+read out of prose documentation.
 
 ### Added
 - **Companion skill discovery and inspection**: `glasspad skill list`, `skill print`,
@@ -16,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Read-only self-diagnostics**: `glasspad doctor` checks configuration resolution,
   hosted publishing readiness, and bundled skill metadata, with stable per-check
   records under `--json` and exit 1 when any check fails.
+- **CLI help is machine-readable**: `glasspad --help --json` and nested command help now expose
+  the clap-derived command tree, flags, arguments, examples, environment mappings, and help
+  schema version without prose scraping.
 
 ### Fixed
 - **Race-free ephemeral hosted binds**: `host-serve --bind 127.0.0.1:0` now keeps the
@@ -23,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   origin when `--public-host` is omitted.
 - **Wildcard hosted binds**: corrected the unreleased `host-serve` bind change so public
   `0.0.0.0` deployments remain supported, with a loud warning that names the actual port.
-<!-- oss-changelog:unreleased-end -->
 
 ## [0.15.0] - 2026-08-17
 
@@ -52,9 +61,6 @@ environment-neutral; and hardens hosted idempotency sweeps against transient rea
   private-reporting channels rather than a maintainer email address.
 - **`glasspad version --json` reports schema and skill compatibility**: the version payload now
   includes `supported_schemas` and bundled skill metadata for one-call drift audits.
-- **CLI help is machine-readable**: `glasspad --help --json` and nested command help now expose
-  the clap-derived command tree, flags, arguments, examples, environment mappings, and help
-  schema version without prose scraping.
 - **Hosted snapshots share page bodies behind `Arc`**: publish, update, and round-push no
   longer deep-copy every page and asset body while holding the mutation lock, making a
   snapshot clone proportional to the number of spaces rather than their total size.
