@@ -327,6 +327,8 @@ fn explicit_public_host_stays_authoritative_with_ephemeral_bind() {
         .spawn()
         .expect("spawn host-serve");
     let startup = read_startup(&mut child);
+    let _ = child.kill();
+    let _ = child.wait();
     let bind: SocketAddr = startup["bind"]
         .as_str()
         .expect("startup bind")
@@ -337,36 +339,119 @@ fn explicit_public_host_stays_authoritative_with_ephemeral_bind() {
         startup["public_host"].as_str(),
         Some("https://glasspad.example.com")
     );
-    let _ = child.kill();
-    let _ = child.wait();
+    assert_eq!(
+        startup["warnings"],
+        serde_json::json!([]),
+        "a concrete bind must not emit the wildcard warning"
+    );
 }
 
 #[test]
-fn host_serve_refuses_wildcard_with_ephemeral_port() {
+fn host_serve_warns_for_wildcard_with_ephemeral_port() {
+    struct KillOnDrop(Child);
+
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     let root = tmp_dir("wildcard");
     let key_file = write(&root, "keys.txt", &format!("alice:{KEY_A}\n"));
-    for bind in ["0.0.0.0:0", "[::ffff:0.0.0.0]:0"] {
-        let out = bin()
-            .args(["--json", "host-serve", "--bind", bind])
+    let mut child = KillOnDrop(
+        bin()
+            .args(["--json", "host-serve", "--bind", "0.0.0.0:0"])
             .arg("--public-host")
             .arg("https://glasspad.example.com")
             .arg("--api-key-file")
             .arg(&key_file)
             .arg("--store")
             .arg(root.join("store"))
-            .output()
-            .expect("run host-serve with wildcard bind");
-        assert_eq!(out.status.code(), Some(1), "bind {bind}");
-        let err = parse(&out.stderr);
-        assert_eq!(err["error"]["code"], "invalid_bind", "bind {bind}");
-        assert!(
-            err["error"]["message"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("wildcard"),
-            "wildcard refusal must be informative: {err}"
-        );
-    }
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn host-serve with wildcard bind"),
+    );
+
+    let stdout = child.0.stdout.take().expect("host stdout");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let result = BufReader::new(stdout).read_line(&mut line).map(|_| line);
+        let _ = tx.send(result);
+    });
+    let line = match rx.recv_timeout(Duration::from_secs(15)) {
+        Ok(Ok(line)) if !line.is_empty() => line,
+        result => {
+            let _ = child.0.kill();
+            let _ = child.0.wait();
+            let mut stderr = String::new();
+            let _ = child
+                .0
+                .stderr
+                .take()
+                .expect("host stderr")
+                .read_to_string(&mut stderr);
+            panic!("wildcard host-serve did not start ({result:?}); stderr: {stderr}");
+        }
+    };
+    let startup: serde_json::Value =
+        serde_json::from_str(&line).unwrap_or_else(|e| panic!("startup JSON ({e}): {line}"));
+    let actual: SocketAddr = startup["bind"]
+        .as_str()
+        .expect("startup bind")
+        .parse()
+        .expect("startup bind address");
+    assert_ne!(actual.port(), 0, "warning must name the assigned port");
+    let warning = startup["warnings"]
+        .as_array()
+        .and_then(|warnings| warnings.first())
+        .and_then(serde_json::Value::as_str)
+        .expect("wildcard warning in startup envelope");
+    assert!(warning.contains("WILDCARD BIND"), "warning: {warning}");
+    assert!(
+        warning.contains("EVERY NETWORK INTERFACE"),
+        "warning: {warning}"
+    );
+    assert!(
+        warning.contains(&actual.to_string()),
+        "warning must name the actual bind {actual}: {warning}"
+    );
+
+    let _ = child.0.kill();
+    let _ = child.0.wait();
+    let mut stderr = String::new();
+    child
+        .0
+        .stderr
+        .take()
+        .expect("host stderr")
+        .read_to_string(&mut stderr)
+        .expect("read host stderr");
+    assert!(
+        stderr.contains(warning),
+        "loud stderr warning must match the startup envelope: {stderr}"
+    );
+}
+
+#[test]
+fn loopback_serve_still_refuses_wildcard_bind() {
+    let cwd = tmp_dir("loopback-wildcard");
+    let out = hermetic(&cwd)
+        .args(["--json", "loopback", "serve", "--bind", "0.0.0.0"])
+        .output()
+        .expect("run loopback serve with wildcard bind");
+    assert_eq!(out.status.code(), Some(1));
+    let err = parse(&out.stderr);
+    assert_eq!(err["error"]["code"], "invalid_bind");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("wildcard"),
+        "loopback wildcard refusal must remain informative: {err}"
+    );
 }
 
 #[test]

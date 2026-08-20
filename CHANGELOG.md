@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Race-free ephemeral hosted binds**: `host-serve --bind 127.0.0.1:0` now keeps the
   OS-assigned listener open, reports its actual address, and derives the matching public
-  origin when `--public-host` is omitted. Wildcard binds remain refused.
+  origin when `--public-host` is omitted.
+- **Wildcard hosted binds**: corrected the unreleased `host-serve` bind change so public
+  `0.0.0.0` deployments remain supported, with a loud warning that names the actual port.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.15.0] - 2026-08-17

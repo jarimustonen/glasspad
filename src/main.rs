@@ -75,7 +75,7 @@ enum Commands {
     /// run mode from loopback serving and runs until killed.
     HostServe {
         /// Bind address, e.g. 127.0.0.1:8080. Port 0 requests an OS-assigned
-        /// ephemeral port. Wildcard addresses are always refused.
+        /// ephemeral port. Wildcard addresses are allowed with a loud warning.
         #[arg(long)]
         bind: SocketAddr,
         /// Canonical public origin for the artifact CSP + returned URLs, e.g.
@@ -420,7 +420,7 @@ fn help_examples(command: &str) -> Vec<help::Example> {
                 "glasspad",
                 "host-serve",
                 "--bind",
-                "127.0.0.1:8080",
+                "0.0.0.0:8080",
                 "--public-host",
                 "https://glasspad.example.com",
                 "--api-key-file",

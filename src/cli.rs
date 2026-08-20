@@ -2310,11 +2310,18 @@ fn launch_browser(url: &str) -> bool {
 
 // --- host-serve (hosted share server) -------------------------------------
 
+/// Recognize native and IPv4-mapped wildcard addresses without requiring the
+/// operating system to support binding every equivalent socket representation.
+fn is_host_wildcard_bind(bind: SocketAddr) -> bool {
+    bind.ip().to_canonical().is_unspecified()
+}
+
 /// `glasspad host-serve --bind <ip:port> [--public-host <origin>] --api-key-file
 /// <path> --store <dir> [--retention-days <n>]` runs the long-lived hosted share
 /// server. A loopback port of 0 is bound once and its OS-assigned address is
 /// reported; without an explicit public host, that real address becomes the public
-/// origin. Wildcard binds are always refused.
+/// origin. Wildcard binds are permitted for public deployments and produce a loud
+/// warning naming the actual bound port.
 pub async fn host_serve(
     bind: SocketAddr,
     public_host: Option<String>,
@@ -2324,18 +2331,7 @@ pub async fn host_serve(
     json: bool,
 ) {
     let bind_ip = bind.ip().to_canonical();
-    if bind_ip.is_unspecified() {
-        exit_error(
-            json,
-            1,
-            "invalid_bind",
-            &format!(
-                "refusing to bind wildcard address {bind}: name a concrete loopback or interface address"
-            ),
-            Some(&bind.to_string()),
-            None,
-        );
-    }
+    let wildcard_bind = is_host_wildcard_bind(bind);
     if public_host.is_none() && !bind_ip.is_loopback() {
         exit_error(
             json,
@@ -2390,6 +2386,7 @@ pub async fn host_serve(
         .local_addr()
         .map(|a| a.to_string())
         .unwrap_or_else(|_| bind.to_string());
+    let wildcard_warning = wildcard_bind.then(|| warn_host_wildcard(&local));
     emit_host_serving(
         json,
         &local,
@@ -2397,6 +2394,7 @@ pub async fn host_serve(
         handle.pages,
         key_count,
         retention_days,
+        wildcard_warning.as_deref(),
     );
 
     if let Err(e) = handle.serve().await {
@@ -2411,6 +2409,17 @@ pub async fn host_serve(
     }
 }
 
+/// Emit the loud wildcard-bind warning only after the listener is held, so an
+/// ephemeral bind names the OS-assigned port rather than the requested port 0.
+fn warn_host_wildcard(bind: &str) -> String {
+    let warning = format!(
+        "WILDCARD BIND: glasspad host-serve is reachable on EVERY NETWORK INTERFACE; \
+         listening on {bind}"
+    );
+    eprintln!("⚠️  {warning}");
+    warning
+}
+
 /// Startup envelope for `host-serve` (mirrors [`emit_serving`]): a long-running
 /// announcement, not a terminal result. `--json` → stdout; text → stderr.
 fn emit_host_serving(
@@ -2420,8 +2429,10 @@ fn emit_host_serving(
     pages: usize,
     keys: usize,
     retention_days: i64,
+    warning: Option<&str>,
 ) {
     if json {
+        let warnings: Vec<&str> = warning.into_iter().collect();
         let payload = json!({
             "schema_version": SCHEMA_VERSION,
             "serving": true,
@@ -2433,7 +2444,7 @@ fn emit_host_serving(
             "pages": pages,
             "api_keys": keys,
             "retention_days": retention_days,
-            "warnings": [],
+            "warnings": warnings,
         });
         emit_json_line(&payload);
     } else {
@@ -4794,6 +4805,18 @@ pub fn skill_compat(install: bool, user: bool, agent: Option<SkillAgent>, json: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_wildcard_bind_classification_canonicalizes_mapped_ipv4() {
+        let wildcard = |raw: &str| is_host_wildcard_bind(raw.parse().unwrap());
+        assert!(wildcard("0.0.0.0:0"));
+        assert!(wildcard("[::]:8080"));
+        assert!(wildcard("[::ffff:0.0.0.0]:8080"));
+        assert!(!wildcard("127.0.0.1:0"));
+        assert!(!wildcard("[::1]:0"));
+        assert!(!wildcard("[::ffff:127.0.0.1]:0"));
+        assert!(!wildcard("192.0.2.10:8080"));
+    }
 
     #[test]
     fn skill_frontmatter_parser_accepts_lf_and_crlf() {
