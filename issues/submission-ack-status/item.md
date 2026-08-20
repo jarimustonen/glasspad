@@ -1,9 +1,10 @@
 ---
 created: 2026-08-18
-updated: 2026-08-18
+updated: 2026-08-20
 type: feature
 status: open
 priority: normal
+lane: hosted-feature
 ---
 
 # Report on the page when a submission has not been collected by an agent

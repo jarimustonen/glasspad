@@ -1,10 +1,11 @@
 ---
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-20
 type: bug
 reporter: agent-ossctl-stint-23
 status: open
 priority: high
+lane: release-infra
 ---
 
 # contract under-declares the release surface: no homebrew target, and cargo-publish contradicts the CI-publish policy

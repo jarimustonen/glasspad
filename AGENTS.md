@@ -66,6 +66,31 @@ Generic operating policy for orchestrated work sessions (`/stint`) and worktrees
 
 **CLI surface** follows the AI-first conventions above: strict validation, `--json`, no interactive prompts, informative errors.
 
+## Crate layout (library-first core/cli split)
+
+Landed 2026-08-20 (`cli-canon-s22`, AI-first CLI canon §22). Three facts a change here
+must not break:
+
+**1. `crates/glasspad-core` is pure — keep it that way.** No `clap`, no `std::fs`, no
+`SystemTime::now()`. Time comes from the injected `Clock` trait
+(`crates/glasspad-core/src/time.rs`); implementations live at the edge, so domain
+decisions stay testable without reading a wall clock. Verify by grep, not by inspection.
+`crates/glasspad-cli` owns the clap surface and all I/O.
+
+**2. It is ONE published package with two crate roots — deliberately.** `Cargo.toml`
+points `[lib]` at `crates/glasspad-core/src/lib.rs` and `[[bin]]` at
+`crates/glasspad-cli/src/main.rs`. This is what keeps `cargo publish`, `cargo install
+glasspad`, cargo-dist, and the tag-triggered CI unchanged. **Do not "complete" the split
+into two separately published crates** — that breaks the documented source-install path
+(`cargo install glasspad`) for Intel-Mac and Windows users. A §22 conformance report
+calling this a shortfall is correct and accepted; it is not a defect to fix.
+
+**3. `hosted` stays on the I/O edge, permanently.** With ~280 filesystem/network
+touchpoints it is a durable on-disk store plus an HTTP surface — it *is* the shell §22
+means. A canon audit flagging it as an unmoved domain module should be **rejected**, not
+actioned. The genuinely worthwhile remaining extraction is `artifact_host`'s pure
+rendering/sanitizing logic (tracked as `artifact-host-core-extract`).
+
 ## Debugging rendered output
 
 Glasspad is an **HTML-artifact host** (v0.2): the calling agent authors HTML in
