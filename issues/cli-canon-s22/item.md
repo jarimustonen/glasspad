@@ -10,6 +10,8 @@ lane_seq: 80
 commits:
 - hash: 6f9b6207562bd2b652de26e87378b53a58c36972
   summary: start core CLI split
+- hash: 55648382d46c2aca2c916a6520cd38fc04c59603
+  summary: split pure core from CLI shell without changing package identity
 ---
 
 # cli-canon: §22 Internal layout: library-first core/cli split
