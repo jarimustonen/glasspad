@@ -1,10 +1,9 @@
 ---
 created: 2026-08-12
-updated: 2026-08-16
+updated: 2026-08-20
 type: feature
 status: wontfix
 priority: low
-labels: [deferred]
 closed: 2026-08-16
 ---
 

@@ -1,18 +1,17 @@
 ---
 created: 2026-08-14
-updated: 2026-08-15
+updated: 2026-08-20
 type: feature
 reporter: maintainer
 status: done
 priority: normal
-labels:
-- via:agent-homebase-wrapup
+closed: 2026-08-15
 commits:
 - hash: 79a6a2b
   summary: 'feat(hosted): publish --update <slug> in-place update by capability slug'
 - hash: 0adf9fd
   summary: 'fix(hosted): apply review — harden update path (collision fail-closed, single validated meta read, CLI grammar, rollback)'
-closed: 2026-08-15
+provenance: agent-homebase-wrapup
 ---
 
 # publish: update a published artifact in place (stable slug) instead of …
