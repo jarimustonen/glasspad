@@ -33,7 +33,7 @@ Note it also changed the library's CSV entry point to take bytes instead of a ge
 
 ## ▶ Start here
 
-Clean tree, `main` pushed at `519ca7a`, nothing in flight. Run `issuectl dag` for the live
+Clean tree, `main` pushed, nothing in flight. Run `issuectl dag` for the live
 picture — this file deliberately records no schedule.
 
 **The `s22` split under-delivered, and the follow-up is already filed.** Measurement after it
@@ -50,21 +50,8 @@ maintainer's decision (2026-08-20) on what to do about it:
   sanitization, shell rendering, templates: 7342 lines, only 33 I/O touchpoints) into core. It
   is nearly pure *and* security-critical, so it is the piece of §22 genuinely worth doing.
 
-**Do not pursue "§22 to completion" as a goal.** `hosted` (8481 lines, **280** I/O touchpoints)
-is a durable store plus an HTTP surface — it *is* the I/O edge §22 means, and it stays on the
-CLI side permanently. A future canon audit flagging it should be rejected, not actioned. This is
-recorded in `artifact-host-core-extract` too.
-
-**The hosted return-channel question is settled and filed.** The product model is unchanged:
-**the agent listens.** No push-to-a-departed-agent, no outbound webhook — both were considered
-and rejected (*"Sopimus on, että agentti kuuntelee"*). What remains is `submission-ack-status`:
-when nobody has collected a submission, say so **on the page**. Note the constraint recorded in
-that issue — the status read is reachable from the published page, so it may reveal nothing but
-the caller's own submission's delivery state.
-
-**Needs scheduling triage:** `contract-declare-ci-publish-surface` (arrived from an ossctl stint,
-concerns this repo's release-contract declaration) and `submission-ack-status` are both active
-but unlaned.
+Scope exclusions for both of these are recorded **in the issues themselves** and in
+`AGENTS.md` → Crate layout — read there, not here.
 
 ## Standing lessons
 
@@ -95,10 +82,9 @@ but unlaned.
   konffeista."* Concretely: "install this on the haapa server" is a defect;
   `github.com/jarimustonen/glasspad` in an install command is not. The real defect class is
   personal machine names, personal filesystem paths, private sibling-repo names, internal URLs,
-  and personal contact addresses. **Decided and closed 2026-08-18: keep the self-hosted macOS
-  runner, keep the personal GitHub/Homebrew namespace, keep the LICENSE legal name.** Do not
-  re-escalate these; `audit-no-user-specifics` over-reached by forbidding account handles
-  outright. Also: history is fine — old records need no scrubbing for their own sake.
+  and personal contact addresses. History is fine — old records need no scrubbing for their own
+  sake. (`audit-no-user-specifics` over-reached by forbidding account handles outright; its
+  closed analysis records which specific items were settled and why.)
 - **Verify a landed unit's claims yourself, especially against a false premise in your own
   brief.** On 2026-08-20 the orchestrator's brief asserted that an existing security check
   forbade a wildcard bind on `host-serve`. It does not — that check guards `loopback serve`.
