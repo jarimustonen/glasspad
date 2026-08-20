@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **Internal-only library-first layout**: separated pure domain code from the clap and I/O
-  shell without changing the published `glasspad` package or installed binary.
+- **Library-first internals with unchanged CLI behavior**: separated pure domain code from
+  the clap and I/O shell while preserving the published `glasspad` package identity and
+  installed `glasspad` binary. The Rust library's CSV entry point now accepts already-loaded
+  bytes instead of a generic `Read`, so core never performs I/O on a caller's behalf.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.16.0] - 2026-08-20

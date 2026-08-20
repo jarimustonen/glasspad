@@ -9,7 +9,6 @@ mod build;
 mod cli;
 mod clock;
 mod config;
-mod data_mbox;
 mod favicon;
 mod help;
 mod hosted;

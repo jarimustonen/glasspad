@@ -1,7 +1,7 @@
 use mail_parser::mailbox::mbox::MessageIterator;
 use mail_parser::{Address, MessageParser, MimeHeaders};
 
-use glasspad::data::types::{CellValue, Dataset, Row};
+use super::types::{CellValue, Dataset, Row};
 
 #[derive(Debug)]
 pub enum MboxError {
@@ -37,7 +37,7 @@ fn parse_mbox_impl(bytes: &[u8]) -> Result<Dataset, MboxError> {
     let mut rows = Dataset::new();
     let parser = MessageParser::default();
 
-    for (count, raw_message) in MessageIterator::new(std::io::Cursor::new(bytes)).enumerate() {
+    for (count, raw_message) in MessageIterator::new(bytes).enumerate() {
         let raw = raw_message.map_err(|e| MboxError::ParseError(format!("{:?}", e)))?;
         let msg = parser.parse(raw.contents()).ok_or_else(|| {
             MboxError::ParseError(format!("Failed to parse message #{}", count + 1))
