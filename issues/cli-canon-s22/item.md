@@ -7,6 +7,9 @@ priority: normal
 labels: [tooling, cli-canon]
 lane: cli-canon
 lane_seq: 80
+commits:
+- hash: 6f9b6207562bd2b652de26e87378b53a58c36972
+  summary: start core CLI split
 ---
 
 # cli-canon: §22 Internal layout: library-first core/cli split
