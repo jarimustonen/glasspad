@@ -12,6 +12,8 @@ commits:
   summary: start core CLI split
 - hash: 55648382d46c2aca2c916a6520cd38fc04c59603
   summary: split pure core from CLI shell without changing package identity
+- hash: 1ad9b190e840198d2eba600043dcab4abd69029e
+  summary: restore pure mbox API and document bytes-only CSV boundary
 ---
 
 # cli-canon: §22 Internal layout: library-first core/cli split
