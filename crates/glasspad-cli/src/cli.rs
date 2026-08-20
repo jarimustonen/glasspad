@@ -4244,26 +4244,24 @@ pub fn data(file: PathBuf, format: Option<String>, meta: bool, json: bool) {
     let bytes = read_data_file(&file, json);
     // Errors carry a stable `(code, message)` so a UTF-8 failure keeps its own
     // `not_utf8` code instead of collapsing into the generic `parse_failed`.
-    let parsed: Result<Dataset, (&'static str, String)> = match fmt.as_str() {
-        "csv" => {
-            glasspad::data::csv::parse_csv(std::io::Cursor::new(&bytes), limits::MAX_CSV_BYTES)
-                .map_err(|e| ("parse_failed", e.to_string()))
-        }
-        "mbox" => glasspad::data::mbox::parse_mbox_bytes(&bytes)
-            .map_err(|e| ("parse_failed", e.to_string())),
-        "json" => match std::str::from_utf8(&bytes) {
-            Ok(s) => {
-                glasspad::data::json::parse_json_str(s).map_err(|e| ("parse_failed", e.to_string()))
-            }
-            Err(_) => Err((
-                "not_utf8",
-                format!("{} is not valid UTF-8 (JSON must be UTF-8)", file.display()),
-            )),
-        },
-        // `--format` is a fixed enum and `detect_data_format` only yields these
-        // three, so any other value here is a programming error, not user input.
-        other => unreachable!("format resolved to csv|json|mbox, got {other:?}"),
-    };
+    let parsed: Result<Dataset, (&'static str, String)> =
+        match fmt.as_str() {
+            "csv" => glasspad::data::csv::parse_csv_bytes(&bytes, limits::MAX_CSV_BYTES)
+                .map_err(|e| ("parse_failed", e.to_string())),
+            "mbox" => crate::data_mbox::parse_mbox_bytes(&bytes)
+                .map_err(|e| ("parse_failed", e.to_string())),
+            "json" => match std::str::from_utf8(&bytes) {
+                Ok(s) => glasspad::data::json::parse_json_str(s)
+                    .map_err(|e| ("parse_failed", e.to_string())),
+                Err(_) => Err((
+                    "not_utf8",
+                    format!("{} is not valid UTF-8 (JSON must be UTF-8)", file.display()),
+                )),
+            },
+            // `--format` is a fixed enum and `detect_data_format` only yields these
+            // three, so any other value here is a programming error, not user input.
+            other => unreachable!("format resolved to csv|json|mbox, got {other:?}"),
+        };
     let rows = match parsed {
         Ok(r) => r,
         Err((code, msg)) => exit_error(json, 1, code, &msg, None, None),
@@ -4454,7 +4452,7 @@ const BUNDLED_SKILLS: &[BundledSkill] = &[BundledSkill {
     cli_version: env!("CARGO_PKG_VERSION"),
     schema_version: 1,
     content: include_str!("skill.md"),
-    path_in_repo: "src/skill.md",
+    path_in_repo: "crates/glasspad-cli/src/skill.md",
 }];
 
 const DEFAULT_SKILL: &str = BUNDLED_SKILLS[0].name;

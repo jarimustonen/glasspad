@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::io::Read;
 
 use super::infer::infer_cell_value;
 use super::limits::{self, LimitError};
@@ -8,7 +7,6 @@ use super::types::{CellValue, Dataset, Row};
 #[derive(Debug)]
 pub enum CsvError {
     Csv(csv::Error),
-    Io(std::io::Error),
     Limit(LimitError),
     DuplicateHeader(String),
     EmptyHeader {
@@ -26,7 +24,6 @@ impl std::fmt::Display for CsvError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CsvError::Csv(e) => write!(f, "CSV parse error: {}", e),
-            CsvError::Io(e) => write!(f, "I/O error: {}", e),
             CsvError::Limit(e) => write!(f, "{}", e),
             CsvError::DuplicateHeader(h) => write!(f, "Duplicate CSV header: \"{}\"", h),
             CsvError::EmptyHeader { position } => {
@@ -59,27 +56,24 @@ impl From<csv::Error> for CsvError {
 /// Maximum size of a single cell value in bytes.
 pub const DEFAULT_MAX_CELL_BYTES: usize = 1024 * 1024; // 1 MB
 
-/// Parse CSV data from a reader into a Dataset with type inference.
-/// Enforces byte size limit on the reader.
-pub fn parse_csv<R: Read>(reader: R, max_bytes: usize) -> Result<Dataset, CsvError> {
-    // Enforce byte size limit
-    let limited = reader.take(max_bytes as u64 + 1);
-    let mut buf = Vec::new();
-    std::io::Read::read_to_end(&mut std::io::BufReader::new(limited), &mut buf)
-        .map_err(CsvError::Io)?;
-
-    if buf.len() > max_bytes {
+/// Parse CSV data already loaded by the caller into a Dataset with type inference.
+/// Enforces the byte-size limit before parsing.
+pub fn parse_csv_bytes(data: &[u8], max_bytes: usize) -> Result<Dataset, CsvError> {
+    if data.len() > max_bytes {
         return Err(CsvError::Limit(LimitError::PayloadTooLarge {
-            size: buf.len(),
+            size: data.len(),
             max: max_bytes,
         }));
     }
 
-    parse_csv_bytes(&buf, DEFAULT_MAX_CELL_BYTES)
+    parse_csv_bytes_with_cell_limit(data, DEFAULT_MAX_CELL_BYTES)
 }
 
 /// Parse CSV from bytes with configurable max cell size.
-fn parse_csv_bytes(data: &[u8], max_cell_bytes: usize) -> Result<Dataset, CsvError> {
+fn parse_csv_bytes_with_cell_limit(
+    data: &[u8],
+    max_cell_bytes: usize,
+) -> Result<Dataset, CsvError> {
     let mut csv_reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(false) // reject rows with wrong column count
@@ -147,7 +141,7 @@ fn parse_csv_bytes(data: &[u8], max_cell_bytes: usize) -> Result<Dataset, CsvErr
 
 /// Parse CSV from a string (convenience for tests). Uses default limits.
 pub fn parse_csv_str(s: &str) -> Result<Dataset, CsvError> {
-    parse_csv_bytes(s.as_bytes(), DEFAULT_MAX_CELL_BYTES)
+    parse_csv_bytes(s.as_bytes(), limits::MAX_CSV_BYTES)
 }
 
 #[cfg(test)]
@@ -245,21 +239,21 @@ mod tests {
     fn cell_too_large_rejected() {
         let csv = "val\nhello\n";
         // Use a tiny max cell size for testing
-        let result = parse_csv_bytes(csv.as_bytes(), 3);
+        let result = parse_csv_bytes_with_cell_limit(csv.as_bytes(), 3);
         assert!(matches!(result, Err(CsvError::CellTooLarge { .. })));
     }
 
     #[test]
     fn cell_within_limit_accepted() {
         let csv = "val\nhello\n";
-        let result = parse_csv_bytes(csv.as_bytes(), 100);
+        let result = parse_csv_bytes_with_cell_limit(csv.as_bytes(), 100);
         assert!(result.is_ok());
     }
 
     #[test]
     fn byte_size_limit_enforced() {
         let csv = "a\n1\n";
-        let result = parse_csv(csv.as_bytes(), 2); // too small
+        let result = parse_csv_bytes(csv.as_bytes(), 2); // too small
         assert!(matches!(
             result,
             Err(CsvError::Limit(LimitError::PayloadTooLarge { .. }))
@@ -269,7 +263,7 @@ mod tests {
     #[test]
     fn byte_size_limit_passes() {
         let csv = "a\n1\n";
-        let result = parse_csv(csv.as_bytes(), 1000);
+        let result = parse_csv_bytes(csv.as_bytes(), 1000);
         assert!(result.is_ok());
     }
 }

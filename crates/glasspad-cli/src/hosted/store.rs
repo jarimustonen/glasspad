@@ -1240,7 +1240,7 @@ impl Store {
         // write is mid-flight, so any `.<…>.tmp` staging entry is a crash remnant we
         // can safely reap.
         let _guard = self.lock_mutation();
-        let cutoff = Utc::now() - retention;
+        let cutoff = glasspad::time::retention_cutoff(&crate::clock::SystemClock, retention);
         let mut removed = 0usize;
         let rd = std::fs::read_dir(&self.pages_dir)?;
         for entry in rd.flatten() {

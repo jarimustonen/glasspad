@@ -494,7 +494,7 @@ impl SubmissionStore {
     /// directories and leftover `.tmp` staging files. Returns the number removed.
     /// Best-effort per-file; a single failure is logged, not fatal.
     pub fn gc(&self, retention: ChronoDuration) -> std::io::Result<usize> {
-        let cutoff = Utc::now() - retention;
+        let cutoff = glasspad::time::retention_cutoff(&crate::clock::SystemClock, retention);
         let mut removed = 0usize;
         let rd = match std::fs::read_dir(&self.root) {
             Ok(rd) => rd,

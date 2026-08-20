@@ -1,7 +1,7 @@
 use mail_parser::mailbox::mbox::MessageIterator;
 use mail_parser::{Address, MessageParser, MimeHeaders};
 
-use super::types::{CellValue, Dataset, Row};
+use glasspad::data::types::{CellValue, Dataset, Row};
 
 #[derive(Debug)]
 pub enum MboxError {
@@ -26,7 +26,8 @@ pub fn parse_mbox_bytes(data: &[u8]) -> Result<Dataset, MboxError> {
 }
 
 /// Parse mbox/eml from a UTF-8 string (convenience for tests).
-pub fn parse_mbox_str(data: &str) -> Result<Dataset, MboxError> {
+#[cfg(test)]
+fn parse_mbox_str(data: &str) -> Result<Dataset, MboxError> {
     parse_mbox_impl(data.as_bytes())
 }
 

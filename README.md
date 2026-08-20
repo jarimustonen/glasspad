@@ -161,7 +161,7 @@ envelope's `targets[]` array reports every path written (the top-level
 written in order and the install is not transactional: if a later target fails,
 an earlier one already written is left in place — re-run to complete it.
 
-See [`src/skill.md`](src/skill.md) for the agent-facing guide and
+See [`crates/glasspad-cli/src/skill.md`](crates/glasspad-cli/src/skill.md) for the agent-facing guide and
 [`DESIGN.md`](DESIGN.md) for the `--gp-*` design system that `base.css` provides.
 
 ## Status

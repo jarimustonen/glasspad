@@ -54,7 +54,7 @@ fn skill_list_json_agrees_with_version_metadata() {
     assert_eq!(listed[0]["name"], "glasspad");
     assert_eq!(listed[0]["cli_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(listed[0]["schema_version"], 1);
-    let content = include_str!("../src/skill.md");
+    let content = include_str!("../crates/glasspad-cli/src/skill.md");
     assert_eq!(listed[0]["name"], frontmatter_field(content, "name"));
     assert_eq!(
         listed[0]["description"],
@@ -97,7 +97,10 @@ fn skill_print_streams_exact_content_without_side_effects() {
         .output()
         .unwrap();
     assert!(out.status.success(), "stderr: {:?}", out.stderr);
-    assert_eq!(out.stdout, include_bytes!("../src/skill.md"));
+    assert_eq!(
+        out.stdout,
+        include_bytes!("../crates/glasspad-cli/src/skill.md")
+    );
     assert!(out.stderr.is_empty());
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
 
@@ -112,8 +115,11 @@ fn skill_print_streams_exact_content_without_side_effects() {
     assert_eq!(value["name"], "glasspad");
     assert_eq!(value["cli_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(value["schema_version_skill"], 1);
-    assert_eq!(value["content"], include_str!("../src/skill.md"));
-    assert_eq!(value["path_in_repo"], "src/skill.md");
+    assert_eq!(
+        value["content"],
+        include_str!("../crates/glasspad-cli/src/skill.md")
+    );
+    assert_eq!(value["path_in_repo"], "crates/glasspad-cli/src/skill.md");
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
 
     let _ = std::fs::remove_dir_all(&root);
@@ -185,7 +191,7 @@ fn canonical_skill_install_routes_to_existing_installer() {
     assert_eq!(value["targets"][0]["agent"], "pi");
     assert_eq!(
         std::fs::read_to_string(root.join(".pi/skills/glasspad/SKILL.md")).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -208,7 +214,10 @@ fn bare_skill_compatibility_remains_a_raw_dump() {
     for args in [&["skill"][..], &["skill", "--json"][..]] {
         let out = bin().args(args).output().unwrap();
         assert!(out.status.success(), "stderr: {:?}", out.stderr);
-        assert_eq!(out.stdout, include_bytes!("../src/skill.md"));
+        assert_eq!(
+            out.stdout,
+            include_bytes!("../crates/glasspad-cli/src/skill.md")
+        );
         assert!(out.stderr.is_empty());
     }
 }
@@ -263,7 +272,7 @@ fn project_install_json_envelope_shape() {
     // The installed file has the real skill content, not an empty/partial write.
     assert_eq!(
         std::fs::read_to_string(path).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
     // Dual-home default (--agent all): both Claude and pi targets are reported and
     // written. The pi project target lands under ./.pi/skills/glasspad/.
@@ -280,7 +289,7 @@ fn project_install_json_envelope_shape() {
     );
     assert_eq!(
         std::fs::read_to_string(pi_path).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
     assert!(out.stderr.is_empty(), "stderr: {:?}", out.stderr);
 
@@ -297,7 +306,7 @@ fn project_install_json_envelope_shape() {
     assert_eq!(v2["created"], false);
     assert_eq!(
         std::fs::read_to_string(v2["path"].as_str().unwrap()).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
 
     let _ = std::fs::remove_dir_all(&root);
@@ -450,7 +459,7 @@ fn pi_user_install_writes_pi_dir() {
     );
     assert_eq!(
         std::fs::read_to_string(path).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
 
     let _ = std::fs::remove_dir_all(&home);
@@ -491,7 +500,7 @@ fn dual_home_user_install_writes_both_dirs() {
     assert!(pi_path.exists(), "pi skill missing");
     assert_eq!(
         std::fs::read_to_string(&pi_path).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
 
     // Idempotent re-run: safe, and both targets report created=false.
@@ -503,7 +512,7 @@ fn dual_home_user_install_writes_both_dirs() {
     }
     assert_eq!(
         std::fs::read_to_string(&pi_path).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
 
     let _ = std::fs::remove_dir_all(&home);
@@ -540,7 +549,7 @@ fn pi_project_install_writes_pi_dir_only() {
     assert_eq!(targets[0]["created"], true);
     assert_eq!(
         std::fs::read_to_string(path).unwrap(),
-        include_str!("../src/skill.md")
+        include_str!("../crates/glasspad-cli/src/skill.md")
     );
     // No Claude tree was created.
     assert!(

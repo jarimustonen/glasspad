@@ -11,6 +11,20 @@ keywords = ["html", "artifact", "sandbox", "dashboard", "cli"]
 categories = ["command-line-utilities", "web-programming", "visualization"]
 exclude = ["issues/", "history/", ".worktree/", "test-*.sh", "*.png", "AGENTS*.md"]
 
+# Keep one published package (`glasspad`) while giving its two Rust crates an
+# explicit library-first physical boundary. This preserves `cargo publish` and
+# `cargo install glasspad` as single-package operations.
+[lib]
+name = "glasspad"
+path = "crates/glasspad-core/src/lib.rs"
+
+[[bin]]
+name = "glasspad"
+path = "crates/glasspad-cli/src/main.rs"
+
+[workspace]
+members = ["."]
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

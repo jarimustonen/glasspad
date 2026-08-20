@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
+
+### Changed
+- **Internal-only library-first layout**: separated pure domain code from the clap and I/O
+  shell without changing the published `glasspad` package or installed binary.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.16.0] - 2026-08-20

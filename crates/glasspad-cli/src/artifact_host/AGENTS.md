@@ -107,7 +107,7 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   are vendored, not CDN-loaded, because the artifact `script-src` names only the
   loopback host — `charts.js` lazily loads them from `/_gp/v1/*`. `BASE_LIB_NAMES`
   enumerates the served set (minus the `probe.js` test stub) that a self-contained
-  `glasspad build` (`src/build.rs`) bundles under `_gp/v1/`, resolved through
+  `glasspad build` (`crates/glasspad-cli/src/build.rs`) bundles under `_gp/v1/`, resolved through
   `gp_asset` so the list never drifts from what the server serves.
 - `space.rs` (Wave 2a) — the **space model + directory scanner** (security-
   sensitive). `scan_dir` reads a directory into an immutable `Space` (artifacts +
@@ -193,7 +193,7 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   meta/body), never the payload; the submit endpoint is `Origin`-allowlisted (CSRF),
   size + rate capped; hosted reads are API-key + per-tenant scoped. See
   `issues/artifact-return-channel/`. The store + long-poll + SSE stream are in
-  `src/submissions.rs`; handlers in `hosted/submit.rs` (hosted) and `server.rs`
+  `crates/glasspad-cli/src/submissions.rs`; handlers in `hosted/submit.rs` (hosted) and `server.rs`
   (loopback). The agent consumes submissions three ways over the **same** persisted-
   cursor store (`since=<id>`, no re-deliver/skip): plain poll (A1 `…/submissions`),
   long-poll (A3 `…/submissions/wait`, the default `await-submission`), and an **SSE
