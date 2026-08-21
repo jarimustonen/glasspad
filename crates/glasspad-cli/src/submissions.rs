@@ -59,7 +59,6 @@ use std::time::{Duration, Instant};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt};
@@ -207,21 +206,9 @@ impl std::fmt::Display for SubmitError {
     }
 }
 
-/// The content-version of an artifact body: the first 16 hex chars of its SHA-256.
-/// Stable for a given body (hosted pages are immutable; a loopback reload changes
-/// the body and thus the version), short enough for a URL/echo, and collision-
-/// resistant enough to bind a submission to the exact content it answered. This is
-/// the forward-compat field: one-shot ignores it beyond the mismatch check; a
-/// later multi-round protocol keys rounds off it.
-pub fn content_version(body: &str) -> String {
-    let digest = Sha256::digest(body.as_bytes());
-    let mut out = String::with_capacity(16);
-    for b in &digest[..8] {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{b:02x}");
-    }
-    out
-}
+/// The pure content-version decision lives in the library; the durable store keeps
+/// this re-export so existing edge callers use the same stable function.
+pub use glasspad::artifact_host::content_version;
 
 /// The durable submission store for one run mode.
 pub struct SubmissionStore {

@@ -4,6 +4,8 @@
 //! filesystem, network, process, environment, or wall-clock I/O. The binary and
 //! all side-effecting adapters live in `crates/glasspad-cli`.
 
+pub mod artifact_host;
 pub mod data;
+pub mod favicon;
 pub mod security;
 pub mod time;

@@ -96,8 +96,9 @@ rendering/sanitizing logic (tracked as `artifact-host-core-extract`).
 Glasspad is an **HTML-artifact host** (v0.2): the calling agent authors HTML in
 a directory and `glasspad serve ./dir` hosts each file in a null-origin
 sandboxed iframe. There is no content-DSL and no server-side renderer — the old
-`src/spec/*` + `src/client/dashboard.js` path was removed. The host internals
-live in **`crates/glasspad-cli/src/artifact_host/`** (see its `AGENTS.md`).
+`src/spec/*` + `src/client/dashboard.js` path was removed. The host's pure rendering and security decisions live in
+**`crates/glasspad-core/src/artifact_host/`**; the HTTP/filesystem adapters live in
+**`crates/glasspad-cli/src/artifact_host/`** (see its `AGENTS.md`).
 
 Base libraries are served under `/_gp/v1/`: `base.css` (the `--gp-*` design
 system), `charts.js` (`gp.chart(el, spec)` over Vega-Lite), `bridge.js`

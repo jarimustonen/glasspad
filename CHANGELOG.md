@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Internal artifact-host organization only**: moved pure rendering, sanitization, shell,
+  template, and security-policy decisions into `glasspad-core`; routes, headers, storage,
+  filesystem access, and public behavior are unchanged.
 - **Release contract declares the full CI-owned publication surface**: crates.io is
   CI-delegated, cargo-dist owns the GitHub Release and Homebrew channels, and the declared
   installers/platforms match the existing macOS and `*-linux-gnu` binary matrix. Manual

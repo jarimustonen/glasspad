@@ -7,13 +7,18 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
 
 ## Files
 
-- `headers.rs` — the two header sets. `artifact_csp()` = sandbox + egress CSP
+Pure implementations of `headers`, `shell`, `wrap`, `render`, and metadata sanitization
+live under `crates/glasspad-core/src/artifact_host/`; same-named CLI modules are thin
+compatibility/HTTP adapters. The filesystem scanner, routes, fixtures, and guards remain
+here at the I/O edge.
+
+- `headers.rs` — the HTTP adapter for the two pure header-policy sets. `artifact_csp()` = sandbox + egress CSP
   that **names both explicit loopback origins** (`'self'` is meaningless under a
   null origin; the shell is reachable at `127.0.0.1` *and* `localhost`);
   `shell_csp()` = trusted-chrome CSP (nonce'd script + Trusted Types).
   `hardening_headers()` = `nosniff` / `no-referrer` / `Permissions-Policy` deny.
   Content + shell responses also carry `Cache-Control: no-store`.
-- `shell.rs` — the trusted parent document. Runs the **parent side of the
+- `shell.rs` — thin adapter for the core trusted-parent document renderer. Runs the **parent side of the
   postMessage bridge**, in this order: `event.source === iframe.contentWindow`
   (NOT `event.origin`, which is `"null"` for every sandboxed frame) → rate cap →
   reject transferred `ports` → exact `{type:"navigate", slug:<known>}` schema on
@@ -40,7 +45,7 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   the parent is not sandboxed. Shell `script-src` names only the nonce (not
   `'self'`) — the shell loads no same-origin script file, so this shrinks the
   injection blast radius.
-- `wrap.rs` (Wave 3b) — **fragment detection + the bridge/theme injection point**.
+- `wrap.rs` (Wave 3b) — thin adapter for core **fragment detection + the bridge/theme injection point**.
   `is_fragment` is BOM/whitespace/comment-tolerant (a full document opens with
   `<!doctype>`/`<html …>`; anything else is a fragment). A fragment is wrapped
   into a full document with `data-theme` inlined (no FOUC), `base.css` linked, and
@@ -48,7 +53,7 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   silently. Full documents are served verbatim. Wrapping runs under the same
   frozen artifact CSP (`headers::artifact_csp`) and widens nothing; it is NOT
   sanitization (the sandbox/CSP is the boundary, design.md §7).
-- `render.rs` (0.3.0) — the **markdown + reusable-template renderer** (the
+- `render.rs` (0.3.0) — thin adapter for the core **markdown + reusable-template renderer** (the
   `glasspad render` path). Renders a markdown body to HTML (CommonMark + GFM via
   `pulldown-cmark`) and splices it into a template's single `{{content}}` slot,
   producing an artifact **body** string that flows through the ordinary serve
