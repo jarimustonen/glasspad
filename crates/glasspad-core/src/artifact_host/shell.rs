@@ -56,10 +56,10 @@ pub struct NavGroupView<'a> {
 /// Render the shell document for `space`/`slug` with the **flat** nav bar only
 /// (today's byte-compatible chrome). Thin shim over [`render_with_groups`] with no
 /// groups — the grouped sidebar is inactive and the horizontal `nav` bar renders
-/// exactly as before. Test-only: the production caller ([`super::render_shell`])
-/// always calls [`render_with_groups`] (passing the space's reconciled groups, which
+/// exactly as before. Test-only: the production CLI adapter's `render_shell`
+/// calls [`render_with_groups`] (passing the space's reconciled groups, which
 /// may be empty), so this shim exists purely to keep the many flat-nav unit tests
-/// concise and to document/exercise the byte-compatible fallback.
+/// concise and to document/exercise the byte-compatible fallback in the CLI adapter.
 #[cfg(test)]
 pub fn render(
     mount: &str,

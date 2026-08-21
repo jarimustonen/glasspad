@@ -477,8 +477,10 @@ pub fn build_space_bundle(
 
     // Space title (from the producer's manifest) — sanitized exactly like the
     // filesystem manifest path: entity-decoded, spoof-char-stripped, length-bounded.
-    if let Some(t) = title {
-        space.title = sanitize_html_label(&t, MAX_TITLE_CHARS);
+    if let Some(t) = title
+        && let Some(t) = sanitize_html_label(&t, MAX_TITLE_CHARS)
+    {
+        space.title = Some(t);
     }
     // Record the requested nav order + grouped nav; `finalize` reconciles both
     // against reality (keeps only existing slugs, dedups, appends the rest
@@ -1241,8 +1243,10 @@ fn apply_manifest(
             *template_ref = Some(t.to_string());
         }
     }
-    if let Some(t) = m.title {
-        space.title = sanitize_html_label(&t, MAX_TITLE_CHARS);
+    if let Some(t) = m.title
+        && let Some(t) = sanitize_html_label(&t, MAX_TITLE_CHARS)
+    {
+        space.title = Some(t);
     }
     // Record the requested nav order; `finalize` reconciles it against reality.
     space.nav = m.nav;
@@ -1589,6 +1593,23 @@ mod tests {
             sanitize_label(Some("\u{202e}\u{200b}  "), MAX_TITLE_CHARS),
             None
         );
+    }
+
+    #[test]
+    fn empty_manifest_title_does_not_clear_an_existing_title() {
+        let mut space = Space {
+            title: Some("Existing title".to_string()),
+            ..Space::default()
+        };
+        let mut template_ref = None;
+        apply_manifest(
+            "title: '  '",
+            Path::new(MANIFEST_FILE),
+            &mut space,
+            &mut template_ref,
+        )
+        .unwrap();
+        assert_eq!(space.title.as_deref(), Some("Existing title"));
     }
 
     #[test]

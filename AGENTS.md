@@ -88,8 +88,10 @@ calling this a shortfall is correct and accepted; it is not a defect to fix.
 **3. `hosted` stays on the I/O edge, permanently.** With ~280 filesystem/network
 touchpoints it is a durable on-disk store plus an HTTP surface — it *is* the shell §22
 means. A canon audit flagging it as an unmoved domain module should be **rejected**, not
-actioned. The genuinely worthwhile remaining extraction is `artifact_host`'s pure
-rendering/sanitizing logic (tracked as `artifact-host-core-extract`).
+actioned. The worthwhile `artifact_host` extraction is complete: pure rendering,
+sanitization, shell/template output, CSP policy, and related deterministic decisions live
+in `glasspad-core`; routes, response assembly, filesystem access, and storage stay in the
+CLI crate.
 
 ## Debugging rendered output
 

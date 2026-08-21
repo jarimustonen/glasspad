@@ -7,10 +7,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
 
 ## Files
 
-Pure implementations of `headers`, `shell`, `wrap`, `render`, and metadata sanitization
-live under `crates/glasspad-core/src/artifact_host/`; same-named CLI modules are thin
-compatibility/HTTP adapters. The filesystem scanner, routes, fixtures, and guards remain
-here at the I/O edge.
+Pure implementations of `headers`, `shell`, `wrap`, `render`, metadata sanitization,
+and content-version calculation live under `crates/glasspad-core/src/artifact_host/`;
+pure favicon validation/rendering lives in `crates/glasspad-core/src/favicon.rs`.
+Same-named CLI modules are thin compatibility/HTTP adapters. Core owns deterministic
+markup, security policy, and URL/path output; the filesystem scanner, route registration,
+request/response handling, storage, fixtures, and guards remain here at the I/O edge.
 
 - `headers.rs` — the HTTP adapter for the two pure header-policy sets. `artifact_csp()` = sandbox + egress CSP
   that **names both explicit loopback origins** (`'self'` is meaningless under a

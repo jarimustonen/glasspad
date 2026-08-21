@@ -6,8 +6,9 @@ pub use glasspad::artifact_host::headers::{
     PERMISSIONS_POLICY_DENY, artifact_csp_from_origins, self_origins, shell_csp,
 };
 
-/// Header list common to artifact + asset responses. Header-name/value types are
-/// owned by the HTTP edge; the policy value itself lives in `glasspad-core`.
+/// Header list common to artifact + asset responses: `nosniff`, `no-referrer`,
+/// and the `Permissions-Policy` deny-list. Header-name/value types are owned by
+/// the HTTP edge; the policy value itself lives in `glasspad-core`.
 pub fn hardening_headers() -> Vec<(HeaderName, HeaderValue)> {
     vec![
         (

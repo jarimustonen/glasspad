@@ -1,7 +1,7 @@
 //! Emoji SVG favicon for the OUTER served/built document (never the sandbox).
 //!
-//! A configured emoji (`.glasspad.yaml` `favicon:`, resolved by [`crate::config`])
-//! is rendered as a zero-dependency inline **SVG favicon** and referenced from the
+//! A configured emoji (`.glasspad.yaml` `favicon:`, resolved by the CLI configuration
+//! adapter) is rendered as a zero-dependency inline **SVG favicon** and referenced from the
 //! **outer** shell / build `<head>` via `<link rel="icon">`. It lives on the served
 //! document only — the artifact sandbox iframe (its `srcdoc`/content route, CSP, and
 //! sandbox tokens) is untouched.
