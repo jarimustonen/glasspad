@@ -1,13 +1,15 @@
 ---
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 type: improvement
-status: open
+status: in-progress
 priority: high
 lane: cli-structure
 lane_seq: 10
-collision:
-- crates/glasspad-cli/src/cli.rs
+collision: [crates/glasspad-cli/src/cli.rs]
+commits:
+- hash: 674fe23f2405999b2696ce04acee7c1ea67d6483
+  summary: mark CLI module split in progress
 ---
 
 # Split the 5000-line cli.rs into per-command-group modules
