@@ -2,12 +2,15 @@
 created: 2026-08-18
 updated: 2026-08-21
 type: feature
-status: in-progress
+status: done
 priority: normal
 lane: hosted-feature
 commits:
-- hash: 901b9eca96c0304917bbf88cd6bd45fcff49b15e
+- hash: 9b912efa582dd58d6580a3427bbbfdc4b8472ac8
   summary: 'chore: start submission acknowledgement status'
+- hash: 7278dfd8eed3e820db66e99644136020d4e53ba6
+  summary: report hosted submission collection status
+closed: 2026-08-21
 ---
 
 # Report on the page when a submission has not been collected by an agent
@@ -61,3 +64,8 @@ which established that "choices don't go back" is by design, not a defect in the
 submissions are stored durably and are readable by the owning agent within retention; what is
 missing is any signal that nobody collected them. Decision recorded 2026-08-18.
 
+## Resolution
+
+### 2026-08-21T07:45:34Z · @issuectl
+
+Implemented pull-based exact-submission waiting/collected feedback with owner-read acknowledgement, opaque tenant-isolated status lookup, focused browser coverage, review triage, and all required gates green.
