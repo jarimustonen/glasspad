@@ -8,25 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
 
+<!-- oss-changelog:unreleased-end -->
+
+## [0.17.0] - 2026-08-21
+
 ### Changed
 - **Internal artifact-host organization only**: moved pure rendering, sanitization, shell,
-  template, and security-policy decisions into `glasspad-core`; routes, headers, storage,
-  filesystem access, and public behavior are unchanged.
+  template, and security-policy decisions into the `glasspad` library crate under
+  `crates/glasspad-core/`; routes, HTTP headers, storage, filesystem access, and CLI/HTTP
+  behavior are unchanged.
 - **Release contract declares the full CI-owned publication surface**: crates.io is
   CI-delegated, cargo-dist owns the GitHub Release and Homebrew channels, and the declared
   installers/platforms match the existing macOS and `*-linux-gnu` binary matrix. Manual
-  crates.io workflow dispatch is now unconditionally dry-run-only; published artifacts and
-  install channels are unchanged.
+  crates.io workflow dispatch is now unconditionally dry-run-only; publication channels,
+  installers, and the prebuilt target matrix are unchanged.
 - **Internal CLI organization only**: split command implementations into coherent modules with
   no user-visible behavior changes.
 - **Honest hosted submission feedback**: after a response is stored, the page now reports
   whether it is still waiting or has been collected by an owner-scoped agent read, and calls
   out unusually long waits without misreporting them as storage failures.
-- **Library-first internals with unchanged CLI behavior**: separated pure domain code from
-  the clap and I/O shell while preserving the published `glasspad` package identity and
-  installed `glasspad` binary. The Rust library's CSV entry point now accepts already-loaded
-  bytes instead of a generic `Read`, so core never performs I/O on a caller's behalf.
-<!-- oss-changelog:unreleased-end -->
+- **Breaking Rust library API change**: `parse_csv` was replaced by `parse_csv_bytes`, which
+  accepts already-loaded bytes instead of a generic `Read`; library callers must load input
+  before invoking it. The installed `glasspad` CLI binary and its behavior are unchanged.
+- **Library-first internals**: separated pure domain code from the clap and I/O shell while
+  preserving the published `glasspad` package identity and installed `glasspad` binary.
 
 ## [0.16.0] - 2026-08-20
 
