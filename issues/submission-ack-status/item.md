@@ -1,8 +1,8 @@
 ---
 created: 2026-08-18
-updated: 2026-08-20
+updated: 2026-08-21
 type: feature
-status: open
+status: in-progress
 priority: normal
 lane: hosted-feature
 ---
