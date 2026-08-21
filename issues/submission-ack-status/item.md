@@ -5,6 +5,9 @@ type: feature
 status: in-progress
 priority: normal
 lane: hosted-feature
+commits:
+- hash: 901b9eca96c0304917bbf88cd6bd45fcff49b15e
+  summary: 'chore: start submission acknowledgement status'
 ---
 
 # Report on the page when a submission has not been collected by an agent
