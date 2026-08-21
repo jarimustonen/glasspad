@@ -2,12 +2,20 @@
 created: 2026-08-20
 updated: 2026-08-21
 type: improvement
-status: in-progress
+status: done
 priority: normal
 lane: cli-structure
 lane_seq: 20
 collision: [crates/glasspad-cli/src/artifact_host]
 blocked_by: ['@cli-module-split']
+commits:
+- hash: 2c68dcf3e346e329d48ce36f62d348d84ad6338d
+  summary: 'fix(core): preserve title semantics after extraction'
+- hash: 99a19645a2d68436c96103e440b57cf8981ad28a
+  summary: 'refactor(core): extract pure artifact host decisions'
+- hash: 48b82a5adb7f081753c5174791602aee3d83cb2d
+  summary: 'chore(issue): start artifact host core extraction'
+closed: 2026-08-21
 ---
 
 # Move the pure artifact_host rendering/sanitizing logic into glasspad-core
@@ -74,3 +82,9 @@ actioned.
 
 Filed 2026-08-20 from the post-`s22` measurement above. Jari's call: do the `artifact_host`
 extraction, leave `hosted` alone, and do not pursue "§22 to completion" as a goal in itself.
+
+## Resolution
+
+### 2026-08-21T09:46:45Z · @issuectl
+
+Extracted pure artifact-host rendering, sanitization, shell/template, CSP-policy, favicon, and content-version decisions into glasspad-core. Full formatting, clippy, three consecutive cargo test runs, publish dry-run, strict rustdoc, core-purity grep, focused browser smoke, and the complete Phase 1 + Wave 2a security suite are green. Multi-model review was assessed; the one confirmed semantic delta and documentation findings were fixed.
