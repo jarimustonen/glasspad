@@ -191,7 +191,12 @@ It runs **alongside** the v0.1 pad server — no old code is removed until Wave 
   either. The server binds the submission's slug/space + owning tenant +
   content-version from the *trusted request context* (URL path + stored page
   meta/body), never the payload; the submit endpoint is `Origin`-allowlisted (CSRF),
-  size + rate capped; hosted reads are API-key + per-tenant scoped. See
+  size + rate capped. A hosted submit returns a one-submission random status token;
+  the shell pulls `…/submission-status/<id>/<token>` and reports `waiting` until any
+  existing owner-scoped poll/wait/drain/stream read durably marks that record
+  `collected`. The public status response contains only that state; unknown,
+  cross-page, and cross-tenant token combinations are the same opaque 404. Hosted
+  agent reads remain API-key + per-tenant scoped. See
   `issues/artifact-return-channel/`. The store + long-poll + SSE stream are in
   `crates/glasspad-cli/src/submissions.rs`; handlers in `hosted/submit.rs` (hosted) and `server.rs`
   (loopback). The agent consumes submissions three ways over the **same** persisted-

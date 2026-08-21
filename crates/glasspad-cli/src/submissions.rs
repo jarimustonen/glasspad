@@ -49,10 +49,11 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -64,6 +65,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt};
 
 use crate::artifact_host::valid_space;
+use glasspad::security::token;
 
 /// Schema guard for the on-disk submission record.
 const SUBMISSION_SCHEMA: u32 = 1;
@@ -118,6 +120,9 @@ const RATE_WINDOW: Duration = Duration::from_secs(60);
 /// one-off keys can't grow the map without bound (a full map rejects new keys
 /// until the sweep below prunes emptied entries — fail-closed on the rate path).
 const RATE_MAX_KEYS: usize = 4096;
+/// Fixed lock striping keeps collection rewrites and GC serialized for the same
+/// key without making one page's disk work block every tenant in the process.
+const RECORD_LOCK_SHARDS: usize = 64;
 
 /// One persisted submission. `key`/`tenant`/`content_version` are all set from the
 /// **trusted request context** by the handler, never from the artifact payload;
@@ -139,11 +144,27 @@ pub struct Submission {
     /// computed from the served body — see [`content_version`]). Cross-round hook.
     pub content_version: String,
     pub created_at: DateTime<Utc>,
+    /// Unguessable capability returned only to the submitting shell. It is omitted
+    /// from the agent-facing public view, so a status read identifies exactly one
+    /// browser submission rather than becoming a page-wide read capability.
+    #[serde(default)]
+    status_token: String,
+    /// Set durably when an owner-scoped poll, wait, drain, or stream selects this
+    /// record for delivery. Legacy records default to `false` and have no status
+    /// token, so they remain readable by agents without gaining a public handle.
+    #[serde(default)]
+    collected: bool,
     /// The untrusted user payload.
     pub data: serde_json::Value,
 }
 
 impl Submission {
+    /// The opaque capability the trusted shell uses to read only this submission's
+    /// delivery state. Never include it in [`Self::to_public_json`].
+    pub fn status_token(&self) -> &str {
+        &self.status_token
+    }
+
     /// The public API view of a submission — omits the internal `schema`/`tenant`.
     pub fn to_public_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -224,6 +245,10 @@ pub struct SubmissionStore {
     stream_per_key: Mutex<HashMap<String, usize>>,
     /// Per-key sliding-window submit timestamps for the rate limiter.
     rate: Mutex<HashMap<String, VecDeque<Instant>>>,
+    /// Key-striped synchronization for record creation, collection marking, and
+    /// GC. Atomic record reads (including exact status reads) need no lock: they see
+    /// either the old or renamed new file, while NotFound means status unavailable.
+    record_locks: [Mutex<()>; RECORD_LOCK_SHARDS],
 }
 
 impl SubmissionStore {
@@ -249,7 +274,19 @@ impl SubmissionStore {
             stream_waiters: AtomicUsize::new(0),
             stream_per_key: Mutex::new(HashMap::new()),
             rate: Mutex::new(HashMap::new()),
+            record_locks: std::array::from_fn(|_| Mutex::new(())),
         }))
+    }
+
+    /// Lock the fixed stripe for `key`. Colliding keys may briefly serialize, but
+    /// unrelated pages normally proceed independently and the lock map cannot grow.
+    fn lock_records(&self, key: &str) -> MutexGuard<'_, ()> {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let shard = hasher.finish() as usize % RECORD_LOCK_SHARDS;
+        self.record_locks[shard]
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
     }
 
     /// Subscribe to submit notifications (one receiver per held long-poll).
@@ -315,6 +352,7 @@ impl SubmissionStore {
             return Err(SubmitError::RateLimited);
         }
 
+        let _records = self.lock_records(key);
         let key_dir = self.root.join(key);
         // Per-key total cap (best-effort count of existing records).
         if count_records(&key_dir) >= MAX_SUBMISSIONS_PER_KEY {
@@ -330,6 +368,8 @@ impl SubmissionStore {
             tenant: tenant.to_string(),
             content_version: content_version.to_string(),
             created_at: Utc::now(),
+            status_token: token::generate_token(),
+            collected: false,
             data,
         };
         self.write_record(&key_dir, id, &record)
@@ -376,6 +416,7 @@ impl SubmissionStore {
     /// directory — the difference between an O(max) and an O(N) poll (and the `wait`
     /// long-poll re-runs this on every wake).
     pub fn list_since(&self, key: &str, since: u64, max: usize) -> std::io::Result<ListPage> {
+        let _records = self.lock_records(key);
         let key_dir = self.root.join(key);
         let rd = match std::fs::read_dir(&key_dir) {
             Ok(rd) => rd,
@@ -410,7 +451,26 @@ impl SubmissionStore {
         for id in ids {
             let path = key_dir.join(format!("{id}.json"));
             match read_record(&path) {
-                Ok(Some(rec)) if rec.id == id && rec.key == key => out.push(rec),
+                Ok(Some(mut rec)) if rec.id == id && rec.key == key => {
+                    // Existing owner-scoped read/drain/wait/stream behavior IS the
+                    // acknowledgement. Persist it before returning the record, so a
+                    // page status poll never claims collection merely from memory.
+                    if !rec.collected {
+                        rec.collected = true;
+                        if let Err(e) = self.write_record(&key_dir, id, &rec) {
+                            // Collection feedback is secondary: never make an
+                            // already-readable submission unavailable to the agent
+                            // because its status rewrite failed. The disk record
+                            // remains waiting, which is conservative and honest.
+                            rec.collected = false;
+                            eprintln!(
+                                "glasspad: could not persist collection state for {}: {e}",
+                                path.display()
+                            );
+                        }
+                    }
+                    out.push(rec);
+                }
                 Ok(_) => {}
                 Err(e) => eprintln!(
                     "glasspad: skipping unreadable submission {}: {e}",
@@ -423,6 +483,51 @@ impl SubmissionStore {
             submissions: out,
             cursor,
         })
+    }
+
+    /// Read the delivery state for one exact `(key, tenant, id, status_token)` tuple.
+    /// The token is a 128-bit random capability returned only to the submitting
+    /// shell. Unknown tokens, tokens from another key, and tenant mismatches all
+    /// collapse to `None`; callers must expose the same opaque 404 for every case.
+    pub fn delivery_status(
+        &self,
+        key: &str,
+        tenant: &str,
+        id: u64,
+        status_token: &str,
+    ) -> std::io::Result<Option<DeliveryStatus>> {
+        if !valid_space(key)
+            || status_token.len() != 32
+            || !status_token
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Ok(None);
+        }
+        // `id` is already returned by submit and is not a secret. Using it as the
+        // record address makes this public polling path one bounded file read rather
+        // than an attacker-amplifiable scan of up to 10,000 JSON records. Atomic
+        // rename means no lock is needed: this sees the old/new record or NotFound.
+        let path = self.root.join(key).join(format!("{id}.json"));
+        let rec = match read_record(&path) {
+            Ok(Some(rec)) => rec,
+            Ok(None) => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        if rec.id == id
+            && rec.key == key
+            && rec.tenant == tenant
+            && token::verify_token(status_token, &rec.status_token)
+        {
+            Ok(Some(if rec.collected {
+                DeliveryStatus::Collected
+            } else {
+                DeliveryStatus::Waiting
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Try to reserve one of the [`MAX_WAITERS`] long-poll slots. `None` when the
@@ -506,6 +611,8 @@ impl SubmissionStore {
             if !key_dir.is_dir() {
                 continue;
             }
+            let key = entry.file_name().to_string_lossy().into_owned();
+            let _records = self.lock_records(&key);
             let files = match std::fs::read_dir(&key_dir) {
                 Ok(f) => f,
                 Err(_) => continue,
@@ -550,6 +657,15 @@ impl SubmissionStore {
         let _ = write_seq(&self.root, self.next_id.load(Ordering::SeqCst));
         Ok(removed)
     }
+}
+
+/// The only two states exposed by the page-reachable status read. `Waiting` means
+/// durably stored but not yet selected by an owner-scoped agent read; it is not a
+/// storage failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryStatus {
+    Waiting,
+    Collected,
 }
 
 /// One page of submissions plus the cursor to poll from next.
@@ -933,10 +1049,146 @@ mod tests {
                 tenant: "acme".into(),
                 content_version: "v1".into(),
                 created_at: Utc::now(),
+                status_token: token::generate_token(),
+                collected: false,
                 data: serde_json::json!({ "n": id }),
             };
             store.write_record(&key_dir, id, &rec).unwrap();
         }
+    }
+
+    #[test]
+    fn exact_delivery_status_changes_only_after_agent_collection() {
+        let root = tmp_root("delivery-status");
+        let store = SubmissionStore::open(&root).unwrap();
+        let sub = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({"a": 1}))
+            .unwrap();
+        let receipt = sub.status_token().to_string();
+
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", sub.id, &receipt)
+                .unwrap(),
+            Some(DeliveryStatus::Waiting)
+        );
+        assert_eq!(
+            store
+                .delivery_status("other", "acme", sub.id, &receipt)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .delivery_status("abc", "globex", sub.id, &receipt)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", sub.id, "00000000000000000000000000000000",)
+                .unwrap(),
+            None
+        );
+
+        let page = store.list_since("abc", 0, MAX_LIST).unwrap();
+        assert_eq!(page.submissions.len(), 1);
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", sub.id, &receipt)
+                .unwrap(),
+            Some(DeliveryStatus::Collected)
+        );
+        drop(store);
+
+        // Both the opaque capability and collection state survive a restart.
+        let reopened = SubmissionStore::open(&root).unwrap();
+        assert_eq!(
+            reopened
+                .delivery_status("abc", "acme", sub.id, &receipt)
+                .unwrap(),
+            Some(DeliveryStatus::Collected)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn bounded_read_collects_only_the_returned_submission() {
+        let root = tmp_root("status-bounded");
+        let store = SubmissionStore::open(&root).unwrap();
+        let first = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({"n": 1}))
+            .unwrap();
+        let second = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({"n": 2}))
+            .unwrap();
+
+        let page = store.list_since("abc", 0, 1).unwrap();
+        assert_eq!(page.submissions.len(), 1);
+        assert_eq!(page.submissions[0].id, first.id);
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", first.id, first.status_token())
+                .unwrap(),
+            Some(DeliveryStatus::Collected)
+        );
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", second.id, second.status_token())
+                .unwrap(),
+            Some(DeliveryStatus::Waiting)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collection_state_write_failure_never_breaks_agent_read() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tmp_root("status-write-failure");
+        let store = SubmissionStore::open(&root).unwrap();
+        let sub = store
+            .submit(
+                "abc",
+                "index",
+                "acme",
+                "v1",
+                serde_json::json!({"answer": 1}),
+            )
+            .unwrap();
+        let key_dir = root.join("abc");
+        std::fs::set_permissions(&key_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let page = store.list_since("abc", 0, MAX_LIST).unwrap();
+        assert_eq!(
+            page.submissions.len(),
+            1,
+            "the primary read must still work"
+        );
+
+        std::fs::set_permissions(&key_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", sub.id, sub.status_token())
+                .unwrap(),
+            Some(DeliveryStatus::Waiting),
+            "a failed marker write must conservatively remain waiting"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn status_capability_is_not_exposed_to_agent_reads() {
+        let root = tmp_root("status-private");
+        let store = SubmissionStore::open(&root).unwrap();
+        let sub = store
+            .submit("abc", "index", "acme", "v1", serde_json::json!({}))
+            .unwrap();
+        let public = sub.to_public_json();
+        assert!(public.get("status_token").is_none());
+        assert!(public.get("collected").is_none());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -1182,15 +1434,28 @@ mod tests {
     async fn wait_returns_already_pending_without_holding() {
         let root = tmp_root("waitpending");
         let store = SubmissionStore::open(&root).unwrap();
-        store
+        let pending = store
             .submit("abc", "index", "acme", "v1", serde_json::json!({"n": 1}))
             .unwrap();
         // A submission that landed BEFORE the wait (between arm calls) is returned
         // on the next `since`, never missed.
-        let outcome = wait(store, "abc".into(), 0, Duration::from_secs(5), MAX_LIST)
-            .await
-            .unwrap();
+        let outcome = wait(
+            store.clone(),
+            "abc".into(),
+            0,
+            Duration::from_secs(5),
+            MAX_LIST,
+        )
+        .await
+        .unwrap();
         assert!(matches!(outcome, WaitOutcome::Ready(_)));
+        assert_eq!(
+            store
+                .delivery_status("abc", "acme", pending.id, pending.status_token())
+                .unwrap(),
+            Some(DeliveryStatus::Collected),
+            "the existing long-poll path is an acknowledgement"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1219,6 +1484,15 @@ mod tests {
         let third = rx.recv().await.unwrap();
         assert_eq!(third.id, c.id);
         assert!(third.id > second.id, "ids stream monotonically");
+        for sub in [&a, &b, &c] {
+            assert_eq!(
+                store
+                    .delivery_status("abc", "acme", sub.id, sub.status_token())
+                    .unwrap(),
+                Some(DeliveryStatus::Collected),
+                "the existing SSE stream path is an acknowledgement"
+            );
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 

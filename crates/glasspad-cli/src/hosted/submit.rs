@@ -11,6 +11,9 @@
 //!   limit. The submission's `slug`, owning `tenant`, and `content_version` are
 //!   all bound **server-side** from the trusted request context (the URL path and
 //!   the page's own stored meta/body) — never from the artifact-supplied payload.
+//! * `GET /api/v1/pages/{slug}/submission-status/{id}/{token}` — a public, pull-based
+//!   read exposing only whether that exact browser submission is still waiting or
+//!   has been collected. The random token and page slug form the capability.
 //! * `GET /api/v1/pages/{slug}/submissions?since=<cursor>` — the **plain poll**
 //!   (A1 fallback). API-key authenticated and per-tenant scoped: a tenant may read
 //!   a page's submissions only when it owns that page.
@@ -60,6 +63,10 @@ pub fn router(state: HostedState, keys: std::sync::Arc<auth::KeyTable>) -> Route
     let submit_body_limit = MAX_SUBMISSION_BYTES + 16 * 1024;
     let submit = Router::new()
         .route("/api/v1/pages/{slug}/submit", post(submit))
+        .route(
+            "/api/v1/pages/{slug}/submission-status/{id}/{token}",
+            get(status),
+        )
         .layer(DefaultBodyLimit::max(submit_body_limit))
         .with_state(state.clone());
 
@@ -163,6 +170,8 @@ async fn submit(
                 "schema_version": SCHEMA_VERSION,
                 "id": sub.id,
                 "content_version": sub.content_version,
+                "status_id": sub.id.to_string(),
+                "status_token": sub.status_token(),
             })),
         )
             .into_response(),
@@ -176,6 +185,62 @@ async fn submit(
             )
         }
     }
+}
+
+/// `GET /api/v1/pages/{slug}/submission-status/{id}/{token}` — public exact-
+/// submission delivery state for the hosted shell. The public numeric id gives a
+/// bounded one-record lookup; the random token remains the capability. Every
+/// unknown/cross-page/cross-tenant combination is the same opaque 404.
+async fn status(
+    State(state): State<HostedState>,
+    Path((slug, id, token)): Path<(String, String, String)>,
+) -> Response {
+    let Some(tenant) = state.store.page_tenant(&slug) else {
+        return status_not_found();
+    };
+    let Ok(id) = id.parse::<u64>() else {
+        return status_not_found();
+    };
+    let store = state.submissions.clone();
+    match tokio::task::spawn_blocking(move || store.delivery_status(&slug, &tenant, id, &token))
+        .await
+    {
+        Ok(Ok(Some(submissions::DeliveryStatus::Waiting))) => {
+            status_response(axum::Json(json!({ "state": "waiting" })).into_response())
+        }
+        Ok(Ok(Some(submissions::DeliveryStatus::Collected))) => {
+            status_response(axum::Json(json!({ "state": "collected" })).into_response())
+        }
+        Ok(Ok(None)) => status_not_found(),
+        Ok(Err(e)) => {
+            eprintln!("glasspad host: submission status error: {e}");
+            status_response(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not read submission status",
+            ))
+        }
+        Err(join) => {
+            eprintln!("glasspad host: submission status task panicked: {join}");
+            status_response(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "could not read submission status",
+            ))
+        }
+    }
+}
+
+fn status_not_found() -> Response {
+    status_response(err(StatusCode::NOT_FOUND, "not_found", "not found"))
+}
+
+fn status_response(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 #[derive(Deserialize)]

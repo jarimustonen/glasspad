@@ -157,6 +157,15 @@ pub fn render_with_groups(
         format!("/api/v1/pages/{space}/submit")
     };
     let submit_json = json_for_script(&json!(submit_path));
+    // Hosted pages can pull the state of the exact submission they just made. The
+    // loopback shell deliberately has no public status route (its local agent read
+    // path remains unchanged), so `null` keeps it to the truthful stored message.
+    let status_path = if mount.is_empty() {
+        serde_json::Value::Null
+    } else {
+        json!(format!("/api/v1/pages/{space}/submission-status"))
+    };
+    let status_json = json_for_script(&status_path);
 
     // Content path for the iframe src. space/slug are path-validated upstream;
     // `mount` is a trusted server constant.
@@ -194,6 +203,11 @@ pub fn render_with_groups(
   header.gp-chrome .gp-bar {{ display:flex; align-items:center; gap:12px; padding:6px 12px; }}
   header.gp-chrome #gp-title {{ flex:1 1 auto; overflow:hidden; text-overflow:ellipsis;
                       white-space:nowrap; font-weight:600; }}
+  header.gp-chrome #gp-delivery {{ flex:0 1 auto; max-width:42ch; font-size:12px;
+                      color:inherit; opacity:0.78; text-align:right; white-space:nowrap;
+                      overflow:hidden; text-overflow:ellipsis; }}
+  header.gp-chrome #gp-delivery[data-state="long-wait"],
+  header.gp-chrome #gp-delivery[data-state="collected"] {{ opacity:1; font-weight:600; }}
   header.gp-chrome #gp-theme-toggle {{ flex:0 0 auto; font:inherit; padding:2px 10px; cursor:pointer;
                       border:1px solid #ccc; border-radius:6px; background:transparent; color:inherit; }}
   nav.gp-nav {{ display:flex; gap:4px; padding:0 8px 6px; overflow-x:auto; white-space:nowrap; }}
@@ -226,7 +240,7 @@ pub fn render_with_groups(
 </style>
 </head><body>
 <header class="gp-chrome">
-  <div class="gp-bar"><span id="gp-title"></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
+  <div class="gp-bar"><span id="gp-title"></span><span id="gp-delivery" role="status" aria-live="polite" hidden></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
   <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
 </header>
 <div class="gp-body">
@@ -246,10 +260,17 @@ pub fn render_with_groups(
   var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
   var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat nav bar
   var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
+  var STATUS_PATH = {status_json};   // hosted exact-submission status base; null on loopback
   var MAX_SLUG = 64;       // matches the server-side slug grammar
   var MAX_SUBMIT_BYTES = 80 * 1024;  // reject an oversize submission before POSTing
   var RATE_MAX = 20;       // messages...
   var RATE_WINDOW = 1000;  // ...per this many ms
+  var STATUS_FIRST_POLL_MS = 800;
+  var STATUS_FAST_POLL_MS = 2000;
+  var STATUS_SLOW_POLL_MS = 10000;
+  var STATUS_RETRY_MS = 15000;
+  var STATUS_LONG_WAIT_MS = 60000;
+  var STATUS_MONITOR_MS = 10 * 60 * 1000;
 
   var frame = document.getElementById("gp-artifact");
   var KNOWN_SET = new Set(KNOWN);
@@ -485,6 +506,80 @@ pub fn render_with_groups(
 
   var stats = {{ accepted: 0, rejectedSource: 0, rejectedSize: 0, rejectedRate: 0, rejectedSchema: 0, submitAccepted: 0, submitFailed: 0 }};
   window.__bridgeStats = stats;
+  var deliveryEl = document.getElementById("gp-delivery");
+  var latestSubmitAttempt = 0;
+
+  function showDelivery(state, text) {{
+    if (!deliveryEl) return;
+    if (!deliveryEl.hidden && deliveryEl.getAttribute("data-state") === state
+        && deliveryEl.textContent === text) return;
+    deliveryEl.hidden = false;
+    deliveryEl.setAttribute("data-state", state);
+    deliveryEl.textContent = text;
+  }}
+
+  // Pull only the opaque state of the exact `(id, token)` returned by this submit.
+  // A 404 is deliberately opaque at the API boundary; for the shell that received
+  // this capability it truthfully means only that status is no longer available.
+  // Transient failures retain the known fact that the POST was stored, back off,
+  // and eventually stop checking rather than polling a long-lived tab forever.
+  function watchDelivery(statusId, statusToken, attempt) {{
+    if (!STATUS_PATH || typeof statusId !== "string" || !/^[1-9][0-9]*$/.test(statusId)
+        || typeof statusToken !== "string" || !/^[0-9a-f]{{32}}$/.test(statusToken)) return;
+    var started = Date.now();
+    function schedule(delay) {{
+      if (attempt === latestSubmitAttempt) window.setTimeout(poll, delay);
+    }}
+    function poll() {{
+      if (attempt !== latestSubmitAttempt) return;
+      var elapsed = Date.now() - started;
+      if (elapsed >= STATUS_MONITOR_MS) {{
+        showDelivery("long-wait", "Response is stored. Automatic status checks have stopped.");
+        return;
+      }}
+      fetch(STATUS_PATH + "/" + statusId + "/" + encodeURIComponent(statusToken), {{
+        method: "GET", credentials: "omit", cache: "no-store"
+      }}).then(function (r) {{
+        if (!r) return {{ retry: true }};
+        if (r.status === 404) return {{ unavailable: true }};
+        if (!r.ok) return {{ retry: true }};
+        return r.json().catch(function () {{ return {{ retry: true }}; }});
+      }}).then(function (body) {{
+        if (attempt !== latestSubmitAttempt) return;
+        if (body && body.unavailable) {{
+          showDelivery("unavailable", "Response status is no longer available.");
+          return;
+        }}
+        if (body && body.retry) {{
+          showDelivery("status-unavailable", "Response stored. Status check temporarily unavailable.");
+          schedule(STATUS_RETRY_MS);
+          return;
+        }}
+        if (body && body.state === "collected") {{
+          showDelivery("collected", "Response collected by the listening agent.");
+          return;
+        }}
+        if (!body || body.state !== "waiting") {{
+          showDelivery("status-unavailable", "Response stored. Status check temporarily unavailable.");
+          schedule(STATUS_RETRY_MS);
+          return;
+        }}
+        elapsed = Date.now() - started;
+        if (elapsed >= STATUS_LONG_WAIT_MS) {{
+          showDelivery("long-wait", "Response is stored, but has not been collected yet.");
+        }} else {{
+          showDelivery("waiting", "Response stored. Waiting for the listening agent to collect it…");
+        }}
+        schedule(elapsed < STATUS_LONG_WAIT_MS ? STATUS_FAST_POLL_MS : STATUS_SLOW_POLL_MS);
+      }}).catch(function () {{
+        if (attempt === latestSubmitAttempt) {{
+          showDelivery("status-unavailable", "Response stored. Status check temporarily unavailable.");
+          schedule(STATUS_RETRY_MS);
+        }}
+      }});
+    }}
+    window.setTimeout(poll, STATUS_FIRST_POLL_MS);
+  }}
 
   var recent = [];
   function rateOk() {{
@@ -535,6 +630,8 @@ pub fn render_with_groups(
     if (typeof body !== "string" || body.length > MAX_SUBMIT_BYTES) {{ stats.rejectedSize++; return; }}
     // NB: `accepted` counts NAVIGATE messages only; a submit is tracked by
     // submitAccepted/submitFailed below, so an observer of `accepted` is unaffected.
+    var attempt = ++latestSubmitAttempt;
+    showDelivery("sending", "Sending response…");
     try {{
       fetch(SUBMIT_PATH, {{
         method: "POST",
@@ -543,15 +640,46 @@ pub fn render_with_groups(
         credentials: "omit",
         cache: "no-store"
       }}).then(function (r) {{
-        if (r && r.ok) {{ stats.submitAccepted++; return; }}
+        if (r && r.ok) {{
+          stats.submitAccepted++;
+          if (attempt === latestSubmitAttempt) {{
+            showDelivery(
+              STATUS_PATH ? "waiting" : "stored",
+              STATUS_PATH ? "Response stored. Waiting for the listening agent to collect it…" : "Response stored."
+            );
+            r.json().then(function (result) {{
+              if (attempt === latestSubmitAttempt && result) {{
+                watchDelivery(result.status_id, result.status_token, attempt);
+              }}
+            }}).catch(function () {{
+              if (attempt === latestSubmitAttempt && STATUS_PATH) {{
+                showDelivery("status-unavailable", "Response stored. Automatic status checking unavailable.");
+              }}
+            }});
+          }}
+          return;
+        }}
         stats.submitFailed++;
+        if (attempt === latestSubmitAttempt) {{
+          showDelivery("failed", "Response could not be stored. Please try again.");
+        }}
         // 409 = the agent advanced the round after this view rendered (a missed
         // round swap): the submission answered a now-stale round and was rejected.
         // Re-fetch the CURRENT round in place so the user sees the latest and can
         // re-answer — a single re-fetch (the swap posts nothing, so no retry loop).
         if (r && r.status === 409) swapCurrentArtifact("gp_r=" + Date.now());
-      }}).catch(function () {{ stats.submitFailed++; }});
-    }} catch (e) {{ stats.submitFailed++; }}
+      }}).catch(function () {{
+        stats.submitFailed++;
+        if (attempt === latestSubmitAttempt) {{
+          showDelivery("failed", "Response could not be stored. Please try again.");
+        }}
+      }});
+    }} catch (e) {{
+      stats.submitFailed++;
+      if (attempt === latestSubmitAttempt) {{
+        showDelivery("failed", "Response could not be stored. Please try again.");
+      }}
+    }}
   }}
 
   window.addEventListener("message", function (event) {{
@@ -952,6 +1080,8 @@ mod tests {
         assert!(html.contains(r#"if (data.type === "submit")"#));
         assert!(html.contains("function handleSubmit(data)"));
         assert!(html.contains("fetch(SUBMIT_PATH"));
+        assert!(html.contains("var STATUS_PATH = null"));
+        assert!(html.contains(r#": "Response stored."#));
         // The submission is bound to THIS shell's own current slug (anti-spoof) —
         // an artifact-supplied slug in the payload is never used for addressing.
         assert!(html.contains("slug: current"));
@@ -963,6 +1093,11 @@ mod tests {
         // route (the page's space name IS its capability slug), not a `_gp` path.
         let html = render("/p", "abcslug", "index", "", &nav_of(&["index"]), "n", None);
         assert!(html.contains(r#"var SUBMIT_PATH = "/api/v1/pages/abcslug/submit""#));
+        assert!(html.contains(r#"var STATUS_PATH = "/api/v1/pages/abcslug/submission-status""#));
+        assert!(html.contains("watchDelivery(result.status_id, result.status_token, attempt)"));
+        assert!(html.contains("Response stored. Waiting for the listening agent"));
+        assert!(html.contains("Response is stored, but has not been collected yet."));
+        assert!(html.contains("Response collected by the listening agent."));
         assert!(!html.contains("/_gp/submit"));
     }
 

@@ -1535,8 +1535,71 @@ mod tests {
         )
         .await;
         assert_eq!(r.status(), StatusCode::CREATED);
+        let submitted = body_json(r).await;
+        let status_id = submitted["status_id"].as_str().unwrap();
+        let status_token = submitted["status_token"].as_str().unwrap();
+        assert_eq!(status_token.len(), 32);
+        let status_uri =
+            format!("/api/v1/pages/{slug}/submission-status/{status_id}/{status_token}");
 
-        // The OWNER (acme) can read the submission back.
+        // Before any owner-scoped read, the page learns ONLY that this exact
+        // submission is durably waiting. No page/tenant/id/count data is exposed.
+        let r = send(&app, get_req(&status_uri)).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+        let status = body_json(r).await;
+        assert_eq!(status, serde_json::json!({ "state": "waiting" }));
+
+        // Adversarial isolation: an unknown token and the real token paired with a
+        // DIFFERENT tenant's page are indistinguishable opaque 404s.
+        let unknown = format!(
+            "/api/v1/pages/{slug}/submission-status/{status_id}/00000000000000000000000000000000"
+        );
+        let unknown_resp = send(&app, get_req(unknown)).await;
+        assert_eq!(unknown_resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            unknown_resp
+                .headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+        let unknown_body = body_json(unknown_resp).await;
+
+        // A different page under the SAME tenant must not accept the token either.
+        let same_tenant_slug =
+            publish_slug(&app, serde_json::json!({ "html": "<h1>sibling</h1>" })).await;
+        let same_tenant_uri = format!(
+            "/api/v1/pages/{same_tenant_slug}/submission-status/{status_id}/{status_token}"
+        );
+        let same_tenant_resp = send(&app, get_req(same_tenant_uri)).await;
+        assert_eq!(same_tenant_resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_json(same_tenant_resp).await, unknown_body);
+
+        let other_slug = body_json(
+            send(
+                &app,
+                publish_req(Some(key2), serde_json::json!({ "html": "<h1>other</h1>" })),
+            )
+            .await,
+        )
+        .await["slug"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let cross_uri =
+            format!("/api/v1/pages/{other_slug}/submission-status/{status_id}/{status_token}");
+        let cross_resp = send(&app, get_req(cross_uri)).await;
+        assert_eq!(cross_resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_json(cross_resp).await, unknown_body);
+
+        // The OWNER (acme) can read the submission back. This existing drain/read
+        // behavior is the acknowledgement; no new agent-side ack call is needed.
         let r = send(
             &app,
             read_req(&format!("/api/v1/pages/{slug}/submissions"), Some(KEY)),
@@ -1547,6 +1610,15 @@ mod tests {
         assert_eq!(j["submissions"].as_array().unwrap().len(), 1);
         assert_eq!(j["submissions"][0]["data"]["answer"], "yes");
         assert!(j["cursor"].as_u64().unwrap() >= 1);
+        assert!(j["submissions"][0].get("status_token").is_none());
+        assert!(j["submissions"][0].get("collected").is_none());
+
+        let r = send(&app, get_req(&status_uri)).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(r).await,
+            serde_json::json!({ "state": "collected" })
+        );
 
         // A DIFFERENT tenant (globex) cannot read acme's page submissions — 404.
         let r = send(
