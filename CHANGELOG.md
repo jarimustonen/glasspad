@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installers/platforms match the existing macOS and `*-linux-gnu` binary matrix. Manual
   crates.io workflow dispatch is now unconditionally dry-run-only; published artifacts and
   install channels are unchanged.
+- **Internal CLI organization only**: split command implementations into coherent modules with
+  no user-visible behavior changes.
 - **Library-first internals with unchanged CLI behavior**: separated pure domain code from
   the clap and I/O shell while preserving the published `glasspad` package identity and
   installed `glasspad` binary. The Rust library's CSV entry point now accepts already-loaded
