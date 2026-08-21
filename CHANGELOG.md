@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Release contract declares the full CI-owned publication surface**: crates.io is
+  CI-delegated, cargo-dist owns the GitHub Release and Homebrew channels, and the declared
+  installers/platforms match the existing macOS and `*-linux-gnu` binary matrix. Manual
+  crates.io workflow dispatch is now unconditionally dry-run-only; published artifacts and
+  install channels are unchanged.
 - **Library-first internals with unchanged CLI behavior**: separated pure domain code from
   the clap and I/O shell while preserving the published `glasspad` package identity and
   installed `glasspad` binary. The Rust library's CSV entry point now accepts already-loaded

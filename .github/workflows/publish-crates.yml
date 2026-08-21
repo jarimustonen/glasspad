@@ -8,19 +8,16 @@ name: Publish to crates.io
 # GitHub Release is created by cargo-dist's release.yml using GITHUB_TOKEN, and
 # releases created by GITHUB_TOKEN do not emit `release` workflow events. This
 # runs in parallel with release.yml (crates publishing needs only the tagged
-# source, not the built binaries). Re-publishing an existing version is a
-# harmless no-op failure.
+# source, not the built binaries). Manual dispatch is dry-run-only; a real
+# publish requires the version-tag trigger. Retry a transient failure from the
+# original tag-push run with "Re-run failed jobs"; never delete and re-push the
+# tag. A version already present on crates.io fails this job by design.
 
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
-    inputs:
-      dry-run:
-        description: "Run cargo publish --dry-run instead of publishing"
-        required: false
-        default: "false"
 
 permissions:
   contents: read
@@ -38,13 +35,11 @@ jobs:
         run: cargo build --release
 
       - name: Publish (dry-run)
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true' }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         run: cargo publish --dry-run
 
       - name: Publish
-        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run != 'true') }}
+        if: ${{ github.event_name == 'push' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
