@@ -138,3 +138,7 @@ creates the Release itself.
   browser automation (check `./test-browser.sh errors` first).
 - `/oss-*` skills (over `ossctl`) drive release/readiness work; `ossctl audit` scores gaps.
 - Track all planning under the issue, never as loose files.
+
+## Piialiisan bugiraportit
+
+- [ ] 🐛 Piialiisan bugiraportti: Hosted full-document HTML shows Glasspad chrome — jari via Telegram ([`intake-bug-glasspad-a14803a38786`](issues/intake-bug-glasspad-a14803a38786/item.md))
