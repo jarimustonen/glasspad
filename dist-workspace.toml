@@ -3,7 +3,7 @@ members = ["cargo:."]
 
 # Config for 'dist' (cargo-dist). The tag-triggered `.github/workflows/release.yml`
 # is GENERATED from this [dist] section via `dist generate` — edit config here,
-# then regenerate; never hand-edit the workflow. Matches the ossctl / issuectl /
+# then regenerate; never hand-edit the workflow. Matches the shipshape / issuectl /
 # orchestratectl release convention.
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
@@ -13,7 +13,7 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "homebrew"]
 # Homebrew tap repository for the auto-generated formula.
-# Per-tool tap convention (matches homebrew-ossctl / homebrew-issuectl /
+# Per-tool tap convention (matches homebrew-shipshape / homebrew-issuectl /
 # homebrew-orchestratectl): repo `homebrew-glasspad` →
 # `brew install jarimustonen/glasspad/glasspad`.
 tap = "jarimustonen/homebrew-glasspad"
@@ -27,7 +27,7 @@ publish-jobs = ["homebrew"]
 # work — for a glibc-independent static binary this project doesn't need. (reqwest
 # is configured with rustls-tls, not native-tls, so OpenSSL is NOT part of this
 # rationale — a musl build would in fact link fine here; it's simply not worth the
-# CI setup.) Unlike the pure-Rust ossctl (which uses musl for exactly that
+# CI setup.) Unlike the pure-Rust shipshape (which uses musl for exactly that
 # glibc-independence), glasspad stays on gnu.
 #
 # x86_64-apple-darwin is intentionally NOT built: the configured macOS release

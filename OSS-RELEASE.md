@@ -55,9 +55,9 @@ docs_site: none
   GitHub Release with prebuilt binaries and publishes the Homebrew formula to
   `jarimustonen/homebrew-glasspad`. Homebrew is a required install channel
   (`brew install jarimustonen/glasspad/glasspad`). Both cargo-dist-owned channels are explicit
-  targets, so ossctl 0.9.0+ can observe the complete surface without becoming a second tap
+  targets, so Shipshape can observe the complete surface without becoming a second tap
   writer. Do not change the Homebrew adapter to `homebrew-tap`: cargo-dist is the formula's
-  sole writer, while that adapter would make ossctl compete for the same tap.
+  sole writer, while that adapter would make Shipshape compete for the same tap.
 - **distribution** — cargo-dist emits shell + Homebrew installers and prebuilt binaries for
   Apple Silicon macOS plus GNU Linux on arm64 and x86_64. Linux intentionally uses `gnu`, not
   `musl`; Intel-mac and Windows have no prebuilt artifact and remain supported through
@@ -70,7 +70,7 @@ docs_site: none
   tracker of record.
 - **conventional_commits: false** — default (cutter asks for the bump). Your recent commits
   *do* follow conventional format (`feat(cli):`, `fix(cli):`), so flipping this to `true`
-  would let `/oss-release-cut` derive the bump automatically — a low-risk maintainer choice.
+  would let `/shipshape-release` derive the bump automatically — a low-risk maintainer choice.
 - **release.model: gated** — the version/tag cut is a discrete checks-gated transaction
   rather than an automatic publish on every merge. Under the repository's standing release
   autonomy, the release operator proceeds without a separate permission prompt once every
@@ -79,7 +79,7 @@ docs_site: none
   attestations via OIDC. crates.io publication remains token-authenticated, so this records
   the binary channel's verifiable provenance rather than claiming crates.io trusted
   publishing.
-- **dependency_bot: dependabot** — mvp default; `/oss-ci` emits `.github/dependabot.yml`.
+- **dependency_bot: dependabot** — mvp default; `/shipshape-ci` emits `.github/dependabot.yml`.
 - **health_badges: [ci, registry, license]** — `ci` producer is `ci.yml`; `registry` is the
   crates.io version badge (crate published as of 0.2.0); `license` is MIT.
 - **license: MIT** — chosen by the maintainer (over the Rust `MIT OR Apache-2.0` dual-license

@@ -136,7 +136,7 @@ creates the Release itself.
 - Verification is local: `cargo build`, serve a space, reload, and `./test-security.sh` as the
   regression gate after any host/header/CSP/bridge change. `./test-browser.sh` for ad-hoc
   browser automation (check `./test-browser.sh errors` first).
-- `/oss-*` skills (over `ossctl`) drive release/readiness work; `ossctl audit` scores gaps.
+- `/shipshape-*` skills (over `shipshape`) drive release/readiness work; `shipshape audit` scores gaps.
 - Track all planning under the issue, never as loose files.
 
 ## Piialiisan bugiraportit

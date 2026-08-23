@@ -1,10 +1,10 @@
 # glasspad
 
-<!-- oss-readme:badges-start -->
+<!-- shipshape-readme:badges-start -->
 [![CI](https://github.com/jarimustonen/glasspad/actions/workflows/ci.yml/badge.svg)](https://github.com/jarimustonen/glasspad/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/glasspad.svg)](https://crates.io/crates/glasspad)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-<!-- oss-readme:badges-end -->
+<!-- shipshape-readme:badges-end -->
 
 AI-friendly scratchpad for rich visual views. A lightweight, loopback-only web
 service that lets AI agents (Claude Code, OpenClaw, etc.) show visual content —
@@ -26,7 +26,7 @@ the directory is the single source of truth, so there is no upload/push step.
 
 ## Installation
 
-<!-- oss-readme:install-start -->
+<!-- shipshape-readme:install-start -->
 **Homebrew** (macOS / Linux — the recommended cross-machine install):
 
 ```bash
@@ -42,7 +42,7 @@ brew install jarimustonen/glasspad/glasspad
 ```bash
 cargo install glasspad
 ```
-<!-- oss-readme:install-end -->
+<!-- shipshape-readme:install-end -->
 
 ## Usage
 
@@ -170,6 +170,6 @@ See [`crates/glasspad-cli/src/skill.md`](crates/glasspad-cli/src/skill.md) for t
 
 ## License
 
-<!-- oss-readme:license-start -->
+<!-- shipshape-readme:license-start -->
 Licensed under the [MIT License](LICENSE).
-<!-- oss-readme:license-end -->
+<!-- shipshape-readme:license-end -->

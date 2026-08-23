@@ -32,7 +32,7 @@ fn assert_version_envelope(out: &std::process::Output) -> serde_json::Value {
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["schema_version"], 1);
-    // Payload is nested under `data`, matching orchestratectl/ossctl so the
+    // Payload is nested under `data`, matching orchestratectl/shipshape so the
     // fleet-updater reads `.data.version` uniformly across every tool.
     assert_eq!(v["data"]["name"], env!("CARGO_PKG_NAME"));
     assert_eq!(v["data"]["version"], env!("CARGO_PKG_VERSION"));

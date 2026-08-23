@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
 
+### Changed
+- **Release tooling renamed to Shipshape**: current readiness commands, generated-file markers,
+  and repository agent guidance now use `shipshape` and `/shipshape-*`; historical issue records and
+  permanent release-contract/changelog compatibility identifiers remain unchanged.
+
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.17.0] - 2026-08-21
