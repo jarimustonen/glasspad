@@ -29,7 +29,7 @@ Migrate Glasspad's active release/readiness tooling references from ossctl to Sh
 - Preserve historical records and ADR-0005 compatibility identifiers unchanged.
 - Run Glasspad's full green gate and document deliberately retained references.
 
-## Acceptance criteria
+## Acceptance Criteria
 
 - [x] All active product and CLI references use Shipshape.
 - [x] Historical and compatibility references remain accurate.
