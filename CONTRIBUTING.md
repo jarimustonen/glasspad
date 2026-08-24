@@ -5,9 +5,10 @@ host. Contributions of all kinds are welcome: bug reports, fixes, docs, and feat
 
 ## Reporting issues
 
-- **Bugs and feature requests** are tracked with [`issuectl`](https://github.com/jarimustonen/glasspad)
-  under [`issues/`](issues/) in this repository. Open an issue there (one directory per
-  issue, `issues/<slug>/item.md`) or via a pull request that adds it.
+- **Bugs and feature requests** — open a [GitHub issue](https://github.com/jarimustonen/glasspad/issues)
+  (the issue forms guide you through the details). The in-repo [`issues/`](issues/) tree is
+  the committers' `issuectl` tracker of record; maintainers mirror accepted reports into it,
+  so external contributors do not need to touch it.
 - **Security vulnerabilities** — please do **not** open a public issue. Follow the
   coordinated-disclosure process in [`SECURITY.md`](SECURITY.md).
 

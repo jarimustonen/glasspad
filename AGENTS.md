@@ -96,7 +96,8 @@ CLI crate.
 ## Debugging rendered output
 
 Glasspad is an **HTML-artifact host** (v0.2): the calling agent authors HTML in
-a directory and `glasspad serve ./dir` hosts each file in a null-origin
+a directory and `glasspad publish ./dir` (loopback target; `glasspad loopback
+serve ./dir` for explicit server control) hosts each file in a null-origin
 sandboxed iframe. There is no content-DSL and no server-side renderer — the old
 `src/spec/*` + `src/client/dashboard.js` path was removed. The host's pure rendering and security decisions live in
 **`crates/glasspad-core/src/artifact_host/`**; the HTTP/filesystem adapters live in
@@ -105,7 +106,8 @@ sandboxed iframe. There is no content-DSL and no server-side renderer — the ol
 Base libraries are served under `/_gp/v1/`: `base.css` (the `--gp-*` design
 system), `charts.js` (`gp.chart(el, spec)` over Vega-Lite), `bridge.js`
 (auto-injected same-space nav + theme), `manifest.json`. After changing host
-code or a base lib: `cargo build`, restart `glasspad serve`, reload the space.
+code or a base lib: `cargo build`, restart `glasspad loopback serve`, reload the
+space.
 
 **The security contract is the gate.** `./test-security.sh` is a self-contained
 Playwright suite (41 adversarial browser checks + Wave 2a space-model probes:
