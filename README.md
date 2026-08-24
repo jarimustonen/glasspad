@@ -1,3 +1,7 @@
+<p align="right">
+  <img src="https://raw.githubusercontent.com/jarimustonen/glasspad/main/brand/logo.png" alt="Glasspad logo" width="140">
+</p>
+
 # glasspad
 
 <!-- shipshape-readme:badges-start -->
@@ -6,23 +10,28 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 <!-- shipshape-readme:badges-end -->
 
-AI-friendly scratchpad for rich visual views. A lightweight, loopback-only web
-service that lets AI agents (Claude Code, OpenClaw, etc.) show visual content —
-dashboards, charts, interactive UIs — to the user in their browser.
+AI-friendly scratchpad for rich visual views. A lightweight web service that
+lets AI agents (Claude Code, OpenClaw, etc.) show dashboards, charts, and
+interactive UIs to the user in their browser. Glasspad is actively developed,
+pre-1.0 software released through crates.io, Homebrew, and GitHub Releases.
 
 ## Concept
 
 Glasspad is an **HTML-artifact host**. The agent authors plain HTML; glasspad
 serves it live and safely:
 
-1. Point glasspad at a file or directory of HTML (or markdown) artifacts (`glasspad serve ./dir`)
-2. Get back a loopback URL
+1. Point glasspad at a file or directory of HTML (or markdown) artifacts (`glasspad publish ./dir`)
+2. Get back a loopback or hosted URL, according to the configured target
 3. The user opens the URL; every artifact is sandboxed in a null-origin iframe
 
 Each artifact is one HTML view (a **fragment** glasspad wraps in a themed shell,
 or a **full document** served verbatim), addressed by a slug and linked to its
-siblings with ordinary relative links. Edit a file and the browser reloads —
-the directory is the single source of truth, so there is no upload/push step.
+siblings with ordinary relative links. Under the default loopback target, editing
+a file reloads the browser; the directory remains the single source of truth.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jarimustonen/glasspad/main/docs/assets/screenshot-status-dag.png" alt="A status DAG served as a Glasspad space" width="900">
+</p>
 
 ## Installation
 
@@ -47,95 +56,22 @@ cargo install glasspad
 ## Usage
 
 ```bash
-glasspad serve ./myspace       # serve a directory of .html and/or .md artifacts live
-glasspad create ./report.html  # one-artifact space from a single file
-glasspad render ./doc.md        # render one markdown file through a template and serve it
-glasspad build ./myspace ./out # statically render a space to HTML files (no server)
-glasspad open myspace          # open it in the browser
-glasspad publish ./report.html # publish one page to a hosted share server → /p/<slug>
-glasspad publish-space ./docs  # publish a whole multi-page space → /p/<slug>/… (nav + relative links intact)
-glasspad data ./old.csv        # parse a legacy CSV/JSON/mbox file to JSON rows
+glasspad publish ./myspace                    # publish markdown/HTML using the configured target
+glasspad publish ./report.md --target hosted # override the target for one publish
+glasspad loopback serve ./myspace            # run the live-reload server explicitly
+glasspad build ./myspace ./out               # statically render a space (no server)
+glasspad data ./old.csv                      # parse legacy CSV/JSON/mbox data to JSON rows
+glasspad config show --json                  # inspect effective publish configuration
+glasspad doctor --json                       # run read-only diagnostics
 ```
 
 ### Markdown-native spaces
 
-A space can be a directory of **`.md`/`.markdown`** files just as well as `.html`:
-`serve`, `build`, and `publish-space` render each markdown file server-side through a
-built-in fragment template into a page (slug = filename stem), so a producer can hand
-glasspad the markdown directly instead of pre-rendered HTML. `.md` and `.html` pages
-coexist in one space — each file becomes a page keyed by its stem; a `.md` and `.html`
-that share a stem is a hard collision (rename one). Pick the reading theme per-space in
-`glasspad.yaml` with `template: prose` (the default), `template: dashboard`, or a relative
-fragment path such as `template: templates/prose.html`. Single-file markdown accepts the
-same custom-template seam via `glasspad render <file.md> --template <path>`. Rendered
-markdown becomes an artifact in the **same** null-origin frozen sandbox as any other page — hostile HTML/script embedded
-in the markdown cannot escape it or open an exfil channel (`connect-src 'none'` holds).
-
-#### Producer preprocessing: glossary autolinks and cross-references
-
-Glasspad deliberately does not infer document semantics. If a space needs glossary-term
-autolinking, cross-reference resolution, citations, or similar transformations, preprocess
-the markdown in the producer's build step and give glasspad the resulting space. Keep the
-source and generated directories separate:
-
-```text
-docs-src/                         build/docs/
-  guide.md          preprocessor   guide.md
-  glossary.md       ───────────>   glossary.md
-                                  glasspad.yaml
-                                  templates/prose.html
-```
-
-For example, a producer can define `{{glossary:ledger|Ledger}}` as its own source notation
-and turn this:
-
-```markdown
-A {{glossary:ledger|Ledger}} records the entries. See [Posting rules](posting.md).
-```
-
-into ordinary markdown plus an HTML link when a semantic class is needed:
-
-```markdown
-A <a class="xref glossary-term" href="glossary.html#ledger">Ledger</a> records the
-entries. See [Posting rules](posting.md).
-```
-
-Then publish only the generated directory:
-
-```bash
-python build_docs.py docs-src build/docs
-
-glasspad publish build/docs
-```
-
-Use a Markdown parser or another structure-aware transform in a real autolinker so it does
-not rewrite terms inside code, existing links, or HTML. Keep link targets path-relative
-(`posting.md` or `glossary.html#ledger`) for normal same-space navigation.
-
-The renderer's class contract is intentionally simple. CommonMark links such as
-`[Posting rules](posting.md)` render as plain `<a href="…">` elements and have no class
-syntax. Raw HTML in markdown is passed through verbatim, without a sanitizer, so all
-classes authored on an HTML link survive into the prose artifact. This is not a privileged
-allowlist: the whole artifact remains untrusted inside the existing null-origin sandbox.
-A producer can therefore style semantic links in a space template:
-
-```yaml
-# build/docs/glasspad.yaml
-template: templates/prose.html
-```
-
-```html
-<!-- build/docs/templates/prose.html -->
-<style>
-  .gp-prose a.xref { text-decoration-style: dotted; }
-  .gp-prose a.glossary-term::after { content: " · glossary"; font-size: 0.75em; }
-</style>
-<article class="gp-prose">{{content}}</article>
-```
-
-The custom template remains an artifact fragment and may style against the `--gp-*`
-tokens. Preprocessing decides which words and destinations have meaning; glasspad only
-renders and hosts the links.
+Markdown files can sit alongside HTML in a space; `publish`, `loopback serve`, and
+`build` render them through the built-in prose template or a template selected in
+`glasspad.yaml`. They retain the same null-origin sandbox as HTML artifacts. For glossary
+autolinks, cross-references, and custom semantic link styling, see
+[Markdown preprocessing](docs/markdown-preprocessing.md).
 
 ### Installing the companion skill
 
@@ -164,9 +100,24 @@ an earlier one already written is left in place — re-run to complete it.
 See [`crates/glasspad-cli/src/skill.md`](crates/glasspad-cli/src/skill.md) for the agent-facing guide and
 [`DESIGN.md`](DESIGN.md) for the `--gp-*` design system that `base.css` provides.
 
-## Status
+## Security model
 
-🚧 Early development
+Every artifact renders in a null-origin sandboxed iframe under a strict Content
+Security Policy. In particular, `connect-src 'none'` removes direct network
+exfiltration channels; same-space navigation and theme updates pass through an
+injected bridge instead. The boundary is enforced by the adversarial Playwright
+regression suite in `./test-security.sh`. See [SECURITY.md](SECURITY.md) to report
+a vulnerability.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Design system](DESIGN.md)
+- [Markdown preprocessing](docs/markdown-preprocessing.md)
+- [Examples](examples/)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
 ## License
 
