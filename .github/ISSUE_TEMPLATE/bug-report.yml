@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a defect in glasspad
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Security vulnerabilities must not be filed here** —
+        use the private process in [SECURITY.md](https://github.com/jarimustonen/glasspad/security/policy) instead.
+
+        Maintainers track work with `issuectl` under `issues/` in the repository; a
+        confirmed report is mirrored there, so a GitHub issue is the right place to start.
+  - type: input
+    id: version
+    attributes:
+      label: glasspad version
+      description: Output of `glasspad version` (or `glasspad version --json`).
+      placeholder: "glasspad 0.17.0 (abc1234)"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and architecture, and how you installed glasspad (Homebrew, prebuilt binary, `cargo install`).
+      placeholder: "macOS 15 arm64, Homebrew"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >-
+        The exact command(s) you ran, and — if the bug involves serving or publishing
+        content — a minimal artifact (HTML/markdown snippet or space layout) that triggers it.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Relevant CLI output or server logs, if any.
+      render: text

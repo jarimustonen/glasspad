@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an improvement or new capability for glasspad
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Maintainers track work with `issuectl` under `issues/` in the repository; an
+        accepted request is mirrored there, so a GitHub issue is the right place to start.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that glasspad currently makes hard or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you imagine it working — CLI surface, config, or behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, or other designs that could solve the same problem.
