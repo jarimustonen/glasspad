@@ -8,14 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- oss-changelog:unreleased-start -->
 ## [Unreleased]
 
+### Added
+### Changed
+### Fixed
+<!-- oss-changelog:unreleased-end -->
+
+## [0.17.1] - 2026-08-24
+
+### Added
+- **`ARCHITECTURE.md` code map** for contributors, and **GitHub issue forms** (bug report,
+  feature request) with contact links routing security reports to the private channel.
+
 ### Changed
 - **README release polish**: refreshed the project status, examples, visuals, security-model and
   documentation links, and moved the detailed producer preprocessing guide into `docs/`.
 - **Release tooling renamed to Shipshape**: current readiness commands, generated-file markers,
   and repository agent guidance now use `shipshape` and `/shipshape-*`; historical issue records and
   permanent release-contract/changelog compatibility identifiers remain unchanged.
-
-<!-- oss-changelog:unreleased-end -->
 
 ## [0.17.0] - 2026-08-21
 
