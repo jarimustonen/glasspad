@@ -3,8 +3,12 @@ created: 2026-08-25
 updated: 2026-08-26
 type: bug
 reporter: jari
-status: in-progress
+status: fixed
 priority: high
+commits:
+- hash: af4ceba
+  summary: fix bundled skill version alignment and add drift guard
+closed: 2026-08-26
 ---
 
 # Doctor CI fails on bundled skill metadata mismatch
@@ -59,3 +63,9 @@ would add allocation and a second representation seam to otherwise static conten
 metadata is updated to 0.17.1, and a focused fast test now compares it with
 `CARGO_PKG_VERSION` using an explicit version-bump failure message. Release policy also
 requires rerunning the full gate after updating both versions.
+
+## Acceptance Criteria
+
+- [x] `glasspad doctor --json` reports `skill.bundle` as healthy in a hermetic home.
+- [x] Bundled skill metadata has a focused package-version drift guard.
+- [x] Formatting, clippy, doctor integration tests, and the full test suite pass.
