@@ -42,6 +42,16 @@ fn frontmatter_field<'a>(content: &'a str, key: &str) -> &'a str {
 }
 
 #[test]
+fn bundled_skill_cli_version_matches_package_version() {
+    let content = include_str!("../crates/glasspad-cli/src/skill.md");
+    assert_eq!(
+        frontmatter_field(content, "cli_version"),
+        env!("CARGO_PKG_VERSION"),
+        "bump crates/glasspad-cli/src/skill.md cli_version together with Cargo.toml"
+    );
+}
+
+#[test]
 fn skill_list_json_agrees_with_version_metadata() {
     let list_out = bin().args(["skill", "list", "--json"]).output().unwrap();
     assert!(list_out.status.success(), "stderr: {:?}", list_out.stderr);
