@@ -1,12 +1,13 @@
 ---
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-28
 type: bug
 reporter: jari
-status: untriaged
+status: open
 priority: normal
 provenance: agent:homebase-wrapup
 source_ref: agent:homebase-wrapup/reporter:jari/id:homebase-wrapup-glasspad-full-document-chrome-20260823
+lane: template-rendering
 ---
 
 # Hosted full-document HTML shows Glasspad chrome
