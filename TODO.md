@@ -26,18 +26,18 @@ public-repository release pass:
 ## ▶ Start here
 
 Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
-orientation only. There is no prepared execution agenda yet. Two items need human disposition
-before another work round:
+orientation only. All open non-epic work has now been human-dispositioned and is represented in
+the DAG. The next product direction is template and presentation quality:
 
-- **`base-template-gallery`** has a draft design brief in
-  `issues/base-template-gallery/design.md`. Jari should confirm or revise the proposed six topic
-  areas (`prose`, `dashboard`, `report`, `board`, `index`, `table`). After that, finish the
-  background/example package for the external design AI and decide whether to lane the
-  integration work. This open issue is currently outside the DAG.
-- **`intake-bug-glasspad-a14803a38786`** awaits human intake triage. It reports that publishing a
-  full HTML document through hosted Glasspad still shows Glasspad chrome despite the documented
-  verbatim/full-document contract. This is context only: it is untriaged, unscheduled, and not
-  executable until accepted and laned (or otherwise dispositioned).
+- Clarify that hosted full documents are verbatim **inside the artifact iframe**, while the
+  trusted Glasspad space shell remains around them. This is a small documentation correction,
+  not a request for a new chrome-free hosting mode.
+- Fix the base template header: it currently ignores day/night theme changes and repeats the
+  article/text title.
+- Continue **`base-template-gallery`** from its draft design brief. Jari still needs to confirm
+  or revise the proposed six topic areas (`prose`, `dashboard`, `report`, `board`, `index`,
+  `table`); then complete the example/background package for the external design AI and proceed
+  with integration.
 
 One non-repository manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
