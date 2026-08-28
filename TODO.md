@@ -6,52 +6,41 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 
 ## Where we are
 
-**0.16.0 is released and live** (crates.io + GitHub Release + Homebrew), verified on all three
-channels. 0.15.0 shipped earlier the same round. Nothing is landed-but-unreleased except the
-internal `s22` change described below.
+**0.17.2 is released and live**, verified on crates.io, GitHub Release (12 assets), and the
+Homebrew formula. The tag-triggered publish and release workflows and `main` CI all completed
+successfully. The tree is clean, `main` is pushed, and no Glasspad worker owns preserved work.
 
-The 2026-08-17..20 stint ran nine units to completion. What it delivered, in two themes:
+The 2026-08-21..26 work completed the internal follow-ups from the previous handoff and the
+public-repository release pass:
 
-**glasspad is now self-describing for agents** (all in 0.16.0). `skill list` / `skill print` /
-`skill install` expose the bundled operating manual; `doctor` gives a read-only health check
-with `--json` per-check records and exit 1 on failure; `--help --json` exposes the clap-derived
-command tree, flags, examples and env mappings. These share one source of truth with
-`version --json`'s `supported_schemas` + `skills[]` — a test pins the agreement, so do not
-introduce a second list.
-
-**The public-repo audit is done and its decisions are settled** — see Standing lessons for the
-rule that resolved it. Also landed: the hosted idempotency sweep no longer discards a mapping
-on a transient read error; `host-serve` binds ephemeral ports race-free and derives its public
-origin; the producer preprocessing seam for markdown spaces is documented.
-
-**Internal, unreleased:** `cli-canon-s22` split the crate into `crates/glasspad-core` (pure: no
-clap, no `std::fs`, no `SystemTime::now`, injected `Clock`) and `crates/glasspad-cli`, kept as
-**one published package** so `cargo publish` and `cargo install glasspad` are unchanged. That
-packaging compromise is deliberate and correct — do not "fix" it into two published crates.
-Note it also changed the library's CSV entry point to take bytes instead of a generic `Read`
-(a breaking library-API change, accepted as harmless since glasspad is used as a CLI).
+- 0.17.0 shipped the per-command CLI module split, pure artifact-host extraction into
+  `glasspad-core`, honest hosted-submission acknowledgement state, and the explicit CI-owned
+  publication contract. The package remains deliberately one published crate with two roots.
+- 0.17.1 shipped the contributor-facing code map and issue forms, polished README and producer
+  docs, and migrated current release-tooling references to Shipshape. The repository's public
+  front door and community profile are now complete.
+- 0.17.2 fixed the installed `doctor` bundle-version mismatch. A test now requires bundled
+  `skill.md` metadata to equal `CARGO_PKG_VERSION`; future release bumps must update both before
+  running the full gate.
 
 ## ▶ Start here
 
-Clean tree, `main` pushed, nothing in flight. Run `issuectl dag` for the live
-picture — this file deliberately records no schedule.
+Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
+orientation only. There is no prepared execution agenda yet. Two items need human disposition
+before another work round:
 
-**The `s22` split under-delivered, and the follow-up is already filed.** Measurement after it
-landed: core is 1674 lines against 26917 on the CLI side, and `cli.rs` is still **5049 lines** —
-the crate boundary moved without shrinking the file that actually hurts. Two issues capture the
-maintainer's decision (2026-08-20) on what to do about it:
+- **`base-template-gallery`** has a draft design brief in
+  `issues/base-template-gallery/design.md`. Jari should confirm or revise the proposed six topic
+  areas (`prose`, `dashboard`, `report`, `board`, `index`, `table`). After that, finish the
+  background/example package for the external design AI and decide whether to lane the
+  integration work. This open issue is currently outside the DAG.
+- **`intake-bug-glasspad-a14803a38786`** awaits human intake triage. It reports that publishing a
+  full HTML document through hosted Glasspad still shows Glasspad chrome despite the documented
+  verbatim/full-document contract. This is context only: it is untriaged, unscheduled, and not
+  executable until accepted and laned (or otherwise dispositioned).
 
-- **`cli-module-split`** (high) — split the 5049-line `cli.rs` into per-command-group modules,
-  leaving a thin dispatch layer. This is **not** canon compliance; it was chosen on its merits.
-  That file's size is what forced nearly every unit of this stint into a single sequential lane,
-  so splitting it widens the parallelism available to every future round. The maintainer asked
-  for it at the head of the work.
-- **`artifact-host-core-extract`** — move the pure `artifact_host` logic (HTML wrapping,
-  sanitization, shell rendering, templates: 7342 lines, only 33 I/O touchpoints) into core. It
-  is nearly pure *and* security-critical, so it is the piece of §22 genuinely worth doing.
-
-Scope exclusions for both of these are recorded **in the issues themselves** and in
-`AGENTS.md` → Crate layout — read there, not here.
+One non-repository manual task remains: set the GitHub social-preview image in the web UI
+(`brand/logo.png` or the README screenshot are suitable sources).
 
 ## Standing lessons
 
