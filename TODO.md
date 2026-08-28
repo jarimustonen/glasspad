@@ -131,3 +131,4 @@ creates the Release itself.
 ## Piialiisan bugiraportit
 
 - [ ] 🐛 Piialiisan bugiraportti: Hosted full-document HTML shows Glasspad chrome — jari via Telegram ([`intake-bug-glasspad-a14803a38786`](issues/intake-bug-glasspad-a14803a38786/item.md))
+- [ ] 🐛 Piialiisan bugiraportti: Prevent accidental duplicate spaces when republishing a source path — jari via Telegram ([`intake-feature-glasspad-36fb5d8417e9`](issues/intake-feature-glasspad-36fb5d8417e9/item.md))
