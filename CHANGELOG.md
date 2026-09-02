@@ -11,10 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+<!-- oss-changelog:unreleased-end -->
+
+## [0.17.3] - 2026-09-02
+
+### Fixed
 - Clarified that complete HTML is preserved as the sandboxed artifact iframe document,
   while Glasspad's trusted space shell remains around it.
-- Built-in page chrome now follows live day/night theme changes and no longer renders a separate current-artifact title in the header.
-<!-- oss-changelog:unreleased-end -->
+- Built-in page chrome now follows live day/night theme changes and no longer renders a
+  separate current-artifact title in the header.
 
 ## [0.17.2] - 2026-08-26
 
@@ -508,3 +513,6 @@ null-origin sandboxed iframe.
 - Security contract enforced by a self-contained Playwright suite (41 adversarial browser
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
+
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.17.3...HEAD
+[0.17.3]: https://github.com/jarimustonen/glasspad/compare/v0.17.2...v0.17.3
