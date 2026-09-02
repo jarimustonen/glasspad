@@ -1,9 +1,9 @@
 ---
 created: 2026-08-23
 updated: 2026-09-02
-type: bug
+type: task
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 provenance: agent:homebase-wrapup
 source_ref: agent:homebase-wrapup/reporter:jari/id:homebase-wrapup-glasspad-full-document-chrome-20260823
@@ -11,6 +11,7 @@ lane: template-rendering
 commits:
 - hash: 2013374982f06b8c3c96c8c9ce05023b21946732
   summary: 'docs: clarify full-document iframe boundary'
+closed: 2026-09-02
 ---
 
 # Hosted full-document HTML shows Glasspad chrome
@@ -48,3 +49,9 @@ A hosted publish returns `/p/<space>/`, which is deliberately the trusted space 
 The public contract does not promise a chrome-free top-level hosted presentation. README explicitly says every artifact opens in a sandboxed iframe, and the original host plan distinguishes the space-entry shell from the raw `_c` artifact document. The bundled skill's “served verbatim; you own the whole page” wording can nevertheless reasonably be read as describing the whole browser tab rather than the iframe document, so it should be clarified.
 
 Affected users are those using hosted publishing for a standalone presentation or pixel-exact/raw preview. Their authored bytes are preserved, but Glasspad chrome consumes viewport space and the authored document cannot control the top-level page, making that use case unsuitable; ordinary one-page and multi-page Glasspad spaces remain correct. Documentation should say “verbatim inside the artifact iframe” and distinguish artifact ownership from the trusted shell. If standalone hosted presentation is a desired product use case, separately design an explicit chrome-free route/mode without weakening the sandbox/CSP contract; no application-code fix is implied by this triage.
+
+## Resolution
+
+### 2026-09-02T06:11:41Z · @issuectl
+
+Completed the triaged documentation correction. README and bundled authoring guidance now state that complete HTML remains verbatim only as the sandboxed artifact iframe document, while the trusted Glasspad space shell remains top-level. cargo fmt --all --check and cargo clippy --all-targets -- -D warnings passed. cargo test passed on full retry after one transient config::tests::origin_reflects_the_winning_file failure that passed both in isolation and in the full rerun.
