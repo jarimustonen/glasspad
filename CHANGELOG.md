@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- Clarified that complete HTML is preserved as the sandboxed artifact iframe document,
+  while Glasspad's trusted space shell remains around it.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.17.2] - 2026-08-26

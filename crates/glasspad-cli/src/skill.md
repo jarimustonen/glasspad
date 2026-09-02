@@ -24,11 +24,15 @@ fails with an informative error (never an interactive prompt).
 ## The model
 
 - **Markdown is the standard input.** Hand glasspad `.md`/`.markdown` and it renders
-  automatically through a built-in theme. `.html` works too (served verbatim).
+  automatically through a built-in theme. `.html` works too: fragments are wrapped,
+  while complete HTML documents are preserved inside their artifact iframe.
 - A **single file is a one-page space**; a **directory is an N-page space**.
 - A **space** is a URL namespace holding one or more **artifacts** (pages). Each
   artifact is addressed by a **slug** = its filename stem (`sales.md` → slug
   `sales`). Link between pages with ordinary relative links (`<a href="./detail">`).
+- The user-facing space URL is always Glasspad's trusted shell and navigation around
+  a null-origin sandboxed artifact iframe. Authored HTML controls the document inside
+  that iframe, not the top-level browser tab.
 - Pick the Markdown theme per space in an optional per-space `glasspad.yaml` with
   `template: prose` (default reading theme), `template: dashboard` (card look), or
   a relative path to a producer-owned fragment template such as
@@ -131,8 +135,11 @@ same overrides a publish invocation would use. API-key material is always redact
   ```
 
 - **Full document.** A file starting with `<!doctype html>` / `<html>` (after any
-  BOM / whitespace / comments — detected tolerantly) is served **verbatim**; you own
-  the whole page. Opt into in-space nav by including `/_gp/v1/bridge.js` yourself.
+  BOM / whitespace / comments — detected tolerantly) is served **verbatim as the
+  artifact iframe document**. You control that complete document, but the trusted
+  Glasspad space shell remains around the sandboxed iframe; this is not a chrome-free
+  or raw top-level page. Opt into in-space nav by including `/_gp/v1/bridge.js`
+  yourself.
 
 Base libraries live under `/_gp/v1/*` (`base.css`; `charts.js` = a thin
 `gp.chart(el, spec)` over Vega-Lite). `assets/*` in a space are served by path.
@@ -155,8 +162,9 @@ intercepted and routed for you:
 <form><input name="note"><button type="submit">Send</button></form>
 ```
 
-`gp.submit` is available in **fragment** artifacts. A full-document artifact owns
-its page; keep to fragments for forms.
+`gp.submit` is available in **fragment** artifacts. A full-document artifact controls
+its iframe document but does not receive this injected return channel; keep to
+fragments for forms.
 
 **Agent side — run `await-submission` BACKGROUNDED.** It blocks on a server-side
 long-poll and returns the human's answer as its result, so you fire it in the

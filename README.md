@@ -24,10 +24,13 @@ serves it live and safely:
 2. Get back a loopback or hosted URL, according to the configured target
 3. The user opens the URL; every artifact is sandboxed in a null-origin iframe
 
-Each artifact is one HTML view (a **fragment** glasspad wraps in a themed shell,
-or a **full document** served verbatim), addressed by a slug and linked to its
-siblings with ordinary relative links. Under the default loopback target, editing
-a file reloads the browser; the directory remains the single source of truth.
+Each artifact is one HTML view (a **fragment** glasspad wraps in a themed artifact
+document, or a **full document** whose bytes are served unchanged inside the
+artifact iframe), addressed by a slug and linked to its siblings with ordinary
+relative links. The user-facing space URL keeps Glasspad's trusted shell and
+navigation around that null-origin sandboxed iframe; a full document controls the
+iframe document, not the top-level browser tab. Under the default loopback target,
+editing a file reloads the browser; the directory remains the single source of truth.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/jarimustonen/glasspad/main/docs/assets/screenshot-status-dag.png" alt="A status DAG served as a Glasspad space" width="900">
