@@ -1,12 +1,12 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-02
 type: bug
 reporter: jari
 status: open
 priority: normal
 provenance: chat
-lane: template-rendering
+lane: template-header
 ---
 
 # Base template header ignores theme and duplicates title
