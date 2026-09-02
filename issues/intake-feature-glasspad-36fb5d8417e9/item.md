@@ -1,12 +1,13 @@
 ---
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-02
 type: feature
 reporter: jari
-status: untriaged
+status: open
 priority: normal
 provenance: agent:aggountant-wrapup
 source_ref: agent:aggountant-wrapup/reporter:jari/id:aggountant-2026-08-28-glasspad-stable-republish
+lane: publish-identity
 ---
 
 # Prevent accidental duplicate spaces when republishing a source path
