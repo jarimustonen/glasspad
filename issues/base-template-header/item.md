@@ -3,10 +3,13 @@ created: 2026-08-28
 updated: 2026-09-02
 type: bug
 reporter: jari
-status: open
+status: in-progress
 priority: normal
 provenance: chat
 lane: template-header
+commits:
+- hash: 454bc9d
+  summary: align page chrome with artifact theme
 ---
 
 # Base template header ignores theme and duplicates title
