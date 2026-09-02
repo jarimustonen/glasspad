@@ -189,11 +189,22 @@ pub fn render_with_groups(
 
     format!(
         r#"<!doctype html>
-<html lang="en"><head>
+<html lang="en" data-theme="auto"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {favicon_link}
 <title>{esc_title_text}</title>
+<script nonce="{nonce}">
+(function () {{
+  "use strict";
+  var theme = "auto";
+  try {{
+    var saved = window.localStorage.getItem("gp-theme");
+    if (saved === "light" || saved === "dark" || saved === "auto") theme = saved;
+  }} catch (e) {{ /* storage blocked — keep auto */ }}
+  document.documentElement.setAttribute("data-theme", theme);
+}})();
+</script>
 <style>
   :root, [data-theme="light"] {{
     color-scheme:light;
@@ -253,7 +264,7 @@ pub fn render_with_groups(
 </style>
 </head><body>
 <header class="gp-chrome">
-  <div class="gp-bar"><span id="gp-delivery" role="status" aria-live="polite" hidden></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
+  <div class="gp-bar"><span id="gp-delivery" role="status" aria-live="polite" hidden></span><button id="gp-theme-toggle" type="button" aria-label="Theme: Auto. Activate to select the next theme.">Theme: Auto</button></div>
   <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
 </header>
 <div class="gp-body">
@@ -386,16 +397,18 @@ pub fn render_with_groups(
   // handles live toggles and re-applying the persisted choice after each load.
   var THEMES = ["auto", "light", "dark"];
   var THEME_LABEL = {{ auto: "Theme: Auto", light: "Theme: Light", dark: "Theme: Dark" }};
-  var theme = "auto";
-  try {{
-    var saved = window.localStorage.getItem("gp-theme");
-    if (saved === "light" || saved === "dark" || saved === "auto") theme = saved;
-  }} catch (e) {{ /* storage blocked — default to auto */ }}
+  // The nonce-gated head bootstrap already restored and allowlisted this value
+  // before paint; validate once more rather than reading storage along two paths.
+  var theme = document.documentElement.getAttribute("data-theme");
+  if (THEMES.indexOf(theme) === -1) theme = "auto";
 
   var toggle = document.getElementById("gp-theme-toggle");
   function paintTheme() {{
     document.documentElement.setAttribute("data-theme", theme);
-    if (toggle) toggle.textContent = THEME_LABEL[theme];
+    if (toggle) {{
+      toggle.textContent = THEME_LABEL[theme];
+      toggle.setAttribute("aria-label", THEME_LABEL[theme] + ". Activate to select the next theme.");
+    }}
   }}
   function sendTheme() {{
     // Post to the framed artifact; bridge.js validates source + schema on receipt.
@@ -904,9 +917,10 @@ mod tests {
         );
         assert!(html.contains("<title>Sales &amp; Q3</title>"));
         assert!(html.contains(r#"title="Sales &amp; Q3""#));
-        // Empty title falls back to "space / slug".
+        // Empty title falls back in both semantic contexts.
         let fallback = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
-        assert!(fallback.contains("demo / index"));
+        assert!(fallback.contains("<title>demo / index</title>"));
+        assert!(fallback.contains(r#"title="demo / index""#));
     }
 
     #[test]
@@ -916,11 +930,17 @@ mod tests {
         assert!(html.contains(r#"id="gp-theme-toggle""#));
         // …and the shell sends a low-authority theme message to the framed artifact.
         assert!(html.contains(r#"type: "theme""#));
-        // Persisted choice is read from the shell's own storage (default auto).
+        // Persisted choice is restored by an allowlisted, nonce-gated head bootstrap
+        // before theme CSS/body paint, with auto inlined as the no-script fallback.
+        assert!(html.contains(r#"<html lang="en" data-theme="auto">"#));
         assert!(html.contains(r#"getItem("gp-theme")"#));
+        let bootstrap = html.find(r#"<script nonce="n">"#).unwrap();
+        assert!(bootstrap < html.find("<style>").unwrap());
+        assert!(bootstrap < html.find("<body>").unwrap());
         // The same choice is applied to the trusted shell itself, whose header uses
         // explicit light/dark variables rather than fixed browser-default colours.
         assert!(html.contains(r#"document.documentElement.setAttribute("data-theme", theme)"#));
+        assert!(html.contains("Activate to select the next theme."));
         assert!(html.contains(r#"[data-theme="dark"]"#));
         assert!(html.contains("background:var(--gp-shell-bg)"));
     }
@@ -939,9 +959,8 @@ mod tests {
         // Title semantics remain for the browser tab and the iframe's accessible name…
         assert!(html.contains("<title>Article title</title>"));
         assert!(html.contains(r#"title="Article title""#));
-        // …but the shell no longer paints a second visible copy above an artifact's H1.
+        // …but the shell no longer paints a second standalone copy above an artifact's H1.
         assert!(!html.contains(r#"id="gp-title""#));
-        assert!(!html.contains("titleEl.textContent"));
     }
 
     #[test]

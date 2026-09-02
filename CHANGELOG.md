@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Clarified that complete HTML is preserved as the sandboxed artifact iframe document,
   while Glasspad's trusted space shell remains around it.
-- Built-in page chrome now follows live day/night theme changes and no longer repeats an article's own title above its content.
+- Built-in page chrome now follows live day/night theme changes and no longer renders a separate current-artifact title in the header.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.17.2] - 2026-08-26

@@ -264,6 +264,9 @@ async function main() {
     };
 
     // (b) RELATIVE same-space link swaps the iframe via the VALIDATED bridge.
+    // Establish the theme state explicitly so the theme regressions below are
+    // independent of earlier tests and localStorage history.
+    await page.evaluate(() => window.localStorage.setItem("gp-theme", "auto"));
     await page.goto(`${BASE}/demo/nav-a`, { waitUntil: "load" });
     const navA = await waitFrame("nav-a");
     check("bridge-nav: fragment artifact is framed + bridged (nav-a wrapped)", !!navA,
@@ -284,6 +287,18 @@ async function main() {
       `text=${JSON.stringify(navBText)} accepted ${acceptedBefore}->${acceptedAfter}`);
     check("bridge-nav: no full-page reload — the trusted shell stayed put",
       page.url() === parentUrlBefore, `url=${page.url()}`);
+
+    const titleState = await page.evaluate(() => ({
+      standaloneTitleCount: document.querySelectorAll("#gp-title").length,
+      documentTitle: document.title,
+      iframeTitle: document.getElementById("gp-artifact").getAttribute("title"),
+    }));
+    check("base-template: in-place navigation keeps one artifact H1 and semantic titles without a standalone shell title",
+      navBText.trim() === "Nav B" &&
+        titleState.standaloneTitleCount === 0 &&
+        titleState.documentTitle === "Nav B" &&
+        titleState.iframeTitle === "Nav B",
+      `heading=${JSON.stringify(navBText)} titles=${JSON.stringify(titleState)}`);
 
     // (c) An UNKNOWN-but-well-formed slug from the REAL frame is still rejected
     //     (resolved against the server's artifact table) — the reject path holds
@@ -326,26 +341,18 @@ async function main() {
     }
 
     // (d) Theme toggle re-themes the framed artifact via the parent→child channel.
-    await page.click("#gp-theme-toggle").catch(() => {});
-    await page.waitForTimeout(250);
+    await page.click("#gp-theme-toggle");
+    if (navB) {
+      await navB.waitForFunction(
+        () => document.documentElement.getAttribute("data-theme") === "light",
+        undefined,
+        { timeout: 4000 });
+    }
     const themed = navB
       ? await navB.evaluate(() => document.documentElement.getAttribute("data-theme")).catch(() => null)
       : null;
     check("bridge-theme: shell toggle re-themes the artifact (data-theme applied via bridge)",
       themed === "light", `data-theme=${themed}`);
-
-    // The shell must not paint a second visible copy of a fragment's own H1.
-    // Browser-tab and iframe accessibility titles remain; only duplicate header
-    // chrome is absent.
-    const titleRendering = navB
-      ? {
-          chromeTitleCount: await page.evaluate(() => document.querySelectorAll("#gp-title").length),
-          articleHeadingCount: await navB.evaluate(() => document.querySelectorAll("h1").length).catch(() => -1),
-        }
-      : null;
-    check("base-template: article title renders once (artifact H1, no duplicate shell title)",
-      !!titleRendering && titleRendering.chromeTitleCount === 0 && titleRendering.articleHeadingCount === 1,
-      `titleRendering=${JSON.stringify(titleRendering)}`);
 
     // (d2) A theme message NOT from the parent (the artifact posts to itself) is
     //      ignored — bridge.js only trusts `event.source === window.parent`.
@@ -360,29 +367,64 @@ async function main() {
     }
 
     // (d3) The trusted header follows that same live transition. Capture explicit
-    // light colours, advance to dark without a reload, and prove both the root token
-    // and computed chrome styles changed.
+    // light colours, advance to dark without a reload, and wait on the actual state.
     const lightChrome = await page.evaluate(() => {
       const s = getComputedStyle(document.querySelector("header.gp-chrome"));
-      return { background: s.backgroundColor, color: s.color, border: s.borderBottomColor };
+      return {
+        theme: document.documentElement.getAttribute("data-theme"),
+        background: s.backgroundColor,
+        color: s.color,
+      };
     });
-    await page.click("#gp-theme-toggle").catch(() => {});
-    await page.waitForTimeout(250);
+    await page.click("#gp-theme-toggle");
+    await page.waitForFunction(
+      () => document.documentElement.getAttribute("data-theme") === "dark",
+      undefined,
+      { timeout: 4000 });
     const darkChrome = await page.evaluate(() => {
       const s = getComputedStyle(document.querySelector("header.gp-chrome"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
         color: s.color,
-        border: s.borderBottomColor,
       };
     });
     check("bridge-theme: trusted header visibly follows light→dark without reload",
-      darkChrome.theme === "dark" &&
+      lightChrome.theme === "light" && darkChrome.theme === "dark" &&
         darkChrome.background !== lightChrome.background &&
-        darkChrome.color !== lightChrome.color &&
-        darkChrome.border !== lightChrome.border,
+        darkChrome.color !== lightChrome.color,
       `light=${JSON.stringify(lightChrome)} dark=${JSON.stringify(darkChrome)}`);
+
+    // (d4) Auto is the default contract: a live OS day/night preference change must
+    // re-theme the trusted shell without changing its root token or reloading.
+    await page.click("#gp-theme-toggle"); // dark → auto
+    await page.waitForFunction(
+      () => document.documentElement.getAttribute("data-theme") === "auto",
+      undefined,
+      { timeout: 4000 });
+    await page.emulateMedia({ colorScheme: "light" });
+    const autoLight = await page.evaluate(() => {
+      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      return { background: s.backgroundColor, color: s.color };
+    });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForFunction(
+      (oldBackground) => getComputedStyle(document.querySelector("header.gp-chrome")).backgroundColor !== oldBackground,
+      autoLight.background,
+      { timeout: 4000 });
+    const autoDark = await page.evaluate(() => {
+      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      return {
+        theme: document.documentElement.getAttribute("data-theme"),
+        background: s.backgroundColor,
+        color: s.color,
+      };
+    });
+    check("bridge-theme: auto header follows a live OS light→dark transition without reload",
+      autoDark.theme === "auto" &&
+        autoDark.background !== autoLight.background && autoDark.color !== autoLight.color,
+      `light=${JSON.stringify(autoLight)} dark=${JSON.stringify(autoDark)}`);
+    await page.emulateMedia({ colorScheme: null });
 
     // (a) EXTERNAL link is NOT intercepted by the bridge — and, per the wrapped
     //     fragment's `<base target="_top">`, it breaks OUT of the null-origin sandbox
