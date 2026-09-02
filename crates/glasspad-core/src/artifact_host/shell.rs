@@ -137,7 +137,6 @@ pub fn render_with_groups(
     let space_json = json_for_script(&json!(space));
     let slug_json = json_for_script(&json!(slug));
     let slugs_json = json_for_script(&json!(known));
-    let title_json = json_for_script(&json!(display_title));
     let nav_json = json_for_script(&nav_json_value);
     let groups_json = json_for_script(&groups_json_value);
     // The URL mount prefix (`""` loopback, `/p` hosted) prepended to every
@@ -196,20 +195,33 @@ pub fn render_with_groups(
 {favicon_link}
 <title>{esc_title_text}</title>
 <style>
+  :root, [data-theme="light"] {{
+    color-scheme:light;
+    --gp-shell-bg:#fff; --gp-shell-text:#1a1b25; --gp-shell-border:#e5e7eb;
+  }}
+  [data-theme="dark"] {{
+    color-scheme:dark;
+    --gp-shell-bg:#1a1b26; --gp-shell-text:#e5e7eb; --gp-shell-border:rgba(255,255,255,0.12);
+  }}
+  @media (prefers-color-scheme:dark) {{
+    [data-theme="auto"] {{
+      color-scheme:dark;
+      --gp-shell-bg:#1a1b26; --gp-shell-text:#e5e7eb; --gp-shell-border:rgba(255,255,255,0.12);
+    }}
+  }}
   html,body {{ margin:0; height:100%; }}
-  body {{ display:flex; flex-direction:column; }}
+  body {{ display:flex; flex-direction:column; background:var(--gp-shell-bg); color:var(--gp-shell-text); }}
   header.gp-chrome {{ font:14px system-ui,sans-serif; flex:0 0 auto;
-                      border-bottom:1px solid #ccc; }}
-  header.gp-chrome .gp-bar {{ display:flex; align-items:center; gap:12px; padding:6px 12px; }}
-  header.gp-chrome #gp-title {{ flex:1 1 auto; overflow:hidden; text-overflow:ellipsis;
-                      white-space:nowrap; font-weight:600; }}
+                      background:var(--gp-shell-bg); color:var(--gp-shell-text);
+                      border-bottom:1px solid var(--gp-shell-border); }}
+  header.gp-chrome .gp-bar {{ display:flex; justify-content:flex-end; align-items:center; gap:12px; padding:6px 12px; }}
   header.gp-chrome #gp-delivery {{ flex:0 1 auto; max-width:42ch; font-size:12px;
                       color:inherit; opacity:0.78; text-align:right; white-space:nowrap;
                       overflow:hidden; text-overflow:ellipsis; }}
   header.gp-chrome #gp-delivery[data-state="long-wait"],
   header.gp-chrome #gp-delivery[data-state="collected"] {{ opacity:1; font-weight:600; }}
   header.gp-chrome #gp-theme-toggle {{ flex:0 0 auto; font:inherit; padding:2px 10px; cursor:pointer;
-                      border:1px solid #ccc; border-radius:6px; background:transparent; color:inherit; }}
+                      border:1px solid var(--gp-shell-border); border-radius:6px; background:transparent; color:inherit; }}
   nav.gp-nav {{ display:flex; gap:4px; padding:0 8px 6px; overflow-x:auto; white-space:nowrap; }}
   nav.gp-nav a {{ font:inherit; color:inherit; text-decoration:none; padding:3px 10px;
                   border:1px solid transparent; border-radius:6px; cursor:pointer;
@@ -222,7 +234,8 @@ pub fn render_with_groups(
      fills the row exactly as before. */
   .gp-body {{ flex:1 1 auto; display:flex; min-height:0; }}
   aside.gp-sidebar {{ flex:0 0 auto; width:240px; max-width:42vw; overflow-y:auto;
-                      font:14px system-ui,sans-serif; border-right:1px solid #ccc;
+                      font:14px system-ui,sans-serif; background:var(--gp-shell-bg);
+                      color:var(--gp-shell-text); border-right:1px solid var(--gp-shell-border);
                       padding:10px 6px; box-sizing:border-box; }}
   aside.gp-sidebar:empty {{ display:none; }}
   aside.gp-sidebar .sb-group {{ margin-bottom:16px; }}
@@ -240,7 +253,7 @@ pub fn render_with_groups(
 </style>
 </head><body>
 <header class="gp-chrome">
-  <div class="gp-bar"><span id="gp-title"></span><span id="gp-delivery" role="status" aria-live="polite" hidden></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
+  <div class="gp-bar"><span id="gp-delivery" role="status" aria-live="polite" hidden></span><button id="gp-theme-toggle" type="button" aria-label="Toggle theme"></button></div>
   <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
 </header>
 <div class="gp-body">
@@ -256,7 +269,6 @@ pub fn render_with_groups(
   var SPACE = {space_json};
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
-  var TITLE = {title_json};
   var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
   var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat nav bar
   var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
@@ -280,9 +292,9 @@ pub fn render_with_groups(
   }}
   var current = SLUG;
 
-  // Nav chrome title inserted as TEXT (never innerHTML) — Trusted Types on.
-  var titleEl = document.getElementById("gp-title");
-  titleEl.textContent = TITLE;
+  // The current title remains in the document title and iframe's accessible title.
+  // It is deliberately not repeated as visible header text: prose artifacts already
+  // render their own H1, while the navigation provides page context.
 
   // --- Nav list: built entirely with createElement + textContent, so an
   // artifact-derived title can NEVER become live markup (no innerHTML sink; the
@@ -381,14 +393,17 @@ pub fn render_with_groups(
   }} catch (e) {{ /* storage blocked — default to auto */ }}
 
   var toggle = document.getElementById("gp-theme-toggle");
-  function paintToggle() {{ if (toggle) toggle.textContent = THEME_LABEL[theme]; }}
+  function paintTheme() {{
+    document.documentElement.setAttribute("data-theme", theme);
+    if (toggle) toggle.textContent = THEME_LABEL[theme];
+  }}
   function sendTheme() {{
     // Post to the framed artifact; bridge.js validates source + schema on receipt.
     try {{ frame.contentWindow.postMessage({{ type: "theme", theme: theme }}, "*"); }} catch (e) {{}}
   }}
   // Query string that inlines the theme at wrap time (auto is the default → omit).
   function themeQuery() {{ return theme === "auto" ? "" : ("?gp_theme=" + theme); }}
-  paintToggle();
+  paintTheme();
 
   // --- The single validated navigation path. Used by BOTH the nav-chrome clicks
   // and the postMessage bridge, so every swap goes through the same allowlist +
@@ -417,7 +432,6 @@ pub fn render_with_groups(
     // Inline the current theme into the swapped artifact so the new fragment wraps
     // with the right `data-theme` (no FOUC). The `load` handler re-sends it too.
     frame.src = MOUNT + "/" + SPACE + "/_c/" + slug + themeQuery();
-    titleEl.textContent = shown;   // textContent — never innerHTML
     document.title = shown;
     frame.setAttribute("title", shown);
     paintActive();
@@ -454,7 +468,7 @@ pub fn render_with_groups(
     toggle.addEventListener("click", function () {{
       theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
       try {{ window.localStorage.setItem("gp-theme", theme); }} catch (e) {{}}
-      paintToggle();
+      paintTheme();
       sendTheme();
     }});
   }}
@@ -876,9 +890,9 @@ mod tests {
     }
 
     #[test]
-    fn shell_uses_resolved_title_as_text() {
-        // A provided title lands in the chrome as a JSON string literal + escaped
-        // <title>, never as live markup.
+    fn shell_uses_resolved_title_for_document_and_accessible_frame() {
+        // A provided title remains available to the browser tab and as the iframe's
+        // accessible name, escaped for each HTML context, without visible duplication.
         let html = render(
             "",
             "demo",
@@ -888,23 +902,15 @@ mod tests {
             "n",
             None,
         );
-        assert!(html.contains("Sales &amp; Q3")); // server-side <title>, escaped
-        // client textContent literal: `&` is JSON-for-script-encoded so it can't
-        // close the <script> element — assert the encoded form is present and the
-        // bare ampersand is NOT.
-        let title_line = html.lines().find(|l| l.contains("var TITLE =")).unwrap();
-        assert!(title_line.contains("Sales") && title_line.contains("Q3"));
-        // The `&`/`<`/`>` are json_for_script-encoded (to \uXXXX) so the value can
-        // never close the <script> element: the bare punctuation is absent.
-        assert!(!title_line.contains('&'));
-        assert!(!title_line.contains("Sales & Q3"));
+        assert!(html.contains("<title>Sales &amp; Q3</title>"));
+        assert!(html.contains(r#"title="Sales &amp; Q3""#));
         // Empty title falls back to "space / slug".
         let fallback = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         assert!(fallback.contains("demo / index"));
     }
 
     #[test]
-    fn shell_has_theme_toggle_and_messaging() {
+    fn shell_has_theme_toggle_and_messages_and_themes_its_own_chrome() {
         let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
         // A toggle control exists in the trusted chrome…
         assert!(html.contains(r#"id="gp-theme-toggle""#));
@@ -912,6 +918,30 @@ mod tests {
         assert!(html.contains(r#"type: "theme""#));
         // Persisted choice is read from the shell's own storage (default auto).
         assert!(html.contains(r#"getItem("gp-theme")"#));
+        // The same choice is applied to the trusted shell itself, whose header uses
+        // explicit light/dark variables rather than fixed browser-default colours.
+        assert!(html.contains(r#"document.documentElement.setAttribute("data-theme", theme)"#));
+        assert!(html.contains(r#"[data-theme="dark"]"#));
+        assert!(html.contains("background:var(--gp-shell-bg)"));
+    }
+
+    #[test]
+    fn shell_does_not_repeat_the_artifact_title_in_visible_header_chrome() {
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "Article title",
+            &nav_of(&["index"]),
+            "n",
+            None,
+        );
+        // Title semantics remain for the browser tab and the iframe's accessible name…
+        assert!(html.contains("<title>Article title</title>"));
+        assert!(html.contains(r#"title="Article title""#));
+        // …but the shell no longer paints a second visible copy above an artifact's H1.
+        assert!(!html.contains(r#"id="gp-title""#));
+        assert!(!html.contains("titleEl.textContent"));
     }
 
     #[test]

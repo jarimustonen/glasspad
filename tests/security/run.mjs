@@ -334,6 +334,19 @@ async function main() {
     check("bridge-theme: shell toggle re-themes the artifact (data-theme applied via bridge)",
       themed === "light", `data-theme=${themed}`);
 
+    // The shell must not paint a second visible copy of a fragment's own H1.
+    // Browser-tab and iframe accessibility titles remain; only duplicate header
+    // chrome is absent.
+    const titleRendering = navB
+      ? {
+          chromeTitleCount: await page.evaluate(() => document.querySelectorAll("#gp-title").length),
+          articleHeadingCount: await navB.evaluate(() => document.querySelectorAll("h1").length).catch(() => -1),
+        }
+      : null;
+    check("base-template: article title renders once (artifact H1, no duplicate shell title)",
+      !!titleRendering && titleRendering.chromeTitleCount === 0 && titleRendering.articleHeadingCount === 1,
+      `titleRendering=${JSON.stringify(titleRendering)}`);
+
     // (d2) A theme message NOT from the parent (the artifact posts to itself) is
     //      ignored — bridge.js only trusts `event.source === window.parent`.
     if (navB) {
@@ -345,6 +358,31 @@ async function main() {
       check("bridge-theme: a self-posted theme (wrong source) is ignored (stayed 'light', not 'dark')",
         stillLight === "light", `data-theme=${stillLight}`);
     }
+
+    // (d3) The trusted header follows that same live transition. Capture explicit
+    // light colours, advance to dark without a reload, and prove both the root token
+    // and computed chrome styles changed.
+    const lightChrome = await page.evaluate(() => {
+      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      return { background: s.backgroundColor, color: s.color, border: s.borderBottomColor };
+    });
+    await page.click("#gp-theme-toggle").catch(() => {});
+    await page.waitForTimeout(250);
+    const darkChrome = await page.evaluate(() => {
+      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      return {
+        theme: document.documentElement.getAttribute("data-theme"),
+        background: s.backgroundColor,
+        color: s.color,
+        border: s.borderBottomColor,
+      };
+    });
+    check("bridge-theme: trusted header visibly follows light→dark without reload",
+      darkChrome.theme === "dark" &&
+        darkChrome.background !== lightChrome.background &&
+        darkChrome.color !== lightChrome.color &&
+        darkChrome.border !== lightChrome.border,
+      `light=${JSON.stringify(lightChrome)} dark=${JSON.stringify(darkChrome)}`);
 
     // (a) EXTERNAL link is NOT intercepted by the bridge — and, per the wrapped
     //     fragment's `<base target="_top">`, it breaks OUT of the null-origin sandbox
@@ -417,7 +455,7 @@ async function main() {
           "header.gp-chrome svg, header.gp-chrome object").length,
         // No duplicate critical ids (an id-clobbering breakout would add one).
         dupIds: document.querySelectorAll("#gp-nav").length !== 1 ||
-                document.querySelectorAll("#gp-title").length !== 1 ||
+                document.querySelectorAll("#gp-title").length !== 0 ||
                 document.querySelectorAll("#gp-artifact").length !== 1,
         anchorChildEls: a ? a.childElementCount : -1,
         // textContent carries the raw hostile string verbatim (proof it's TEXT,
