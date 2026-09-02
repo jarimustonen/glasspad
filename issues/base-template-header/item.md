@@ -12,6 +12,10 @@ commits:
   summary: align page chrome with artifact theme
 - hash: 059017c
   summary: make shell theme transitions paint-safe
+- hash: da88210
+  summary: align page chrome with artifact theme (rebased)
+- hash: 47c6f62
+  summary: make shell theme transitions paint-safe (rebased)
 closed: 2026-09-02
 ---
 
