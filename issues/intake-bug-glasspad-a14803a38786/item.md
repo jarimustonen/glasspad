@@ -1,13 +1,16 @@
 ---
 created: 2026-08-23
-updated: 2026-08-28
+updated: 2026-09-02
 type: bug
 reporter: jari
-status: open
+status: in-progress
 priority: normal
 provenance: agent:homebase-wrapup
 source_ref: agent:homebase-wrapup/reporter:jari/id:homebase-wrapup-glasspad-full-document-chrome-20260823
 lane: template-rendering
+commits:
+- hash: 2013374982f06b8c3c96c8c9ce05023b21946732
+  summary: 'docs: clarify full-document iframe boundary'
 ---
 
 # Hosted full-document HTML shows Glasspad chrome
