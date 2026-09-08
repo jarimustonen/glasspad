@@ -4,7 +4,7 @@ members = ["cargo:."]
 # Config for 'dist' (cargo-dist). The tag-triggered `.github/workflows/release.yml`
 # is GENERATED from this [dist] section via `dist generate` — edit config here,
 # then regenerate; never hand-edit the workflow. Matches the shipshape / issuectl /
-# orchestratectl release convention.
+# taskfleet release convention.
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.28.2"
@@ -14,7 +14,7 @@ ci = "github"
 installers = ["shell", "homebrew"]
 # Homebrew tap repository for the auto-generated formula.
 # Per-tool tap convention (matches homebrew-shipshape / homebrew-issuectl /
-# homebrew-orchestratectl): repo `homebrew-glasspad` →
+# homebrew-taskfleet): repo `homebrew-glasspad` →
 # `brew install jarimustonen/glasspad/glasspad`.
 tap = "jarimustonen/homebrew-glasspad"
 # Publish jobs to run in CI

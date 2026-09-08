@@ -7,11 +7,11 @@ use super::*;
 /// `glasspad version` (and `glasspad --version` / `-V`) — report the installed
 /// CLI version so tooling (the deployment fleet updater) can version-gate installs,
 /// matching the sibling CLIs (`issuectl --version`, `shipshape version`,
-/// `orchestratectl version`).
+/// `taskfleet version`).
 ///
 /// Under `--json`, emit the AI-first §10 envelope with the version payload
 /// **nested under `data`** — `{schema_version, data: {name, version, commit,
-/// supported_schemas, skills}, warnings}` — the same shape orchestratectl/shipshape
+/// supported_schemas, skills}, warnings}` — the same shape taskfleet/shipshape
 /// `version` use, so the cross-tool fleet-updater reads `.data.version`
 /// uniformly across every tool rather than special-casing glasspad. Otherwise a
 /// plain `glasspad <version>`
