@@ -16,6 +16,10 @@ cd "$(dirname "$0")"
 PORT="${GLASSPAD_TEST_PORT:-3210}"
 SUITE_DIR="tests/security"
 
+# Keep grep assertions off producer pipelines: under pipefail, grep -q can exit
+# early and turn a successful match into the producer's SIGPIPE failure.
+bash "$SUITE_DIR/check-pipefail-safety.sh" test-security.sh
+
 # Isolate the loopback-server pid file so this suite's `serve` invocations never
 # touch the developer's real ~/.glasspad/server.pid (which a running local deploy
 # may own). Each `serve` here writes/reclaims this hermetic path instead; the
@@ -122,27 +126,30 @@ for p in \
   c="$(code "$SB/myspace/$p")"
   [ "$c" = "404" ] || [ "$c" = "400" ]; scheck $? "traversal blocked: $p (got $c)"
 done
-# The secret is never reachable by any name.
-! curl -s "$SB/myspace/assets/../../secret.txt" | grep -q SECRET-OUTSIDE; scheck $? "secret file never served via traversal"
+# The secret is never reachable by any name. Capture first so a curl transport
+# failure cannot be mistaken for a successful negative assertion.
+TRAVERSAL_BODY="$(curl -s "$SB/myspace/assets/../../secret.txt")"
+! grep -q SECRET-OUTSIDE <<< "$TRAVERSAL_BODY"; scheck $? "secret file never served via traversal"
 
 # Wave 4 nav chrome: the trusted shell lists the space's artifacts, and an
 # artifact-derived title can NEVER become live markup in the parent.
 SHELL_HTML="$(curl -s "$SB/myspace/inject")"
-echo "$SHELL_HTML" | grep -q 'id="gp-nav"'; scheck $? "shell renders the nav chrome container"
-echo "$SHELL_HTML" | grep -q '"slug":"sales"'; scheck $? "nav table lists the space's sibling artifacts"
+grep -q 'id="gp-nav"' <<< "$SHELL_HTML"; scheck $? "shell renders the nav chrome container"
+grep -q '"slug":"sales"' <<< "$SHELL_HTML"; scheck $? "nav table lists the space's sibling artifacts"
 # The hostile title must NOT appear as raw executable markup anywhere in the shell.
-! echo "$SHELL_HTML" | grep -qi '<img src=x onerror'; scheck $? "hostile title is not emitted as raw <img onerror> markup"
-! echo "$SHELL_HTML" | grep -qi '<script>alert(2)'; scheck $? "hostile title is not emitted as a raw <script> element"
+! grep -qi '<img src=x onerror' <<< "$SHELL_HTML"; scheck $? "hostile title is not emitted as raw <img onerror> markup"
+! grep -qi '<script>alert(2)' <<< "$SHELL_HTML"; scheck $? "hostile title is not emitted as a raw <script> element"
 # It IS present, but JSON-for-script encoded (<…) in the nav data literal.
-echo "$SHELL_HTML" | grep -q '\\u003cimg src=x onerror'; scheck $? "hostile title survives only as \\u003c-encoded text in the nav data"
+grep -q '\\u003cimg src=x onerror' <<< "$SHELL_HTML"; scheck $? "hostile title survives only as \\u003c-encoded text in the nav data"
 # The trusted shell enforces Trusted Types (any accidental innerHTML sink throws).
-echo "$(hdr "$SB/myspace/inject" content-security-policy)" | grep -q "require-trusted-types-for 'script'"; scheck $? "shell CSP enforces Trusted Types"
+SHELL_CSP="$(hdr "$SB/myspace/inject" content-security-policy)"
+grep -q "require-trusted-types-for 'script'" <<< "$SHELL_CSP"; scheck $? "shell CSP enforces Trusted Types"
 
 # Egress boundary held: the artifact CSP keeps `connect-src 'none'` — live reload
 # is shell-side (its own connect-src 'self'), so the artifact stays fully closed.
 CSP="$(hdr "$SB/myspace/_c/index" content-security-policy)"
-echo "$CSP" | grep -q "connect-src 'none';"; scheck $? "artifact connect-src stays 'none' (fully closed)"
-! echo "$CSP" | grep -q "/_gp/reload"; scheck $? "SSE path is not named in the artifact CSP"
+grep -q "connect-src 'none';" <<< "$CSP"; scheck $? "artifact connect-src stays 'none' (fully closed)"
+! grep -q "/_gp/reload" <<< "$CSP"; scheck $? "SSE path is not named in the artifact CSP"
 
 # ---------------------------------------------------------------------------
 # Return channel (the airlock). The trusted shell POSTs a submission; the ARTIFACT
@@ -158,8 +165,8 @@ sub_post() { # origin  body  -> http_code
 
 # AIRLOCK REGRESSION (MUST hold): the artifact CSP is still `connect-src 'none'`
 # AND the sandbox grants NO `allow-forms` — the return channel opened no egress.
-! echo "$CSP" | grep -q "allow-forms"; scheck $? "airlock: artifact sandbox still has NO allow-forms"
-echo "$CSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "airlock: artifact sandbox tokens unchanged (no new grant)"
+! grep -q "allow-forms" <<< "$CSP"; scheck $? "airlock: artifact sandbox still has NO allow-forms"
+grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation" <<< "$CSP"; scheck $? "airlock: artifact sandbox tokens unchanged (no new grant)"
 
 # Same-origin submit is accepted; a cross-origin (CSRF) submit is rejected.
 [ "$(sub_post "$LB_ORIGIN" '{"data":{"a":1},"slug":"index"}')" = "201" ]; scheck $? "return: same-origin submit accepted (201)"
@@ -171,8 +178,10 @@ echo "$CSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activa
 # Cross-space spoof: a submission is bound to the URL-path space (myspace), never a
 # payload field. A submit to myspace lands under myspace; an unrelated space is empty.
 sub_post "$LB_ORIGIN" '{"data":{"tag":"bound"},"slug":"sales"}' >/dev/null
-curl -s "$SB/myspace/_gp/submissions" | grep -q '"key":"myspace"'; scheck $? "return: submission keyed by the URL-path space, not a payload field"
-curl -s "$SB/otherspace/_gp/submissions" | grep -q '"submissions":\[\]'; scheck $? "return: an unrelated space has no submissions (no cross-space leak)"
+MYSPACE_SUBMISSIONS="$(curl -s "$SB/myspace/_gp/submissions")"
+grep -q '"key":"myspace"' <<< "$MYSPACE_SUBMISSIONS"; scheck $? "return: submission keyed by the URL-path space, not a payload field"
+OTHERSPACE_SUBMISSIONS="$(curl -s "$SB/otherspace/_gp/submissions")"
+grep -q '"submissions":\[\]' <<< "$OTHERSPACE_SUBMISSIONS"; scheck $? "return: an unrelated space has no submissions (no cross-space leak)"
 
 # A2 SSE (loopback parity): the server-push stream delivers a space's submissions as
 # `submission` events keyed to the URL-path space; an unrelated space's stream is
@@ -231,7 +240,7 @@ HSLUG="$(printf '%s' "$PUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
 
 # The round-0 content route is frozen-sandboxed (baseline, pre-push).
 HCSP0="$(hdr "$HOST_ORIGIN/p/$HSLUG/_c/index" content-security-policy)"
-echo "$HCSP0" | grep -q "connect-src 'none';"; scheck $? "b2: round 0 keeps connect-src 'none'"
+grep -q "connect-src 'none';" <<< "$HCSP0"; scheck $? "b2: round 0 keeps connect-src 'none'"
 # Its content-version is what a stale round-0 submission will echo.
 CV0="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index" | sed -n 's/.*name="gp-content-version" content="\([0-9a-f]*\)".*/\1/p')"
 [ -n "$CV0" ]; scheck $? "b2: round 0 inlines its content-version for the bridge"
@@ -239,16 +248,16 @@ CV0="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index" | sed -n 's/.*name="gp-content-v
 # acme pushes round 1 (a re-render in response). 200 with a new round + version.
 RND="$(curl -s -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" -H "Authorization: Bearer $KEYA" \
   -H 'content-type: application/json' -d '{"html":"<h1>round one</h1>"}')"
-echo "$RND" | grep -q '"round":1'; scheck $? "b2: owner push advances to round 1 (200)"
+grep -q '"round":1' <<< "$RND"; scheck $? "b2: owner push advances to round 1 (200)"
 CV1="$(printf '%s' "$RND" | sed -n 's/.*"content_version":"\([0-9a-f]*\)".*/\1/p')"
 
 # The NEW round is served AND still frozen-sandboxed — pushing a round widens nothing.
 HROUND1="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index")"
-echo "$HROUND1" | grep -q "round one"; scheck $? "b2: the new round body is now served"
+grep -q "round one" <<< "$HROUND1"; scheck $? "b2: the new round body is now served"
 HCSP1="$(hdr "$HOST_ORIGIN/p/$HSLUG/_c/index" content-security-policy)"
-echo "$HCSP1" | grep -q "connect-src 'none';"; scheck $? "b2: round 1 STILL keeps connect-src 'none' (no new egress)"
-! echo "$HCSP1" | grep -q "allow-forms"; scheck $? "b2: round 1 sandbox still has NO allow-forms (airlock held)"
-echo "$HCSP1" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "b2: round 1 sandbox tokens unchanged (no new grant)"
+grep -q "connect-src 'none';" <<< "$HCSP1"; scheck $? "b2: round 1 STILL keeps connect-src 'none' (no new egress)"
+! grep -q "allow-forms" <<< "$HCSP1"; scheck $? "b2: round 1 sandbox still has NO allow-forms (airlock held)"
+grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation" <<< "$HCSP1"; scheck $? "b2: round 1 sandbox tokens unchanged (no new grant)"
 
 # Cross-round binding: a submission answering the STALE round 0 is rejected (409);
 # the CURRENT round 1 is accepted (201).
@@ -265,7 +274,8 @@ hsub() { # content_version -> http_code
 RB="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" \
   -H "Authorization: Bearer $KEYB" -H 'content-type: application/json' -d '{"html":"<h1>hijacked</h1>"}')"
 [ "$RB" = "404" ]; scheck $? "b2: a non-owner round push is rejected (404)"
-curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index" | grep -q "round one"; scheck $? "b2: a rejected push left the served body unchanged"
+REJECTED_PUSH_BODY="$(curl -s "$HOST_ORIGIN/p/$HSLUG/_c/index")"
+grep -q "round one" <<< "$REJECTED_PUSH_BODY"; scheck $? "b2: a rejected push left the served body unchanged"
 # An unauthenticated push is rejected (401).
 RN="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST_ORIGIN/api/v1/pages/$HSLUG/rounds" \
   -H 'content-type: application/json' -d '{"html":"<h1>x</h1>"}')"
@@ -336,7 +346,7 @@ grep -q '"live":"sse"' "$WORK/sse_live.txt"; scheck $? "sse: a submission landin
 
 # (sandbox unwidened) The artifact CSP still names no stream path and stays closed —
 # a sandboxed artifact (connect-src 'none', no allow-forms) can never reach the stream.
-! echo "$HCSP1" | grep -q "submissions/stream"; scheck $? "sse: the artifact CSP never names the stream path (artifact cannot reach it)"
+! grep -q "submissions/stream" <<< "$HCSP1"; scheck $? "sse: the artifact CSP never names the stream path (artifact cannot reach it)"
 
 # ---------------------------------------------------------------------------
 # Gap 1 — multi-page hosted publish (space ingest). A whole SPACE (a directory of
@@ -364,21 +374,22 @@ SPUB="$(curl -s -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $
   -H 'content-type: application/json' -d @"$WORK/space.json")"
 SPSLUG="$(printf '%s' "$SPUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
 [ -n "$SPSLUG" ]; scheck $? "space: a multi-page space is published under one namespace"
-printf '%s' "$SPUB" | grep -q '"page_count":3'; scheck $? "space: the ingest envelope reports all pages"
+grep -q '"page_count":3' <<< "$SPUB"; scheck $? "space: the ingest envelope reports all pages"
 
 # Every page serves under the FROZEN artifact CSP — the hostile page cannot widen it.
 for PG in index guide evil; do
   PGCSP="$(hdr "$HOST_ORIGIN/p/$SPSLUG/_c/$PG" content-security-policy)"
-  echo "$PGCSP" | grep -q "connect-src 'none';"; scheck $? "space: page '$PG' keeps connect-src 'none' (egress closed)"
-  ! echo "$PGCSP" | grep -q "allow-forms"; scheck $? "space: page '$PG' sandbox has NO allow-forms (airlock held)"
+  grep -q "connect-src 'none';" <<< "$PGCSP"; scheck $? "space: page '$PG' keeps connect-src 'none' (egress closed)"
+  ! grep -q "allow-forms" <<< "$PGCSP"; scheck $? "space: page '$PG' sandbox has NO allow-forms (airlock held)"
 done
 EVILCSP="$(hdr "$HOST_ORIGIN/p/$SPSLUG/_c/evil" content-security-policy)"
-echo "$EVILCSP" | grep -q "sandbox allow-scripts"; scheck $? "space: a hostile bundle page stays sandboxed (server CSP authoritative)"
-! echo "$EVILCSP" | grep -q "default-src \*"; scheck $? "space: a hostile page's <meta> cannot widen the response CSP"
+grep -q "sandbox allow-scripts" <<< "$EVILCSP"; scheck $? "space: a hostile bundle page stays sandboxed (server CSP authoritative)"
+! grep -q "default-src \*" <<< "$EVILCSP"; scheck $? "space: a hostile page's <meta> cannot widen the response CSP"
 
 # In-space relative links resolve to SIBLING pages of the same space (served body
 # keeps the relative href; the bridge/nav only knows this space's slugs).
-curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q 'href="./guide"'; scheck $? "space: an in-space relative link is preserved for same-space nav"
+SPACE_INDEX_BODY="$(curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index")"
+grep -q 'href="./guide"' <<< "$SPACE_INDEX_BODY"; scheck $? "space: an in-space relative link is preserved for same-space nav"
 # The asset serves under the space namespace with its detected MIME.
 [ "$(hdr "$HOST_ORIGIN/p/$SPSLUG/assets/logo.svg" content-type)" = "image/svg+xml" ]; scheck $? "space: a space asset serves under /p/<space>/assets with correct MIME"
 
@@ -408,10 +419,12 @@ cat > "$WORK/space2.json" <<JSON
 JSON
 SPUB2="$(curl -s -w '\n%{http_code}' -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $KEYA" \
   -H 'content-type: application/json' -d @"$WORK/space2.json")"
-echo "$SPUB2" | tail -1 | grep -q '200'; scheck $? "space: a re-publish with the same --space-key returns 200 (update in place)"
+SPUB2_STATUS="$(printf '%s\n' "$SPUB2" | tail -n 1)"
+[ "$SPUB2_STATUS" = "200" ]; scheck $? "space: a re-publish with the same --space-key returns 200 (update in place)"
 SPSLUG2="$(printf '%s' "$SPUB2" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
 [ "$SPSLUG2" = "$SPSLUG" ]; scheck $? "space: the in-place update kept the same slug/URL"
-curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v2"; scheck $? "space: the in-place update swapped the served content"
+SPACE_V2_BODY="$(curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index")"
+grep -q "Home v2" <<< "$SPACE_V2_BODY"; scheck $? "space: the in-place update swapped the served content"
 
 # CROSS-TENANT: globex using the SAME stable key gets its OWN space (a tenant can
 # never update-in-place another tenant's space).
@@ -423,7 +436,8 @@ GPUB="$(curl -s -X POST "$HOST_ORIGIN/api/v1/spaces" -H "Authorization: Bearer $
 GSLUG="$(printf '%s' "$GPUB" | sed -n 's/.*"slug":"\([a-z0-9]*\)".*/\1/p')"
 [ -n "$GSLUG" ] && [ "$GSLUG" != "$SPSLUG" ]; scheck $? "space: the same key under a different tenant yields a DISTINCT space (per-tenant scope)"
 # acme's space is unchanged by globex's publish.
-curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v2"; scheck $? "space: a cross-tenant publish left the owner's space untouched"
+SPACE_AFTER_CROSS_TENANT_PUBLISH="$(curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index")"
+grep -q "Home v2" <<< "$SPACE_AFTER_CROSS_TENANT_PUBLISH"; scheck $? "space: a cross-tenant publish left the owner's space untouched"
 
 # UPDATE-IN-PLACE BY SLUG (publish-update-in-place): PUT /api/v1/spaces/{slug}
 # replaces an existing space addressed by its capability slug — owner-scoped and
@@ -435,8 +449,10 @@ JSON
 # The owner (acme) updates its space in place → 200, same slug, new content served.
 SPUT="$(curl -s -w '\n%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/$SPSLUG" -H "Authorization: Bearer $KEYA" \
   -H 'content-type: application/json' -d @"$WORK/space_put.json")"
-echo "$SPUT" | tail -1 | grep -q '200'; scheck $? "space: PUT update-in-place by slug returns 200 (owner)"
-curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -q "Home v3"; scheck $? "space: PUT update-in-place swapped the served content"
+SPUT_STATUS="$(printf '%s\n' "$SPUT" | tail -n 1)"
+[ "$SPUT_STATUS" = "200" ]; scheck $? "space: PUT update-in-place by slug returns 200 (owner)"
+SPACE_V3_BODY="$(curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index")"
+grep -q "Home v3" <<< "$SPACE_V3_BODY"; scheck $? "space: PUT update-in-place swapped the served content"
 # A DIFFERENT tenant (globex) PUT to acme's slug → opaque 404 no_such_space (no
 # cross-tenant existence oracle), and the content is NOT modified.
 cat > "$WORK/space_put_evil.json" <<JSON
@@ -444,7 +460,9 @@ cat > "$WORK/space_put_evil.json" <<JSON
 JSON
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/$SPSLUG" -H "Authorization: Bearer $KEYB" \
   -H 'content-type: application/json' -d @"$WORK/space_put_evil.json")" = "404" ]; scheck $? "space: a cross-tenant PUT update is refused (404 no_such_space)"
-curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index" | grep -vq "hijacked"; scheck $? "space: the refused cross-tenant PUT left the owner's content intact"
+SPACE_AFTER_REFUSED_PUT="$(curl -s "$HOST_ORIGIN/p/$SPSLUG/_c/index")"
+! grep -q "hijacked" <<< "$SPACE_AFTER_REFUSED_PUT"; scheck $? "space: the refused cross-tenant PUT did not inject hostile content"
+grep -q "Home v3" <<< "$SPACE_AFTER_REFUSED_PUT"; scheck $? "space: the refused cross-tenant PUT left the owner's content intact"
 # A PUT to an unknown slug is the same opaque 404 — never a create.
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$HOST_ORIGIN/api/v1/spaces/aaaaaaaaaaaaaaaaaaaaaaaaaa" -H "Authorization: Bearer $KEYA" \
   -H 'content-type: application/json' -d @"$WORK/space_put.json")" = "404" ]; scheck $? "space: a PUT to an unknown slug is 404 (fail-if-missing, never a create)"
@@ -487,32 +505,33 @@ MB="http://127.0.0.1:$SPACE_PORT"
 # The md page renders and serves — through the default `prose` fragment template.
 [ "$(code "$MB/mdspace/_c/index")" = "200" ]; scheck $? "md: a markdown page renders and serves (200)"
 MDBODY="$(curl -s "$MB/mdspace/_c/index")"
-echo "$MDBODY" | grep -q '<article class="gp-prose">'; scheck $? "md: the page rendered through the prose template"
-echo "$MDBODY" | grep -qE '<h1[^>]*>Home</h1>'; scheck $? "md: markdown was rendered to HTML server-side"
+grep -q '<article class="gp-prose">' <<< "$MDBODY"; scheck $? "md: the page rendered through the prose template"
+grep -qE '<h1[^>]*>Home</h1>' <<< "$MDBODY"; scheck $? "md: markdown was rendered to HTML server-side"
 # Cross-page nav: the relative markdown link survives so same-space nav resolves,
 # and the target md page it points at actually serves (functional, not just textual).
-echo "$MDBODY" | grep -q 'href="./guide"'; scheck $? "md: a relative cross-page link is preserved for same-space nav"
+grep -q 'href="./guide"' <<< "$MDBODY"; scheck $? "md: a relative cross-page link is preserved for same-space nav"
 [ "$(code "$MB/mdspace/_c/guide")" = "200" ]; scheck $? "md: the linked sibling md page resolves (200)"
 # The trusted shell lists the sibling md pages as nav entries.
-curl -s "$MB/mdspace/index" | grep -q '"slug":"guide"'; scheck $? "md: the nav chrome lists sibling md pages"
+MD_SHELL="$(curl -s "$MB/mdspace/index")"
+grep -q '"slug":"guide"' <<< "$MD_SHELL"; scheck $? "md: the nav chrome lists sibling md pages"
 
 # FROZEN artifact CSP on an md-derived page — identical boundary to an .html page.
 MDCSP="$(hdr "$MB/mdspace/_c/index" content-security-policy)"
-echo "$MDCSP" | grep -q "connect-src 'none';"; scheck $? "md: page keeps connect-src 'none' (egress closed)"
-! echo "$MDCSP" | grep -q "allow-forms"; scheck $? "md: page sandbox has NO allow-forms (airlock held)"
-! echo "$MDCSP" | grep -q "allow-same-origin"; scheck $? "md: page sandbox does NOT grant allow-same-origin (null origin held)"
-echo "$MDCSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "md: page sandbox tokens unchanged (no new grant)"
+grep -q "connect-src 'none';" <<< "$MDCSP"; scheck $? "md: page keeps connect-src 'none' (egress closed)"
+! grep -q "allow-forms" <<< "$MDCSP"; scheck $? "md: page sandbox has NO allow-forms (airlock held)"
+! grep -q "allow-same-origin" <<< "$MDCSP"; scheck $? "md: page sandbox does NOT grant allow-same-origin (null origin held)"
+grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation" <<< "$MDCSP"; scheck $? "md: page sandbox tokens unchanged (no new grant)"
 
 # HOSTILE markdown page: the raw <script>/<meta> reach the served body (passthrough is
 # intentional — the boundary is the sandbox/CSP, not sanitization) but cannot widen the
 # response CSP. Prove BOTH: the hostile bytes are in the body AND the header is frozen.
 EVILMDBODY="$(curl -s "$MB/mdspace/_c/evil")"
-echo "$EVILMDBODY" | grep -q 'evil.example'; scheck $? "md: hostile raw HTML reaches the sandboxed artifact body (full scan→wrap→serve path)"
+grep -q 'evil.example' <<< "$EVILMDBODY"; scheck $? "md: hostile raw HTML reaches the sandboxed artifact body (full scan→wrap→serve path)"
 EVILMDCSP="$(hdr "$MB/mdspace/_c/evil" content-security-policy)"
-echo "$EVILMDCSP" | grep -q "connect-src 'none';"; scheck $? "md: a hostile markdown page still keeps connect-src 'none'"
-! echo "$EVILMDCSP" | grep -q "default-src \*"; scheck $? "md: a hostile markdown <meta> cannot widen the response CSP"
-! echo "$EVILMDCSP" | grep -q "allow-same-origin"; scheck $? "md: a hostile markdown page sandbox does NOT grant allow-same-origin"
-echo "$EVILMDCSP" | grep -q "sandbox allow-scripts"; scheck $? "md: a hostile markdown page stays sandboxed (server CSP authoritative)"
+grep -q "connect-src 'none';" <<< "$EVILMDCSP"; scheck $? "md: a hostile markdown page still keeps connect-src 'none'"
+! grep -q "default-src \*" <<< "$EVILMDCSP"; scheck $? "md: a hostile markdown <meta> cannot widen the response CSP"
+! grep -q "allow-same-origin" <<< "$EVILMDCSP"; scheck $? "md: a hostile markdown page sandbox does NOT grant allow-same-origin"
+grep -q "sandbox allow-scripts" <<< "$EVILMDCSP"; scheck $? "md: a hostile markdown page stays sandboxed (server CSP authoritative)"
 
 kill "$MD_PID" 2>/dev/null || true
 sleep 0.3
@@ -598,11 +617,11 @@ else
   # egress stays fully closed, and the LAN origin is ADDED to the host set (nothing is
   # loosened) so a LAN client's base libs load.
   LAN_CSP="$(hdr "http://$LAN_IP:$LAN_PORT/demo/_c/index" content-security-policy)"
-  echo "$LAN_CSP" | grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation"; scheck $? "lan: artifact sandbox tokens unchanged"
-  echo "$LAN_CSP" | grep -q "connect-src 'none';"; scheck $? "lan: artifact egress still fully closed (connect-src 'none')"
-  ! echo "$LAN_CSP" | grep -q "allow-same-origin"; scheck $? "lan: artifact still has NO allow-same-origin"
-  ! echo "$LAN_CSP" | grep -q "allow-forms"; scheck $? "lan: artifact still has NO allow-forms (airlock intact)"
-  echo "$LAN_CSP" | grep -q "http://$LAN_IP:$LAN_PORT"; scheck $? "lan: LAN origin is added to the artifact CSP host set (base libs load)"
+  grep -q "sandbox allow-scripts allow-top-navigation-by-user-activation" <<< "$LAN_CSP"; scheck $? "lan: artifact sandbox tokens unchanged"
+  grep -q "connect-src 'none';" <<< "$LAN_CSP"; scheck $? "lan: artifact egress still fully closed (connect-src 'none')"
+  ! grep -q "allow-same-origin" <<< "$LAN_CSP"; scheck $? "lan: artifact still has NO allow-same-origin"
+  ! grep -q "allow-forms" <<< "$LAN_CSP"; scheck $? "lan: artifact still has NO allow-forms (airlock intact)"
+  grep -q "http://$LAN_IP:$LAN_PORT" <<< "$LAN_CSP"; scheck $? "lan: LAN origin is added to the artifact CSP host set (base libs load)"
 
   kill "$LAN_PID" 2>/dev/null || true
   sleep 0.3

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- Prevented the security regression gate from exiting with SIGPIPE status 141 when an
+  early `grep -q` match succeeds under `pipefail`.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.17.3] - 2026-09-02
