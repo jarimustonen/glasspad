@@ -1,9 +1,9 @@
 ---
 created: 2026-08-28
-updated: 2026-09-02
+updated: 2026-09-14
 type: feature
 reporter: jari
-status: open
+status: in-progress
 priority: normal
 provenance: agent:aggountant-wrapup
 source_ref: agent:aggountant-wrapup/reporter:jari/id:aggountant-2026-08-28-glasspad-stable-republish
