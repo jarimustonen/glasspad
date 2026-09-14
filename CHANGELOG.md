@@ -10,13 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+### Fixed
+<!-- oss-changelog:unreleased-end -->
+
+## [0.17.4] - 2026-09-14
+
+### Changed
 - Repeating a hosted `glasspad publish <path>` now updates the same space and URL;
   use `--new` to intentionally create a separate space, or one `--update <slug>` to
   adopt a URL published before automatic source identity existed.
+
 ### Fixed
 - Prevented the security regression gate from exiting with SIGPIPE status 141 when an
   early `grep -q` match succeeds under `pipefail`.
-<!-- oss-changelog:unreleased-end -->
 
 ## [0.17.3] - 2026-09-02
 
@@ -519,5 +525,6 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.17.3...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.17.4...HEAD
+[0.17.4]: https://github.com/jarimustonen/glasspad/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/jarimustonen/glasspad/compare/v0.17.2...v0.17.3
