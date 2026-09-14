@@ -3,11 +3,13 @@ created: 2026-08-28
 updated: 2026-09-14
 type: feature
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 provenance: agent:aggountant-wrapup
 source_ref: agent:aggountant-wrapup/reporter:jari/id:aggountant-2026-08-28-glasspad-stable-republish
 lane: publish-identity
+closed: 2026-09-14
+closed_by: pi
 ---
 
 # Prevent accidental duplicate spaces when republishing a source path
