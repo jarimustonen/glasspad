@@ -25,8 +25,9 @@
 //!   space's content in place, addressed by the capability slug the caller already
 //!   holds (rather than a stable key). Owner-scoped + **fail-if-missing**: a slug not
 //!   owned by the tenant is an opaque `404 no_such_space`, never a fresh create — the
-//!   deliberate contrast with the `space_key` create-or-update on POST. Reuses the
-//!   same atomic staged-replace + frozen sandbox read seam.
+//!   deliberate contrast with the `space_key` create-or-update on POST. A successful
+//!   PUT may also bind a supplied key to adopt the existing slug for later POST
+//!   republishes. Reuses the same atomic staged-replace + frozen sandbox read seam.
 //!
 //! ## Host handling (plan §8)
 //! The loopback `host_guard` is a *rebinding* defense for a server a browser might
@@ -1076,7 +1077,10 @@ mod tests {
             put_space_req(
                 &slug,
                 Some(KEY),
-                serde_json::json!({ "pages": [ { "slug": "index", "html": "<h1>V2</h1>" } ] }),
+                serde_json::json!({
+                    "pages": [ { "slug": "index", "html": "<h1>V2</h1>" } ],
+                    "space_key": "adopted-source"
+                }),
             ),
         )
         .await;
@@ -1105,6 +1109,21 @@ mod tests {
         )
         .into_owned();
         assert!(html.contains("V2"), "in-place update did not swap the body");
+
+        // The key carried by PUT adopts this slug for subsequent POST republishes.
+        let r = send(
+            &app,
+            space_req(
+                Some(KEY),
+                serde_json::json!({
+                    "pages": [ { "slug": "index", "html": "<h1>V3</h1>" } ],
+                    "space_key": "adopted-source"
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(body_json(r).await["slug"], slug);
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1176,8 +1195,7 @@ mod tests {
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_json(r).await["error"]["code"], "no_such_space");
 
-        // A stray `space_key` in the update body is rejected (deny_unknown_fields) —
-        // the two addressing modes never mix in one request.
+        // A malformed adoption key is rejected before mutation.
         let r = send(
             &app,
             put_space_req(
@@ -1185,7 +1203,7 @@ mod tests {
                 Some(KEY),
                 serde_json::json!({
                     "pages": [ { "slug": "index", "html": "<h1>x</h1>" } ],
-                    "space_key": "k"
+                    "space_key": ""
                 }),
             ),
         )

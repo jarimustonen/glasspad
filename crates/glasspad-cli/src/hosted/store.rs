@@ -1539,12 +1539,15 @@ impl Store {
     /// The retention clock is preserved: `created_at` stays the first publish's,
     /// `updated_at` advances (so an actively-updated doc keeps its lease exactly like
     /// a keyed re-publish). No cross-tenant existence oracle: a missing slug and a
-    /// foreign-owned slug return the identical error.
+    /// foreign-owned slug return the identical error. When `space_key` is supplied,
+    /// the successful durable update also binds that tenant-scoped identity to this
+    /// slug, allowing an existing space to be adopted for later keyed republishes.
     pub fn update_space(
         &self,
         tenant: &str,
         slug: &str,
         space: Space,
+        space_key: Option<&str>,
     ) -> Result<PublishedSpace, UpdateError> {
         // Same critical section as publish / round push / GC.
         let _guard = self.lock_mutation();
@@ -1633,6 +1636,14 @@ impl Store {
 
         if let Committed::Unconfirmed(e) = committed {
             return Err(UpdateError::Io(e));
+        }
+
+        // As on keyed create/update, publish the mapping only after the space commit
+        // is confirmed durable. A mapping-write failure is surfaced; retrying this
+        // explicit update is safe and completes adoption without changing the slug.
+        if let Some(key) = space_key {
+            self.write_space_idem(tenant, key, slug)
+                .map_err(UpdateError::Io)?;
         }
 
         Ok(PublishedSpace {
@@ -3589,7 +3600,7 @@ mod tests {
         // A tiny sleep so `updated_at` can strictly advance past `created_at`.
         std::thread::sleep(std::time::Duration::from_millis(5));
         let updated = store
-            .update_space("acme", &slug, sample_space("V2"))
+            .update_space("acme", &slug, sample_space("V2"), Some("adopted-source"))
             .unwrap();
         assert_eq!(updated.slug, slug, "URL/slug preserved");
         assert!(!updated.created, "an update is never a create");
@@ -3612,6 +3623,15 @@ mod tests {
             meta_after.updated_at > created_before.updated_at,
             "updated_at must advance on an in-place update"
         );
+
+        // A key supplied on PUT adopts this existing slug; the next ordinary keyed
+        // publish updates it rather than minting a duplicate.
+        let repeated = store
+            .publish_space("acme", sample_space("V3"), Some("adopted-source"))
+            .unwrap();
+        assert_eq!(repeated.slug, slug);
+        assert!(!repeated.created);
+        assert_eq!(store.page_count(), 1);
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -3628,7 +3648,7 @@ mod tests {
 
         // Another tenant cannot update acme's space (and learns nothing).
         assert!(matches!(
-            store.update_space("globex", &owned.slug, sample_space("evil")),
+            store.update_space("globex", &owned.slug, sample_space("evil"), None),
             Err(UpdateError::NoSuchSpace)
         ));
         // acme's space is untouched by the refused foreign update.
@@ -3644,7 +3664,12 @@ mod tests {
 
         // An entirely unknown slug is the same opaque error, NOT a create.
         assert!(matches!(
-            store.update_space("acme", "aaaaaaaaaaaaaaaaaaaaaaaaaa", sample_space("x")),
+            store.update_space(
+                "acme",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                sample_space("x"),
+                None
+            ),
             Err(UpdateError::NoSuchSpace)
         ));
         assert_eq!(store.page_count(), 1, "a missing-slug update never creates");
@@ -3655,7 +3680,7 @@ mod tests {
             .publish("acme", "<h1>page</h1>".into(), None, None)
             .unwrap();
         assert!(matches!(
-            store.update_space("acme", &page.slug, sample_space("x")),
+            store.update_space("acme", &page.slug, sample_space("x"), None),
             Err(UpdateError::NoSuchSpace)
         ));
         std::fs::remove_dir_all(&root).ok();
@@ -3697,7 +3722,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(
-            store.update_space("acme", &slug, sample_space("x")),
+            store.update_space("acme", &slug, sample_space("x"), None),
             Err(UpdateError::NoSuchSpace)
         ));
         std::fs::remove_dir_all(&root).ok();
@@ -3722,7 +3747,7 @@ mod tests {
             let slug = slug.clone();
             handles.push(std::thread::spawn(move || {
                 store
-                    .update_space("acme", &slug, sample_space(tag))
+                    .update_space("acme", &slug, sample_space(tag), None)
                     .map(|p| p.created)
             }));
         }
@@ -3760,7 +3785,7 @@ mod tests {
             .publish_space("acme", sample_space("V1"), None)
             .unwrap();
         store
-            .update_space("acme", &first.slug, sample_space("V2"))
+            .update_space("acme", &first.slug, sample_space("V2"), None)
             .unwrap();
 
         let h2 = host();
@@ -4202,7 +4227,7 @@ mod tests {
 
         // An update migrates it forward to the generation layout (same slug/URL).
         store
-            .update_space("acme", &slug, sample_space("Migrated"))
+            .update_space("acme", &slug, sample_space("Migrated"), None)
             .unwrap();
         assert!(
             dir.join("current").is_file(),
@@ -4235,7 +4260,7 @@ mod tests {
         let store = Store::open(&root, host()).unwrap();
         // Migrate to a generation (leaves the stale top-level flat meta/artifacts behind).
         store
-            .update_space("acme", slug, sample_space("current gen"))
+            .update_space("acme", slug, sample_space("current gen"), None)
             .unwrap();
         assert!(dir.join("current").is_file());
         assert!(
@@ -4409,7 +4434,7 @@ mod tests {
 
         // Arm the next post-commit fsync (this thread) to fail, then update in place.
         let guard = fault::arm_commit_fsync_faults(1);
-        let updated = store.update_space("acme", &slug, sample_space("V2"));
+        let updated = store.update_space("acme", &slug, sample_space("V2"), None);
         drop(guard);
         assert!(
             matches!(updated, Err(UpdateError::Io(_))),
@@ -4567,7 +4592,7 @@ mod tests {
             "same key, different tenant → different space"
         );
         assert!(matches!(
-            store.update_space("globex", &retry.slug, sample_space("evil")),
+            store.update_space("globex", &retry.slug, sample_space("evil"), None),
             Err(UpdateError::NoSuchSpace)
         ));
         std::fs::remove_dir_all(&root).ok();

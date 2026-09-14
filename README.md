@@ -59,14 +59,20 @@ cargo install glasspad
 ## Usage
 
 ```bash
-glasspad publish ./myspace                    # publish markdown/HTML using the configured target
+glasspad publish ./myspace                    # publish; repeats update the same hosted URL
 glasspad publish ./report.md --target hosted # override the target for one publish
+glasspad publish ./report.md --new           # intentionally create a new hosted URL
 glasspad loopback serve ./myspace            # run the live-reload server explicitly
 glasspad build ./myspace ./out               # statically render a space (no server)
 glasspad data ./old.csv                      # parse legacy CSV/JSON/mbox data to JSON rows
 glasspad config show --json                  # inspect effective publish configuration
 glasspad doctor --json                       # run read-only diagnostics
 ```
+
+For hosted targets, normal republishing identifies a source by its canonical path and
+updates the existing space in place. Use `--new` to intentionally create a separate
+space, `--space-key` for identity that survives moving the source, or `--update <slug>`
+to adopt an existing URL explicitly (including URLs published before this behavior).
 
 ### Markdown-native spaces
 

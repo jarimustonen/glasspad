@@ -130,17 +130,27 @@ enum Commands {
         title: Option<String>,
         /// Stable space key (hosted target): a re-publish with the same key updates
         /// the space IN PLACE at the same /p/<slug>/ URL (idempotent). Defaults to
-        /// the config `space_key:` value. Absent → a fresh slug each publish.
+        /// the config `space_key:` value. Without an explicit key, Glasspad derives
+        /// stable identity from the source's canonical path.
         #[arg(long)]
         space_key: Option<String>,
+        /// Intentionally create a fresh hosted space even if this source path was
+        /// published before. The returned URL will differ. Mutually exclusive with
+        /// `--space-key` and `--update`.
+        #[arg(long = "new", conflicts_with_all = ["space_key", "update"])]
+        new_space: bool,
         /// Update an EXISTING published space in place by its capability slug (the
         /// `<slug>` in the `/p/<slug>/` URL you already hold), keeping the same URL.
         /// Hosted target, owner-scoped: a slug your key does not own (or one that no
         /// longer exists) fails with `no_such_space` — it never creates a new page.
-        /// Use this to keep a shared link live when you have no `--space-key` set.
-        /// REPLACES the whole space: title/favicon/nav come from THIS publish's
-        /// bundle (a `<path>` with no title clears the old one) — same as a keyed
-        /// re-publish. Mutually exclusive with `--space-key`.
+        /// Use this when source-path identity does not yet apply: for example, the
+        /// source moved, the space was made with `--new`, or it predates automatic
+        /// source identity. A successful update adopts the current source path, so
+        /// later plain publishes without a configured `space_key` keep this URL.
+        /// REPLACES the whole space:
+        /// title/favicon/nav come from THIS publish's bundle (a `<path>` with no
+        /// title clears the old one). Mutually exclusive with `--space-key` and
+        /// `--new`.
         #[arg(long, conflicts_with = "space_key")]
         update: Option<String>,
         /// Loopback TCP port (loopback target). Precedence (AI-first §8): this flag >
@@ -710,13 +720,14 @@ async fn main() {
             template,
             title,
             space_key,
+            new_space,
             update,
             port,
             no_open,
         }) => {
             cli::publish(
-                path, target, server, api_key, template, title, space_key, update, port, no_open,
-                json,
+                path, target, server, api_key, template, title, space_key, new_space, update, port,
+                no_open, json,
             )
             .await
         }

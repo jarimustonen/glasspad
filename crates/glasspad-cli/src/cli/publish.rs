@@ -86,6 +86,33 @@ pub(super) fn classify_publish_path(path: &Path, json: bool) -> PathKind {
     }
 }
 
+/// Derive the default hosted identity from the source's canonical absolute path.
+///
+/// The path itself never leaves the machine: only its SHA-256 digest is sent as the
+/// tenant-scoped `space_key`. Canonicalization makes relative/absolute spellings and
+/// symlink aliases converge. Moving the source deliberately changes its identity;
+/// callers that need identity independent of location can set `--space-key`.
+fn source_space_key(path: &Path, json: bool) -> String {
+    use sha2::{Digest, Sha256};
+
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|e| {
+        exit_error(
+            json,
+            2,
+            "source_identity_failed",
+            &format!(
+                "cannot resolve the canonical source path for {}: {e}",
+                path.display()
+            ),
+            None,
+            None,
+        );
+    });
+    let mut hash = Sha256::new();
+    hash.update(canonical.to_string_lossy().as_bytes());
+    format!("source-path-v1:{:x}", hash.finalize())
+}
+
 /// `glasspad publish <path>` — THE default verb. Resolve the publish target from
 /// config (per-key merge of repo-local `.glasspad.yaml` → home config → the
 /// built-in `loopback` default, with a `--target`/`$GLASSPAD_TARGET` override), then
@@ -104,6 +131,7 @@ pub async fn publish(
     template: Option<String>,
     title: Option<String>,
     space_key: Option<String>,
+    new_space: bool,
     update: Option<String>,
     port: Option<u16>,
     no_open: bool,
@@ -141,7 +169,9 @@ pub async fn publish(
         Target::Loopback => {
             // Hosted-only options on a loopback target are a usage error, not a
             // silent no-op (AI-first strict validation).
-            reject_hosted_flags_on_loopback(&server, &api_key, &title, &space_key, &update, json);
+            reject_hosted_flags_on_loopback(
+                &server, &api_key, &title, &space_key, new_space, &update, json,
+            );
             let port = resolve_port(port, json);
             publish_loopback(path, kind, md_template, port, !no_open, json).await;
         }
@@ -154,6 +184,7 @@ pub async fn publish(
                 md_template,
                 title,
                 space_key,
+                new_space,
                 update,
                 &cfg,
                 no_open,
@@ -171,6 +202,7 @@ pub(super) fn reject_hosted_flags_on_loopback(
     api_key: &Option<String>,
     title: &Option<String>,
     space_key: &Option<String>,
+    new_space: bool,
     update: &Option<String>,
     json: bool,
 ) {
@@ -186,6 +218,9 @@ pub(super) fn reject_hosted_flags_on_loopback(
     }
     if space_key.is_some() {
         offenders.push("--space-key");
+    }
+    if new_space {
+        offenders.push("--new");
     }
     if update.is_some() {
         offenders.push("--update");
@@ -244,6 +279,7 @@ pub(super) async fn publish_hosted(
     template: Option<String>,
     title: Option<String>,
     space_key: Option<String>,
+    new_space: bool,
     update: Option<String>,
     cfg: &config::ResolvedConfig,
     no_open: bool,
@@ -295,20 +331,38 @@ pub(super) async fn publish_hosted(
 
     let server = resolve_server(server, cfg, json);
     let api_key = resolve_api_key(api_key, cfg, json);
-    // `space_key`: flag > $GLASSPAD_SPACE_KEY > config `space_key:`.
-    let space_key = resolve_setting(space_key, "GLASSPAD_SPACE_KEY", cfg.space_key.clone());
+    // `space_key`: flag > $GLASSPAD_SPACE_KEY > config `space_key:`. When none is
+    // configured, normal hosted publish derives a privacy-preserving stable key from
+    // the canonical source path. This makes repeating the documented command update
+    // the same URL. `--new` is the explicit opt-out that intentionally mints a fresh
+    // space; `--update` addresses an existing space directly and adopts the derived key.
+    let configured_space_key =
+        resolve_setting(space_key, "GLASSPAD_SPACE_KEY", cfg.space_key.clone());
 
     // `--update` supersedes any resolved `space_key`: naming a slug to replace means
     // addressing by URL, not by the keyed create-or-update mapping. clap already rejects
     // `--update` + an explicit `--space-key`; here we additionally drop a config/env
     // `space_key` so the two addressing modes never mix on the wire.
-    if update.is_some() && space_key.is_some() {
+    if (update.is_some() || new_space) && configured_space_key.is_some() {
+        let mode = if update.is_some() {
+            "--update"
+        } else {
+            "--new"
+        };
         eprintln!(
-            "note: --update names the target space directly, so the configured space_key is \
+            "note: {mode} selects publish identity explicitly, so the configured space_key is \
              ignored for this publish"
         );
     }
-    let space_key = if update.is_some() { None } else { space_key };
+    let space_key = if new_space {
+        None
+    } else if update.is_some() {
+        // A successful explicit update adopts this canonical source path, so the next
+        // ordinary publish keeps targeting the same URL (including pre-upgrade spaces).
+        Some(source_space_key(&path, json))
+    } else {
+        configured_space_key.or_else(|| Some(source_space_key(&path, json)))
+    };
 
     // Cross-trust credential guard (defense-in-depth): warn loudly when a hosted
     // publish would send an API key that came from the home config / environment to a
@@ -431,8 +485,8 @@ pub(super) fn build_single_page_space(
 ///
 /// When `update` is `Some(slug)`, the bundle is sent as `PUT /api/v1/spaces/<slug>`
 /// instead — an in-place replace of an EXISTING space at that capability slug. That
-/// path never carries `space_key` (the URL slug is the target); the caller has
-/// already cleared `space_key` when `update` is set, and the two are clap-exclusive.
+/// path may carry the derived source key solely to adopt that path for subsequent
+/// ordinary republishes; the URL slug remains the authoritative update target.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn post_space_bundle(
     space: &space::Space,
@@ -483,11 +537,9 @@ pub(super) async fn post_space_bundle(
     if let Some(f) = &space.favicon {
         body.insert("favicon".into(), json!(f));
     }
-    // `--update <slug>` addresses by URL (PUT /api/v1/spaces/<slug>); it never carries
-    // a `space_key`. The keyed create-or-update stays on POST /api/v1/spaces.
-    if update.is_none()
-        && let Some(k) = &space_key
-    {
+    // A normal POST carries its chosen identity. An explicit PUT carries the derived
+    // source identity so a successful update adopts that path for later plain publishes.
+    if let Some(k) = &space_key {
         body.insert("space_key".into(), json!(k));
     }
 

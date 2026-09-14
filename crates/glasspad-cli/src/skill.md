@@ -63,7 +63,7 @@ target: hosted                 # loopback (default) | hosted
 server: https://pad.example.com
 api_key: sk_live_…             # inline, OR an indirection (below)
 template: prose                # default template for markdown pages
-space_key: my-docsite          # hosted: stable slug → idempotent re-publish
+space_key: my-docsite          # optional: stable identity independent of source location
 ```
 
 **API-key indirection.** `api_key` accepts an env var or a key file, not only an
@@ -84,19 +84,26 @@ working directory. Keep credentials in your **home** config: if a repo's
   DNS-rebinding Host guard), opens the browser, and **live-reloads** on file edits.
   Runs until killed — start it backgrounded. The private "show me while I work" view.
 - **`target: hosted`** → uploads the space and returns a public capability-slug URL
-  (`/p/<slug>/…`, `noindex` — "hold the link"). A snapshot; re-run `publish` to
-  update it. Two ways to keep the **same URL** across edits (a "living" doc shared by
-  link):
-  - `--space-key <k>` (or config `space_key:`) — set once; every publish with that
-    key updates **in place**. Create-or-update: the first publish mints the slug,
-    later ones replace it. Best when you plan the living doc up front.
-  - `--update <slug>` — you already published and have the `/p/<slug>/` link; replace
-    that exact space in place, keeping the URL. Owner-scoped and **fail-if-missing**:
-    a slug your key does not own (or one that expired) is `no_such_space`, never a new
-    page. Best when no `space_key` was set at first publish. Mutually exclusive with
-    `--space-key`.
+  (`/p/<slug>/…`, `noindex` — "hold the link"). A snapshot; repeating the same
+  `publish <path>` command updates it **in place at the same URL**. Default identity
+  is derived locally from the source's canonical path; the path itself is not sent.
+  Relative and absolute spellings (and symlink aliases) converge. Moving the source
+  intentionally gives it a new identity.
+  - `--new` — intentionally create a separate space and URL from a source that may
+    have been published before.
+  - `--space-key <k>` (or config `space_key:`) — choose identity independent of the
+    source location. Every publish with that key updates in place; useful across moves
+    or machines.
+  - `--update <slug>` — replace the exact existing `/p/<slug>/` URL, for example
+    after moving the source or to adopt a URL published before automatic source
+    identity existed. A successful update binds the current source path, so later
+    plain publishes without a configured `space_key` keep that URL. Owner-scoped and
+    **fail-if-missing**: a slug your
+    key does not own (or one that expired) is `no_such_space`, never a new page.
+    Mutually exclusive with `--space-key` and `--new`.
 
-  Both are **whole-space replace** (like re-uploading): the title, favicon, nav, and
+  Stable republishing and explicit update are **whole-space replaces** (like
+  re-uploading): the title, favicon, nav, and
   page set come from the publish you run — a `<path>` that no longer declares a title
   clears it, and a page dropped from the bundle 404s at its old sub-URL. Publish the
   complete space each time, not a partial diff.
@@ -107,8 +114,9 @@ The loopback↔hosted asymmetry is intended: loopback is live, hosted is a snaps
 
 **Overrides** (flag > env > config): `--target loopback|hosted` / `$GLASSPAD_TARGET`;
 `--server` / `$GLASSPAD_SERVER`; `--api-key` / `$GLASSPAD_API_KEY`; `--template`;
-`--space-key` / `$GLASSPAD_SPACE_KEY`; `--update <slug>` (hosted, flag-only —
-replace an existing space by its capability slug); `--title`; `--port` (loopback);
+`--space-key` / `$GLASSPAD_SPACE_KEY`; `--new` (hosted, intentionally mint a new
+URL); `--update <slug>` (hosted, flag-only — replace an existing space by its
+capability slug); `--title`; `--port` (loopback);
 `--no-open`. The API key is never printed.
 
 ## Inspect configuration

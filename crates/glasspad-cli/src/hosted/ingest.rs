@@ -537,11 +537,10 @@ fn assemble_space(
     Ok(space)
 }
 
-/// `PUT /api/v1/spaces/{slug}` request: the same space bundle as the POST surface,
-/// **minus** `space_key` — the target is named by the URL slug, not a stable key.
-/// `deny_unknown_fields` so a stray `space_key` (or any mistyped field) is a `400`,
-/// never silently dropped (the update path deliberately does not consult the keyed
-/// mapping — mixing the two addressing modes in one request is a caller error).
+/// `PUT /api/v1/spaces/{slug}` request: the same space bundle as the POST surface.
+/// The URL slug is always the update target; an optional `space_key` only binds that
+/// identity after a successful owner-scoped update, allowing an existing space to be
+/// adopted for later create-or-update publishes.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpaceUpdateRequest {
@@ -555,6 +554,8 @@ pub struct SpaceUpdateRequest {
     title: Option<String>,
     #[serde(default)]
     favicon: Option<String>,
+    #[serde(default)]
+    space_key: Option<String>,
 }
 
 /// `PUT /api/v1/spaces/{slug}` — replace an **existing** space's content in place,
@@ -591,6 +592,25 @@ pub async fn update_space(
         );
     }
 
+    let space_key = match &req.space_key {
+        None => None,
+        Some(k) if k.trim().is_empty() => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "space_key_empty",
+                "space_key must be a non-empty string when provided",
+            );
+        }
+        Some(k) if k.chars().count() > MAX_IDEMPOTENCY_KEY_CHARS => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "space_key_too_long",
+                &format!("space_key exceeds {MAX_IDEMPOTENCY_KEY_CHARS} characters"),
+            );
+        }
+        Some(k) => Some(k.clone()),
+    };
+
     // Ownership is decided ONLY by `Store::update_space`, authoritatively under the
     // mutation lock (a missing / foreign-owned / page-collision slug all → an opaque
     // `NoSuchSpace` → 404). We deliberately do NOT pre-check ownership here: an early
@@ -615,8 +635,10 @@ pub async fn update_space(
     let store = state.store.clone();
     let tenant_id = tenant.0.clone();
     let target = slug.clone();
-    let result =
-        tokio::task::spawn_blocking(move || store.update_space(&tenant_id, &target, space)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        store.update_space(&tenant_id, &target, space, space_key.as_deref())
+    })
+    .await;
     let result = match result {
         Ok(r) => r,
         Err(join) => {

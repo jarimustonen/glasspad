@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Repeating a hosted `glasspad publish <path>` now updates the same space and URL;
+  use `--new` to intentionally create a separate space, or one `--update <slug>` to
+  adopt a URL published before automatic source identity existed.
 ### Fixed
 - Prevented the security regression gate from exiting with SIGPIPE status 141 when an
   early `grep -q` match succeeds under `pipefail`.

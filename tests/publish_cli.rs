@@ -13,14 +13,38 @@
 //! * `.glasspad.yaml` / `$GLASSPAD_TARGET` select the hosted target (asserted via
 //!   the missing-server error, so the tests make no network call).
 
-use std::io::Write;
-use std::net::TcpStream;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_glasspad"))
+}
+
+struct KillOnDrop(Child);
+
+impl std::ops::Deref for KillOnDrop {
+    type Target = Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for KillOnDrop {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.kill();
+        let _ = self.wait();
+    }
 }
 
 /// A unique temp directory for one test (created).
@@ -50,13 +74,98 @@ fn hermetic(cwd: &Path, empty_home: &Path) -> Command {
         .env("XDG_CONFIG_HOME", empty_home)
         .env_remove("GLASSPAD_SERVER")
         .env_remove("GLASSPAD_API_KEY")
-        .env_remove("GLASSPAD_TARGET");
+        .env_remove("GLASSPAD_TARGET")
+        .env_remove("GLASSPAD_SPACE_KEY")
+        .env_remove("GLASSPAD_TEMPLATE")
+        .env_remove("GLASSPAD_PORT");
     c
 }
 
 fn parse(bytes: &[u8]) -> serde_json::Value {
     serde_json::from_slice(bytes)
         .unwrap_or_else(|e| panic!("json parse: {e}\n{}", String::from_utf8_lossy(bytes)))
+}
+
+const HOST_KEY: &str = "publish-test-key-0123456789abcdefghijkl";
+
+fn spawn_host(root: &Path) -> (KillOnDrop, String) {
+    let key_file = write(root, "keys.txt", &format!("tester:{HOST_KEY}\n"));
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let mut child = KillOnDrop(
+        bin()
+            .args(["--json", "host-serve", "--bind", "127.0.0.1:0"])
+            .arg("--api-key-file")
+            .arg(key_file)
+            .arg("--store")
+            .arg(store)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn host-serve"),
+    );
+
+    let logs = Arc::new(Mutex::new(String::new()));
+    let stderr = child.stderr.take().expect("host stderr");
+    let stderr_logs = logs.clone();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stderr).read_to_string(&mut text);
+        *stderr_logs.lock().expect("stderr lock") = text;
+    });
+    let stdout = child.stdout.take().expect("host stdout");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = reader.read_line(&mut line).map(|_| line);
+        let _ = tx.send(result);
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+    });
+    let line = match rx.recv_timeout(Duration::from_secs(15)) {
+        Ok(Ok(line)) if !line.is_empty() => line,
+        result => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "host-serve did not report startup ({result:?}); logs: {:?}",
+                logs.lock().unwrap()
+            );
+        }
+    };
+    let startup: serde_json::Value = serde_json::from_str(&line).expect("host startup JSON");
+    let bind: SocketAddr = startup["bind"].as_str().unwrap().parse().unwrap();
+    (child, format!("http://{bind}"))
+}
+
+fn hosted_publish(
+    cwd: &Path,
+    home: &Path,
+    server: &str,
+    path: &Path,
+    extra: &[&str],
+) -> serde_json::Value {
+    let mut cmd = hermetic(cwd, home);
+    cmd.args([
+        "--json",
+        "publish",
+        "--no-open",
+        "--target",
+        "hosted",
+        "--server",
+        server,
+        "--api-key",
+        HOST_KEY,
+    ])
+    .arg(path)
+    .args(extra);
+    let out = cmd.output().expect("run hosted publish");
+    assert!(
+        out.status.success(),
+        "publish failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    parse(&out.stdout)
 }
 
 fn wait_until(max: Duration, mut cond: impl FnMut() -> bool) -> bool {
@@ -186,6 +295,74 @@ fn config_default_template_does_not_break_html_publish() {
         v["error"]["code"], "missing_server",
         "a config template default must not turn into a template error for .html"
     );
+}
+
+#[test]
+fn repeated_hosted_publish_uses_source_identity_and_new_is_explicit() {
+    let dir = tmp_dir("stable-source");
+    let home = tmp_dir("stable-source-home");
+    let host_root = tmp_dir("stable-source-host");
+    let (_host, server) = spawn_host(&host_root);
+    let page = write(&dir, "page.md", "# First\n");
+
+    // Relative and absolute spellings canonicalize to one source identity.
+    let first = hosted_publish(&dir, &home, &server, Path::new("page.md"), &[]);
+    write(&dir, "page.md", "# Second\n");
+    let repeated = hosted_publish(&dir, &home, &server, &page, &[]);
+    assert_eq!(first["slug"], repeated["slug"]);
+    assert_eq!(first["created"], true);
+    assert_eq!(repeated["created"], false);
+
+    // Moving a source intentionally gives it a new path identity.
+    let moved = dir.join("moved.md");
+    std::fs::rename(&page, &moved).unwrap();
+    let moved_publish = hosted_publish(&dir, &home, &server, &moved, &[]);
+    assert_ne!(moved_publish["slug"], first["slug"]);
+    assert_eq!(moved_publish["created"], true);
+
+    // Creating another space at the same path requires the plainly named explicit path.
+    let fresh = hosted_publish(&dir, &home, &server, &moved, &["--new"]);
+    assert_ne!(fresh["slug"], moved_publish["slug"]);
+    assert_eq!(fresh["created"], true);
+
+    // Explicit update still targets exactly the requested pre-existing URL, even
+    // after the source moved.
+    let slug = first["slug"].as_str().unwrap();
+    let updated = hosted_publish(&dir, &home, &server, &moved, &["--update", slug]);
+    assert_eq!(updated["slug"], first["slug"]);
+    assert_eq!(updated["created"], false);
+    let after_adoption = hosted_publish(&dir, &home, &server, &moved, &[]);
+    assert_eq!(after_adoption["slug"], first["slug"]);
+    assert_eq!(after_adoption["created"], false);
+}
+
+#[test]
+fn new_and_space_key_together_are_rejected_by_clap() {
+    let dir = tmp_dir("new-conflict");
+    let home = tmp_dir("new-conflict-home");
+    let md = write(&dir, "page.md", "# Hi\n");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&md)
+        .args(["--target", "hosted", "--new", "--space-key", "k"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "clap arg conflict → exit 2");
+}
+
+#[test]
+fn new_flag_on_loopback_target_is_rejected() {
+    let dir = tmp_dir("new-loopback");
+    let home = tmp_dir("new-loopback-home");
+    let md = write(&dir, "page.md", "# Hi\n");
+    let out = hermetic(&dir, &home)
+        .args(["--json", "publish"])
+        .arg(&md)
+        .arg("--new")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(parse(&out.stderr)["error"]["code"], "option_not_applicable");
 }
 
 #[test]
