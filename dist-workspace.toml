@@ -7,7 +7,7 @@ members = ["cargo:."]
 # taskfleet release convention.
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.28.2"
+cargo-dist-version = "0.33.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
@@ -40,7 +40,7 @@ hosting = "github"
 # Generate GitHub build-provenance attestations for the release artifacts
 # (`gh attestation verify`) — a native, secret-free supply-chain signal for a CLI
 # whose install path is curl-to-shell / Homebrew. cargo-dist scopes the extra
-# id-token / attestations permissions to the publishing job.
+# id-token / attestations permissions to the artifact-building job.
 github-attestations = true
 
 # Route the macOS build to the operator's self-hosted Apple Silicon runner.
