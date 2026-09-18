@@ -2,13 +2,17 @@
 created: 2026-09-18
 updated: 2026-09-18
 type: chore
-status: in-progress
+status: done
 priority: normal
 provenance: other
 provenance_detail: Taskfleet implementation brief
 source_ref: taskfleet:01m2sm3j8qczvd8ma97zrfg0g8/task:cargo-dist-0.33.0
 originating_run: 01m2sm3j8qczvd8ma97zrfg0g8
 originating_run_kind: spinoff
+closed: 2026-09-18
+commits:
+- hash: 55e6c880ce1a5d754c3633f2e514335e89bfbaad
+  summary: 'chore: upgrade cargo-dist to 0.33.0 Fixes-Issue: @vaguely-depressed-town'
 ---
 
 # Upgrade cargo-dist to 0.33.0
