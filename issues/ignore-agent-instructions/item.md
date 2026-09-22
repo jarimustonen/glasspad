@@ -3,10 +3,12 @@ created: 2026-09-22
 updated: 2026-09-22
 type: bug
 reporter: jari
-status: open
+status: fixed
 priority: normal
 lane: template-rendering
 lane_seq: -100
+closed: 2026-09-22
+closed_by: agent
 ---
 
 # Directory publish rejects agent instruction files
