@@ -1,6 +1,6 @@
 # Design brief: glasspad base template gallery
 
-**Status: DRAFT — topic areas and goals pending maintainer review.**
+**Status: APPROVED — topic areas, goals, and priority order confirmed by the maintainer on 2026-09-22.**
 
 This document is the hand-off package for an external design AI. It defines what to
 design (a set of built-in space templates), the goals each must meet, the hard technical
