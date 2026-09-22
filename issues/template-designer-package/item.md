@@ -47,3 +47,9 @@ The package must distinguish product/design decisions from implementation detail
 ## Relationship
 
 This is the approved preparation stage of `base-template-gallery`. Completing this task does not close the parent gallery feature; external design and later product integration remain in that issue.
+
+## Decisions
+
+### 2026-09-22T14:03:43Z · @jari
+
+Final delivery must also be packaged as a standalone ZIP archive and copied to the Downloads folder on the hauis machine. The archive must contain only the designer handoff package, open cleanly without repository context, and use a descriptive stable filename.
