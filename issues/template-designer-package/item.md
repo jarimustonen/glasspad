@@ -3,11 +3,13 @@ created: 2026-09-22
 updated: 2026-09-22
 type: task
 reporter: jari
-status: in-progress
+status: done
 priority: normal
 related: ['@base-template-gallery']
 lane: template-rendering
 lane_seq: -50
+closed: 2026-09-22
+closed_by: agent
 ---
 
 # Template designer package
