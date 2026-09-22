@@ -119,10 +119,14 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
 - `space.rs` (Wave 2a) — the **space model + directory scanner** (security-
   sensitive). `scan_dir` reads a directory into an immutable `Space` (artifacts +
   `assets/`), all-or-nothing: slug grammar, **reserved-name / collision** hard
-  errors, **symlink rejection** (`lstat` every entry) + canonical-path containment,
-  per-file / per-space **size limits**, extension→**MIME** allowlist, and **title
-  resolution** (a small tag tokenizer, *not* a regex — entity-decoded, length-
-  bounded). `Snapshot` is swapped atomically by `ArtifactHost` so a half-written
+  errors, **symlink rejection** (`lstat` every content entry) + canonical-path
+  containment, per-file / per-space **size limits**, extension→**MIME** allowlist,
+  and **title resolution** (a small tag tokenizer, *not* a regex — entity-decoded,
+  length-bounded). Exact top-level entries named `AGENTS.md` or `CLAUDE.md` are
+  repository metadata and are skipped before file-type inspection (including the
+  common `CLAUDE.md -> AGENTS.md` symlink); every other name retains the ordinary
+  validation, and the exception does not apply under `assets/`. `Snapshot` is
+  swapped atomically by `ArtifactHost` so a half-written
   file is never served. `asset_key_for_request` grammar-checks a request sub-path
   into a key that must exact-match the pre-scanned asset map (traversal is
   structurally impossible — you can only fetch a key that already exists).
