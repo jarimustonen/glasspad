@@ -3,7 +3,7 @@ created: 2026-09-22
 updated: 2026-09-22
 type: task
 reporter: jari
-status: open
+status: in-progress
 priority: normal
 related: ['@base-template-gallery']
 lane: template-rendering
