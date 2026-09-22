@@ -1,7 +1,7 @@
 ---
 name: glasspad
 description: Show rich visual HTML views (dashboards, charts, interactive UIs) to the user in their browser. Use when asked to visualize, plot, chart, dashboard, or "show me" something.
-cli_version: "0.17.4"
+cli_version: "0.17.5"
 schema_version: 1
 ---
 

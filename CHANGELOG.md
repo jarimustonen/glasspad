@@ -11,9 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+<!-- oss-changelog:unreleased-end -->
+
+## [0.17.5] - 2026-09-22
+
+### Fixed
 - Directory publication now ignores top-level `AGENTS.md` and `CLAUDE.md` repository
   instruction entries without relaxing validation for other files or symlinks.
-<!-- oss-changelog:unreleased-end -->
 
 ## [0.17.4] - 2026-09-14
 
@@ -527,6 +531,7 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.17.4...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.17.5...HEAD
+[0.17.5]: https://github.com/jarimustonen/glasspad/compare/v0.17.4...v0.17.5
 [0.17.4]: https://github.com/jarimustonen/glasspad/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/jarimustonen/glasspad/compare/v0.17.2...v0.17.3
