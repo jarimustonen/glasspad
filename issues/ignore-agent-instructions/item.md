@@ -6,6 +6,7 @@ reporter: jari
 status: open
 priority: normal
 lane: template-rendering
+lane_seq: -100
 ---
 
 # Directory publish rejects agent instruction files
