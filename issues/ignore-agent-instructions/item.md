@@ -5,6 +5,7 @@ type: bug
 reporter: jari
 status: open
 priority: normal
+lane: template-rendering
 ---
 
 # Directory publish rejects agent instruction files
