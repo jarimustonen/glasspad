@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- Directory publication now ignores top-level `AGENTS.md` and `CLAUDE.md` repository
+  instruction entries without relaxing validation for other files or symlinks.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.17.4] - 2026-09-14

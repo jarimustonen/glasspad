@@ -298,6 +298,21 @@ fn config_default_template_does_not_break_html_publish() {
 }
 
 #[test]
+fn direct_agent_instruction_markdown_remains_publishable() {
+    // The recognized-name exclusion is directory-scanner metadata only. An explicit
+    // single-file publish retains the established markdown contract.
+    let dir = tmp_dir("direct-agent-instructions");
+    let home = tmp_dir("direct-agent-instructions-home");
+    let host_root = tmp_dir("direct-agent-instructions-host");
+    let (_host, server) = spawn_host(&host_root);
+    let instructions = write(&dir, "AGENTS.md", "# Agent instructions\n\nDirect input.\n");
+
+    let published = hosted_publish(&dir, &home, &server, &instructions, &[]);
+    assert_eq!(published["created"], true);
+    assert!(published["slug"].as_str().is_some());
+}
+
+#[test]
 fn repeated_hosted_publish_uses_source_identity_and_new_is_explicit() {
     let dir = tmp_dir("stable-source");
     let home = tmp_dir("stable-source-home");

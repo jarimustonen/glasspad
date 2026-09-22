@@ -60,6 +60,10 @@ pub const MAX_GROUP_MEMBERS: usize = 512;
 pub const ASSETS_DIR: &str = "assets";
 /// Optional structure-only manifest filename.
 pub const MANIFEST_FILE: &str = "glasspad.yaml";
+/// Repository agent instructions are metadata, not reader-facing space content.
+/// Only exact top-level entry names are ignored; nested assets keep their usual
+/// validation and serving behavior.
+const AGENT_INSTRUCTION_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 
 /// One HTML artifact within a space. `html` is the raw file content served
 /// verbatim on the content route (fragment wrapping is Wave 3a). `title` is the
@@ -565,6 +569,17 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
     entries.sort_by_key(|e| e.file_name());
 
     for entry in &entries {
+        let name = entry.file_name();
+        // Ignore repository-management files by exact entry name before inspecting
+        // their type. In particular, CLAUDE.md is commonly a symlink to AGENTS.md;
+        // it must not be traversed or weaken the rejection of any other symlink.
+        if AGENT_INSTRUCTION_FILES
+            .iter()
+            .any(|ignored| name == *ignored)
+        {
+            continue;
+        }
+
         let path = entry.path();
         let ftype = entry
             .file_type()
@@ -572,7 +587,6 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
         if ftype.is_symlink() {
             return Err(ScanError::Symlink(path));
         }
-        let name = entry.file_name();
         let name = name
             .to_str()
             .ok_or_else(|| ScanError::BadAssetName(path.clone()))?;
@@ -1834,6 +1848,35 @@ mod fs_tests {
             space.asset("assets/sub/logo.svg").unwrap().content_type,
             "image/svg+xml"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn top_level_agent_instructions_are_ignored_before_symlink_validation() {
+        let d = TempDir::new();
+        d.write(
+            "index.md",
+            b"# Published documentation\n\nReader-facing body.\n",
+        );
+        d.write("AGENTS.md", b"SECRET AGENT INSTRUCTIONS\n");
+        std::os::unix::fs::symlink("AGENTS.md", d.path().join("CLAUDE.md")).unwrap();
+
+        let space = scan_dir(d.path()).unwrap();
+
+        assert_eq!(space.artifacts.len(), 1);
+        assert_eq!(space.nav, vec!["index"]);
+        assert_eq!(space.home.as_deref(), Some("index"));
+        assert!(space.assets.is_empty());
+        assert!(space.artifact("AGENTS").is_none());
+        assert!(space.artifact("CLAUDE").is_none());
+        let hosted_payload = space
+            .artifacts
+            .values()
+            .map(|artifact| artifact.html.as_str())
+            .collect::<String>();
+        assert!(!hosted_payload.contains("AGENTS.md"));
+        assert!(!hosted_payload.contains("CLAUDE.md"));
+        assert!(!hosted_payload.contains("SECRET AGENT INSTRUCTIONS"));
     }
 
     #[test]
