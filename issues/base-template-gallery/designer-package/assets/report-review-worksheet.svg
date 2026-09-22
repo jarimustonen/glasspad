@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Report review worksheet placeholder</title>
+  <desc id="desc">A neutral wireframe with fields for reader, decision, effort, evidence, and review date.</desc>
+  <rect width="1200" height="675" fill="#f3f4f6"/>
+  <rect x="90" y="70" width="1020" height="535" rx="20" fill="#ffffff" stroke="#d1d5db" stroke-width="3"/>
+  <text x="140" y="145" font-family="system-ui, sans-serif" font-size="38" font-weight="700" fill="#1a1b25">Report review worksheet</text>
+  <text x="140" y="190" font-family="system-ui, sans-serif" font-size="22" fill="#6b7280">Neutral placeholder artwork supplied with the design brief</text>
+  <g font-family="system-ui, sans-serif" font-size="22" fill="#374151">
+    <text x="140" y="270">Reader and decision</text><rect x="140" y="290" width="920" height="55" rx="8" fill="#f9fafb" stroke="#e5e7eb"/>
+    <text x="140" y="400">Effort and evidence</text><rect x="140" y="420" width="440" height="55" rx="8" fill="#f9fafb" stroke="#e5e7eb"/><rect x="620" y="420" width="440" height="55" rx="8" fill="#f9fafb" stroke="#e5e7eb"/>
+    <text x="140" y="530">Next step and review date</text><rect x="140" y="550" width="920" height="25" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+  </g>
+</svg>
