@@ -6,40 +6,43 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 
 ## Where we are
 
-**0.17.2 is released and live**, verified on crates.io, GitHub Release (12 assets), and the
+**0.17.5 is released and live**, verified on crates.io, GitHub Release (12 assets), and the
 Homebrew formula. The tag-triggered publish and release workflows and `main` CI all completed
-successfully. The tree is clean, `main` is pushed, and no Glasspad worker owns preserved work.
+successfully. The tree is clean and `main` is pushed.
 
-The 2026-08-21..26 work completed the internal follow-ups from the previous handoff and the
-public-repository release pass:
+The 2026-09-22 round delivered two product outcomes:
 
-- 0.17.0 shipped the per-command CLI module split, pure artifact-host extraction into
-  `glasspad-core`, honest hosted-submission acknowledgement state, and the explicit CI-owned
-  publication contract. The package remains deliberately one published crate with two roots.
-- 0.17.1 shipped the contributor-facing code map and issue forms, polished README and producer
-  docs, and migrated current release-tooling references to Shipshape. The repository's public
-  front door and community profile are now complete.
-- 0.17.2 fixed the installed `doctor` bundle-version mismatch. A test now requires bundled
-  `skill.md` metadata to equal `CARGO_PKG_VERSION`; future release bumps must update both before
-  running the full gate.
+- Directory publication now ignores top-level `AGENTS.md` and `CLAUDE.md` instruction entries
+  without weakening invalid-name, symlink, or traversal validation. This was reproduced from a
+  real documentation publish, passed the full Rust/publish/security gate, and shipped in 0.17.5.
+- Jari approved the six template-gallery areas and priority order: `prose`, `dashboard`,
+  `report`, `board`, `index`, and `table`. A standalone 29-file designer handoff with six briefs,
+  realistic samples, technical/visual references, and four AVIF baseline captures now lives at
+  `issues/base-template-gallery/designer-package/`. The verified ZIP was copied to
+  `hauis:~/Downloads/glasspad-template-gallery-designer-package.zip`.
+
+One superseded session artifact still needs an explicit operator disposition before terminal
+handoff can complete: run `01m34pv0px4namermkajqja374` retains a clean worktree/branch with three
+unmerged commits. Its content was already reviewed, harvested, fully validated, released, and
+superseded by the landed recovery run; Taskfleet nevertheless requires explicit discard approval
+rather than silently deleting preserved work.
 
 ## ▶ Start here
 
-Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
-orientation only. All open non-epic work has now been human-dispositioned and is represented in
-the DAG. The next product direction is template and presentation quality:
+First resolve the explicitly recorded preserved-run cleanup above, then run
+`issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
+orientation only.
 
-- Clarify that hosted full documents are verbatim **inside the artifact iframe**, while the
-  trusted Glasspad space shell remains around them. This is a small documentation correction,
-  not a request for a new chrome-free hosting mode.
-- Fix the base template header: it currently ignores day/night theme changes and repeats the
-  article/text title.
-- Continue **`base-template-gallery`** from its draft design brief. Jari still needs to confirm
-  or revise the proposed six topic areas (`prose`, `dashboard`, `report`, `board`, `index`,
-  `table`); then complete the example/background package for the external design AI and proceed
-  with integration.
+The next product step is external design, not implementation invention:
 
-One non-repository manual task remains: set the GitHub social-preview image in the web UI
+- Give the verified ZIP to the external designer.
+- Ask for the six fragment designs, both-theme previews, usage notes, optional enhancement
+  classes, and rationale specified by the package's `RETURN-CHECKLIST.md`.
+- When the designer returns the work, review it against the approved briefs and hard platform
+  contract, then continue `base-template-gallery` with integration and validation. The parent
+  feature deliberately remains open; the package-preparation task is done.
+
+One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
 
 ## Standing lessons
