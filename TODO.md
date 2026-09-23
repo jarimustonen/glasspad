@@ -21,19 +21,17 @@ The 2026-09-22 round delivered two product outcomes:
   `issues/base-template-gallery/designer-package/`. The verified ZIP was copied to
   `hauis:~/Downloads/glasspad-template-gallery-designer-package.zip`.
 
-One superseded session artifact still needs an explicit operator disposition before terminal
-handoff can complete: run `01m34pv0px4namermkajqja374` retains a clean worktree/branch with three
-unmerged commits. Its content was already reviewed, harvested, fully validated, released, and
-superseded by the landed recovery run; Taskfleet nevertheless requires explicit discard approval
-rather than silently deleting preserved work.
+The superseded failed worker's retained branch and worktree were explicitly discarded after its
+identical reviewed content had been harvested, fully validated, and released. No session-owned
+work remains.
 
 ## ▶ Start here
 
-First resolve the explicitly recorded preserved-run cleanup above, then run
-`issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
-orientation only.
+Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
+orientation only. `relative-markdown-assets` is currently unscheduled context awaiting a human
+lane-or-close decision; it is not accepted, scheduled, or executable work.
 
-The next product step is external design, not implementation invention:
+The next accepted product step is external design, not implementation invention:
 
 - Give the verified ZIP to the external designer.
 - Ask for the six fragment designs, both-theme previews, usage notes, optional enhancement
