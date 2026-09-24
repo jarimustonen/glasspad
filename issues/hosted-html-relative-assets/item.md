@@ -3,7 +3,7 @@ created: 2026-09-24
 updated: 2026-09-24
 type: bug
 reporter: jari
-status: open
+status: in-progress
 priority: high
 lane: hosted-asset-routes
 ---
