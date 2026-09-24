@@ -3,10 +3,12 @@ created: 2026-09-23
 updated: 2026-09-24
 type: bug
 reporter: jari
-status: in-progress
+status: fixed
 priority: normal
 lane: artifact-assets
 collision: [crates/glasspad-cli/src/artifact_host/space.rs, crates/glasspad-cli/src/hosted/mod.rs]
+closed: 2026-09-24
+closed_by: pi
 ---
 
 # Relative Markdown assets break in hosted artifacts
@@ -64,13 +66,13 @@ Markdown-authored relative image/asset references resolve to the corresponding a
 
 A fix must preserve the null-origin sandbox, CSP and same-space navigation contract. Likely approaches are renderer-aware rewriting of local asset URLs to `/p/<space>/assets/...` or an equivalent safe routing/base mechanism; do not weaken the path allowlist or expose arbitrary files.
 
-## Acceptance criteria
+## Acceptance Criteria
 
-- [ ] A Markdown page containing `![alt](./assets/image.avif)` renders the uploaded image inline in hosted mode.
-- [ ] The equivalent loopback publish still works.
-- [ ] Relative same-space page navigation retains its existing bridge behavior.
-- [ ] Traversal, encoded traversal, symlink and cross-space asset access remain denied.
-- [ ] Documentation and a deterministic hosted/loopback regression test cover Markdown image and ordinary asset references.
+- [x] A Markdown page containing `![alt](./assets/image.avif)` renders the uploaded image inline in hosted mode (verified against a local hosted server).
+- [x] The equivalent loopback publish still works.
+- [x] Relative same-space page navigation retains its existing bridge behavior.
+- [x] Traversal, encoded traversal, symlink and cross-space asset access remain denied.
+- [x] Documentation and a deterministic hosted/loopback regression test cover Markdown image and ordinary asset references.
 
 ## Quick Test
 
