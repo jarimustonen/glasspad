@@ -1,10 +1,12 @@
 ---
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
 type: bug
 reporter: jari
 status: open
 priority: normal
+lane: artifact-assets
+collision: [crates/glasspad-cli/src/artifact_host/space.rs, crates/glasspad-cli/src/hosted/mod.rs]
 ---
 
 # Relative Markdown assets break in hosted artifacts
