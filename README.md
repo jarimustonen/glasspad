@@ -78,7 +78,7 @@ to adopt an existing URL explicitly (including URLs published before this behavi
 
 Markdown files can sit alongside HTML in a space; `publish`, `loopback serve`, and
 `build` render them through the built-in prose template or a template selected in
-`glasspad.yaml` (`prose`, `dashboard`, `report`, or `board`). They retain the same
+`glasspad.yaml` (`prose`, `dashboard`, `report`, `board`, or `index`). They retain the same
 null-origin sandbox as HTML artifacts. The built-in
 prose layout uses a centered reading column, optional italic-only byline immediately
 after the title (detected with JavaScript), larger opening paragraph, and an "On this page" rail for two or more
@@ -90,6 +90,7 @@ paragraph directly after H1; custom templates keep their own styles and renderin
 behavior. The CSS-only `report` layout keeps narrative readable, tables locally
 scrollable, and provides an ink-light print layout; wide-table PDF fit is best-effort.
 The `board` layout groups H2 sections into read-only status lanes with text, glyph and colour; without JavaScript the headings and lists remain in source order. It infers statuses from English, Finnish, Swedish and German headings; put `gp-status-done|next|blocked|future` or `data-status="done|next|blocked|future"` on an authored section or its H2 for language-neutral status (including wide diagram/table lanes). Unknown headings remain neutral; owner metadata requires `owner: Name:` after a bold task title (at the start of its description).
+The `index` layout presents grouped Markdown link lists as cards: the first group is featured, each first link is a native full-card destination, and any subsequent links remain separate. A small optional script tidies description separators; navigation works without JavaScript. Use `index.md` for an authored landing page; this template does not change the automatically generated landing page. As with every `glasspad.yaml` template, `template: index` styles **all** Markdown pages in that space, not only `index.md`. To style only the front page, render it separately with `glasspad render index.md --template index` and publish the resulting HTML instead of the source `index.md` alongside the other pages.
 Relative Markdown image paths are not rewritten or hosted automatically.
 For glossary autolinks, cross-references, and custom semantic link styling, see
 [Markdown preprocessing](docs/markdown-preprocessing.md).

@@ -1,0 +1,184 @@
+<style>
+/* Glasspad built-in template: index — a space's navigation front page.
+   Link lists under headings become destination cards; pure CSS, links stay links. */
+.gp-index {
+  max-width: 64rem;
+  margin-inline: auto;
+  padding-block: clamp(0.5rem, 3vw, 2.5rem) 3rem;
+}
+.gp-index > h1 {
+  margin: 0 0 0.75rem;
+  font-size: clamp(1.75rem, 1.3rem + 1.6vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.gp-index > h1 + p {
+  max-width: 40rem;
+  margin: 0 0 2.5rem;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: var(--gp-text-secondary);
+  text-wrap: pretty;
+}
+.gp-index > h1 + p strong { color: var(--gp-text); }
+
+.gp-index > h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 2.25rem 0 0.875rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gp-text-muted);
+}
+.gp-index > h2::after { content: ""; flex: 1; border-top: 1px solid var(--gp-border); }
+.gp-index > :is(p, blockquote, ol, h3) { max-width: 40rem; }
+.gp-index > p { font-size: 0.875rem; color: var(--gp-text-secondary); }
+.gp-index a:focus-visible { outline: 2px solid var(--gp-focus); outline-offset: 2px; border-radius: 2px; }
+
+/* Destination cards: top-level unordered lists. A leading link is the destination. */
+.gp-index > ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+.gp-index > ul > li {
+  position: relative;
+  margin: 0;
+  padding: 0.875rem 2.5rem 0.875rem 1rem;
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-border);
+  border-radius: 8px;
+  box-shadow: var(--gp-shadow);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--gp-text-secondary);
+  overflow-wrap: anywhere;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.gp-index > ul > li > a:first-child {
+  display: block;
+  margin-bottom: 0.125rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--gp-accent);
+  text-decoration: none;
+}
+/* Whole card is the link's hit area; the <a> remains the only interactive element. */
+.gp-index > ul > li > a:first-child::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.gp-index > ul > li:has(> a:first-child)::before {
+  content: "\2192" / "";
+  position: absolute;
+  top: 0.875rem;
+  inset-inline-end: 1rem;
+  color: var(--gp-text-faint);
+  transition: color 0.12s ease;
+}
+/* Keep secondary links and authored controls above the stretched destination link. */
+.gp-index > ul > li :is(a:not(:first-child), button, input, select, textarea, summary, label, [tabindex]) {
+  position: relative;
+  z-index: 1;
+}
+.gp-index > ul > li:hover { background: var(--gp-surface-hover); border-color: var(--gp-accent-border); }
+.gp-index > ul > li:hover > a:first-child { text-decoration: underline; text-underline-offset: 0.15em; }
+.gp-index > ul > li:hover::before { color: var(--gp-accent); }
+@supports selector(:has(a)) {
+  .gp-index > ul > li > a:first-child:focus-visible { outline: none; }
+  .gp-index > ul > li:has(> a:first-child:focus-visible) {
+    outline: 2px solid var(--gp-focus);
+    outline-offset: 2px;
+    border-color: var(--gp-accent-border);
+  }
+}
+
+/* Primary destinations: the first group, or an explicit .gp-featured list/item. */
+.gp-index > h2:first-of-type + ul,
+.gp-index > ul.gp-featured { grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); }
+.gp-index > h2:first-of-type + ul > li,
+.gp-index > ul.gp-featured > li,
+.gp-index > ul > li.gp-featured {
+  padding: 1.125rem 2.75rem 1.125rem 1.25rem;
+  background: var(--gp-accent-soft);
+  border-color: var(--gp-accent-border);
+}
+.gp-index > h2:first-of-type + ul > li > a:first-child,
+.gp-index > ul.gp-featured > li > a:first-child,
+.gp-index > ul > li.gp-featured > a:first-child { font-size: 1.0625rem; margin-bottom: 0.25rem; }
+.gp-index > h2:first-of-type + ul > li::before,
+.gp-index > ul.gp-featured > li::before { top: 1.125rem; inset-inline-end: 1.25rem; }
+
+.gp-index .gp-meta {
+  display: block;
+  margin-top: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--gp-text-muted);
+}
+.gp-index li .gp-chip { position: relative; z-index: 1; margin-top: 0.375rem; font-size: 0.75rem; }
+
+.gp-index > blockquote {
+  margin: 1rem 0 0;
+  padding: 0.75rem 1rem;
+  background: var(--gp-surface-alt);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  color: var(--gp-text-secondary);
+}
+.gp-index > blockquote > :last-child { margin-bottom: 0; }
+
+@media (max-width: 30rem) {
+  body { padding: 1rem; }
+  .gp-index > h1 + p { font-size: 1rem; margin-bottom: 2rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gp-index > ul > li, .gp-index > ul > li::before { transition: none; }
+}
+
+@media print {
+  :root, :root[data-theme] {
+    --gp-bg: #fff; --gp-surface: #fff; --gp-surface-alt: #f4f4f4; --gp-surface-hover: #fff;
+    --gp-text: #111; --gp-text-secondary: #333; --gp-text-muted: #555; --gp-text-faint: #777;
+    --gp-accent: #111; --gp-accent-hover: #111; --gp-accent-soft: #fff; --gp-accent-border: #ccc;
+    --gp-accent-tag: #eee; --gp-accent-text: #111;
+    --gp-border: #ccc; --gp-border-subtle: #e2e2e2; --gp-border-strong: #999;
+    --gp-code-text: #111; --gp-shadow: none; --gp-chart-bg: transparent;
+  }
+  body { background: #fff; padding: 0; }
+  .gp-index > ul { display: block; }
+  .gp-index > ul > li,
+  .gp-index > h2:first-of-type + ul > li { margin: 0 0 6pt; padding: 6pt 0; border: 0; border-bottom: 1px solid #ccc; border-radius: 0; break-inside: avoid; }
+  .gp-index > ul > li::before { display: none; }
+  .gp-index > ul > li > a:first-child::after {
+    content: "  " attr(href);
+    position: static;
+    font-size: 0.8em;
+    font-weight: 400;
+    color: #555;
+  }
+}
+</style>
+<div class="gp-index">
+{{content}}
+</div>
+<script>
+/* Optional tidy-up: drop the ": " separator between a destination link and its
+   description, since the card already puts them on separate lines. */
+(function () {
+  var root = document.currentScript && document.currentScript.previousElementSibling;
+  if (!root || !root.classList || !root.classList.contains('gp-index')) return;
+  [].forEach.call(root.querySelectorAll(':scope > ul > li > a:first-child'), function (a) {
+    var t = a.nextSibling;
+    if (a.parentNode.firstChild === a && t && t.nodeType === 3) t.nodeValue = t.nodeValue.replace(/^\s*[:\u2013\u2014-]\s*/, '');
+  });
+})();
+</script>

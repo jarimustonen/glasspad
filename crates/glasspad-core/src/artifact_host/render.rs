@@ -28,7 +28,7 @@
 //! lives inside the artifact's OWN fragment, so its `#anchor` links resolve natively
 //! inside the null-origin sandbox — no shell involvement, no new postMessage surface,
 //! CSP unchanged. Heading text is untrusted and reaches the rail only HTML-escaped.
-//! Every other template (`dashboard`, `report`, custom) is the unchanged plain splice.
+//! Every other template (`dashboard`, `report`, `board`, `index`, custom) is the unchanged plain splice.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -39,10 +39,10 @@ use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, 
 /// braces is tolerated (`{{ content }}` == `{{content}}`); see [`apply_template`].
 pub const PLACEHOLDER: &str = "{{content}}";
 
-/// A built-in template name (`--template prose|dashboard|report|board`). Public so the CLI can
+/// A built-in template name (`--template prose|dashboard|report|board|index`). Public so the CLI can
 /// report which built-in resolved and reject an unknown name with an `expected`
 /// allowlist (AI-first §10).
-pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard", "report", "board"];
+pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard", "report", "board", "index"];
 
 /// The default template when `--template` is omitted: the reading theme.
 pub const DEFAULT_TEMPLATE: &str = "prose";
@@ -54,6 +54,7 @@ const PROSE_TEMPLATE: &str = include_str!("templates/prose.html");
 const DASHBOARD_TEMPLATE: &str = include_str!("templates/dashboard.html");
 const REPORT_TEMPLATE: &str = include_str!("templates/report.html");
 const BOARD_TEMPLATE: &str = include_str!("templates/board.html");
+const INDEX_TEMPLATE: &str = include_str!("templates/index.html");
 
 /// Resolve a built-in template name to its HTML fragment, or `None` if the name is
 /// not a built-in. All fragments carry exactly one `{{content}}` and are
@@ -66,12 +67,14 @@ const BOARD_TEMPLATE: &str = include_str!("templates/board.html");
 /// * `dashboard` — a responsive metrics/card composition with a no-script column.
 /// * `report` — a CSS-only narrative report with a print layout.
 /// * `board` — status lanes with progressive enhancement and a ruled no-script fallback.
+/// * `index` — linked destination cards, readable without JavaScript.
 pub fn builtin_template(name: &str) -> Option<&'static str> {
     match name {
         "prose" => Some(PROSE_TEMPLATE),
         "dashboard" => Some(DASHBOARD_TEMPLATE),
         "report" => Some(REPORT_TEMPLATE),
         "board" => Some(BOARD_TEMPLATE),
+        "index" => Some(INDEX_TEMPLATE),
         _ => None,
     }
 }
@@ -520,7 +523,10 @@ mod tests {
     #[test]
     fn builtin_report_is_a_plain_splice_and_valid_fragment() {
         let t = builtin_template("report").unwrap();
-        assert_eq!(BUILTIN_NAMES, &["prose", "dashboard", "report", "board"]);
+        assert_eq!(
+            BUILTIN_NAMES,
+            &["prose", "dashboard", "report", "board", "index"]
+        );
         assert_eq!(t.matches(PLACEHOLDER).count(), 1);
         assert_eq!(t.matches("<style>").count(), 1);
         assert!(!t.contains("<script"));
@@ -532,6 +538,24 @@ mod tests {
         assert!(body.contains("<a href=\"https://example.org\">link</a>"));
         assert!(!body.contains("gp-toc"));
         assert_eq!(body, apply_template(t, &render_markdown(md)).unwrap());
+    }
+
+    #[test]
+    fn builtin_index_preserves_native_links_and_plain_markdown() {
+        let t = builtin_template("index").unwrap();
+        assert_eq!(t.matches(PLACEHOLDER).count(), 1);
+        assert_eq!(t.matches("<style>").count(), 1);
+        assert_eq!(t.matches("<script>").count(), 1);
+        assert!(!t.contains("<html"));
+        let md = "# Team operations workspace\n\nIntro.\n\n## Start here\n\n- [Operations memo](./prose.md): Decision notes.\n\n## Planning and delivery\n\n- [Consolidation review](./report.md): Analysis.\n";
+        let body = render_to_body(md, t).unwrap();
+        assert_eq!(body, apply_template(t, &render_markdown(md)).unwrap());
+        assert!(body.contains("<div class=\"gp-index\">\n<h1>Team operations workspace</h1>"));
+        assert!(body.contains("<h2>Start here</h2>"));
+        assert!(body.contains("<h2>Planning and delivery</h2>"));
+        assert!(body.contains("<a href=\"./prose.md\">Operations memo</a>"));
+        assert!(body.contains("<a href=\"./report.md\">Consolidation review</a>"));
+        assert!(!body.contains("gp-toc"));
     }
 
     #[test]

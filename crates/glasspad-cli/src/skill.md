@@ -34,7 +34,8 @@ fails with an informative error (never an interactive prompt).
   a null-origin sandboxed artifact iframe. Authored HTML controls the document inside
   that iframe, not the top-level browser tab.
 - Pick the Markdown theme per space in an optional per-space `glasspad.yaml` with
-  `template: prose` (default reading theme), `template: dashboard` (card look), or
+  `template: prose` (default reading theme), `template: dashboard` (card look),
+  `template: report`, `template: board`, `template: index` (linked directory), or
   a relative path to a producer-owned fragment template such as
   `template: templates/brand.html`. A custom template has exactly one `{{content}}`
   slot and is applied to every Markdown page; it must be a regular UTF-8 fragment

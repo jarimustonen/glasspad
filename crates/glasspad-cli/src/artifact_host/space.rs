@@ -670,7 +670,7 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
     let template = resolve_space_template(template_ref.as_deref(), &root, &canon_root, &mut total)?;
 
     // --- render buffered markdown pages through the resolved template -------
-    // The template is always a fragment: built-in (`prose` default or `dashboard`)
+    // The template is always a fragment: built-in (`prose` default, `dashboard`, `report`, `board`, or `index`)
     // or a producer file buffered into this snapshot. The rendered body flows through
     // the SAME serve path as an `.html` artifact: the content route sets the frozen
     // CSP/sandbox headers and `wrap::render_artifact` adds base.css + bridge.js.
@@ -2314,6 +2314,22 @@ mod fs_tests {
                 .contains(r#"class="gp-dash""#)
         );
         assert!(!space.artifact("index").unwrap().html.contains("gp-prose"));
+    }
+
+    #[test]
+    fn manifest_index_template_renders_sibling_links_without_toc() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Directory\n\n## Start here\n\n- [Guide](./guide.md): Read this.\n\n## More\n\n- [Extra](./extra.md): Next.\n");
+        d.write("guide.md", b"# Guide\n");
+        d.write("extra.md", b"# Extra\n");
+        d.write("glasspad.yaml", b"template: index\n");
+        let space = scan_dir(d.path()).unwrap();
+        let html = &space.artifact("index").unwrap().html;
+        assert!(html.contains("<div class=\"gp-index\">"));
+        assert!(html.contains("<a href=\"./guide.md\">Guide</a>"));
+        assert!(html.contains("<a href=\"./extra.md\">Extra</a>"));
+        assert!(!html.contains("gp-toc"));
+        assert!(space.artifact("guide").is_some());
     }
 
     #[test]
