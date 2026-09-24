@@ -113,13 +113,10 @@ fn render_markdown_with_asset_base(md: &str, content_route: bool) -> String {
 /// or mount prefix. Never use `<base>`: it changes anchor and navigation semantics.
 /// Raw HTML, page links, external/data URLs and malformed paths are untouched.
 fn rewrite_asset_event(mut event: Event<'_>) -> Event<'_> {
-    match &mut event {
-        Event::Start(Tag::Image { dest_url, .. } | Tag::Link { dest_url, .. }) => {
-            if let Some(url) = space_asset_destination(dest_url) {
-                *dest_url = CowStr::from(url);
-            }
-        }
-        _ => {}
+    if let Event::Start(Tag::Image { dest_url, .. } | Tag::Link { dest_url, .. }) = &mut event
+        && let Some(url) = space_asset_destination(dest_url)
+    {
+        *dest_url = CowStr::from(url);
     }
     event
 }
