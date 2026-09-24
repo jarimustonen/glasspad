@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.18.3] - 2026-09-24
+
+### Fixed
+- Hosted HTML pages now load authored relative images, stylesheets, and scripts through the same-space asset route without changing stored pages or weakening sandbox protections.
+
 ## [0.18.2] - 2026-09-24
 
 ### Changed
