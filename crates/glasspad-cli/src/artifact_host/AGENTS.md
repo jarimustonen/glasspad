@@ -79,7 +79,7 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   inside the null-origin sandbox — **no shell involvement, no postMessage surface, CSP
   unchanged**. Heading text is untrusted and reaches the rail only server-side
   HTML-escaped. Fewer than 2 H2/H3 (or a non-prose / full-document artifact) degrades to
-  the plain prose fragment (no empty rail). `dashboard`, `report`, `board`, and `index` use the same plain splice; custom templates remain unchanged.
+  the plain prose fragment (no empty rail). `dashboard`, `report`, `board`, `index`, and `table` use the same plain splice; custom templates remain unchanged.
   **Diagrams (markdown-diagrams):** authored **inline SVG** is the supported diagram
   path — the producer owns SVG generation and embeds it; the `.md`/template renderer
   passes raw HTML/SVG through verbatim (no strip, no rewrite, **no sanitization**), so a
@@ -132,7 +132,7 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   structurally impossible — you can only fetch a key that already exists).
   **Markdown-native spaces (Gap 2):** a top-level `.md`/`.markdown` file is a page
   too — `scan_dir` buffers it, then renders it through a built-in fragment template
-  (`render::render_to_body`; `prose` default, `dashboard`, `report`, `board`, or `index`, selected per-space via
+  (`render::render_to_body`; `prose` default, `dashboard`, `report`, `board`, `index`, or `table`, selected per-space via
   `glasspad.yaml`'s `template:` key) into an artifact **body** (slug = stem), which
   then flows through the identical serve path as an `.html` artifact — so the
   security boundary is unchanged (the template governs only the body; the CSP /

@@ -1,0 +1,210 @@
+<style>
+/* Glasspad built-in template: table — data-first pages.
+   Any GFM table becomes a bounded scroll region with a sticky header row and
+   sticky first column. Script adds a labelled, focusable region and wrap hints. */
+.gp-table > h1 { margin: 0 0 0.375rem; font-size: 1.5rem; letter-spacing: -0.015em; }
+.gp-table > h1 + p { margin: 0 0 1.25rem; font-size: 0.8125rem; color: var(--gp-text-secondary); }
+.gp-table > :is(p, ul, ol, blockquote, h2, h3, h4) { max-width: 48rem; }
+.gp-table > h2 {
+  margin: 2rem 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gp-text-muted);
+}
+.gp-table > p,
+.gp-table > ul,
+.gp-table > ol { font-size: 0.8125rem; color: var(--gp-text-secondary); }
+.gp-table > ul,
+.gp-table > ol { padding-inline-start: 1.25rem; }
+.gp-table > :is(ul, ol) li { margin: 0.25rem 0; }
+.gp-table > :is(ul, ol) strong { color: var(--gp-text); }
+.gp-table a { text-decoration: underline; text-decoration-color: var(--gp-accent-border); text-underline-offset: 0.15em; }
+.gp-table a:hover { text-decoration-color: currentColor; }
+.gp-table a:focus-visible { outline: 2px solid var(--gp-focus); outline-offset: 2px; border-radius: 2px; }
+
+/* Scroll region (script adds the labelled, focusable wrapper). */
+.gp-table-scroll {
+  overflow: auto;
+  max-height: calc(100vh - 3rem);
+  margin: 0 0 0.5rem;
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-border);
+  border-radius: 8px;
+  box-shadow: var(--gp-shadow);
+  overscroll-behavior-x: contain;
+}
+/* No-script fallback: no scroll container (it would have no keyboard entry),
+   so the table fits the width and cells wrap. Header still sticks to the viewport. */
+.gp-table:not([data-gp-enhanced]) table {
+  display: table;
+  width: 100%;
+  margin: 0 0 0.5rem;
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-border);
+  border-radius: 8px;
+}
+.gp-table:not([data-gp-enhanced]) :is(th, td) { white-space: normal; overflow-wrap: anywhere; }
+.gp-table-scroll:focus-visible { outline: 2px solid var(--gp-focus); outline-offset: 2px; }
+.gp-table > .gp-table-meta {
+  max-width: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  justify-content: space-between;
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--gp-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.gp-table-hint[hidden] { display: none; }
+
+.gp-table table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.gp-table-scroll table { width: 100%; }
+.gp-table th,
+.gp-table td {
+  padding: 0.5rem 0.625rem;
+  border-bottom: 1px solid var(--gp-border);
+  text-align: start;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.gp-table [align="right"] { text-align: right; }
+.gp-table [align="center"] { text-align: center; }
+.gp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--gp-surface-alt);
+  border-bottom: 1px solid var(--gp-border-strong);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--gp-text-secondary);
+  vertical-align: bottom;
+}
+.gp-table tbody tr { background: var(--gp-surface); }
+.gp-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--gp-surface-alt) 45%, var(--gp-surface)); }
+.gp-table tbody tr:hover { background: var(--gp-surface-hover); }
+.gp-table tbody tr:last-child > * { border-bottom: 0; }
+
+/* Row identity: sticky first column (opt out with .gp-no-sticky). */
+.gp-table[data-gp-enhanced] :is(thead, tbody) tr > :first-child { position: sticky; left: 0; box-shadow: inset -1px 0 0 var(--gp-border); }
+.gp-table thead tr > :first-child { z-index: 3; }
+.gp-table tbody tr > :first-child { z-index: 1; background: inherit; font-weight: 600; color: var(--gp-text); }
+.gp-table[data-gp-enhanced] tbody tr:hover > :first-child { box-shadow: inset 2px 0 0 var(--gp-accent), inset -1px 0 0 var(--gp-border); }
+.gp-table[data-gp-enhanced] .gp-no-sticky :is(thead, tbody) tr > :first-child,
+.gp-table[data-gp-enhanced] .gp-no-sticky tbody tr:hover > :first-child { position: static; box-shadow: none; }
+
+/* Long text columns wrap (script marks them; last column without script). */
+.gp-table td.gp-col-wrap,
+.gp-table th.gp-col-wrap {
+  white-space: normal;
+  min-width: 11rem;
+  max-width: 24rem;
+  overflow-wrap: break-word;
+}
+.gp-table td code { font-size: 0.75rem; white-space: inherit; word-break: break-all; }
+.gp-table td .gp-chip { white-space: nowrap; }
+
+/* Optional density */
+.gp-table .gp-compact :is(th, td) { padding: 0.3125rem 0.5rem; }
+.gp-table .gp-table-note,
+.gp-table-scroll + p { font-size: 0.75rem; color: var(--gp-text-muted); }
+
+@media (max-width: 30rem) { body { padding: 1rem; } }
+
+@page { size: landscape; margin: 10mm 10mm 12mm; }
+@media print {
+  :root, :root[data-theme] {
+    --gp-bg: #fff; --gp-surface: #fff; --gp-surface-alt: #f2f2f2; --gp-surface-hover: #fff;
+    --gp-text: #111; --gp-text-secondary: #333; --gp-text-muted: #555; --gp-text-faint: #777;
+    --gp-accent: #111; --gp-accent-hover: #111; --gp-accent-soft: #fff; --gp-accent-border: #999;
+    --gp-accent-tag: #eee; --gp-accent-text: #111;
+    --gp-border: #ccc; --gp-border-subtle: #e2e2e2; --gp-border-strong: #777;
+    --gp-code-text: #111; --gp-shadow: none; --gp-chart-bg: transparent;
+  }
+  body { background: #fff; padding: 0; }
+  .gp-table-scroll,
+  .gp-table:not([data-gp-enhanced]) table { overflow: visible; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+  .gp-table :is(th, td) { overflow-wrap: anywhere; }
+  .gp-table table { display: table; width: 100%; font-size: 7.5pt; border-collapse: collapse; }
+  .gp-table thead { display: table-header-group; }
+  .gp-table tr { break-inside: avoid; }
+  .gp-table :is(th, td) { position: static !important; box-shadow: none !important; white-space: normal; min-width: 0; padding: 3pt 2pt; }
+  .gp-table thead th { font-size: 7pt; letter-spacing: 0; }
+  .gp-table :is(th, td).gp-col-wrap { min-width: 0; max-width: none; }
+  .gp-table-hint { display: none; }
+  .gp-table > h2 { break-after: avoid; }
+}
+</style>
+<div class="gp-table">
+{{content}}
+</div>
+<script>
+/* Progressive enhancement: wrap each table in a labelled, keyboard-focusable
+   scroll region; mark long-text columns to wrap; keep focused cells clear of the
+   sticky header/column via scroll-padding. DOM moves and text nodes only. */
+(function () {
+  var root = document.currentScript && document.currentScript.previousElementSibling;
+  if (!root || !root.classList || !root.classList.contains('gp-table')) root = document.querySelector('.gp-table');
+  if (!root || root.hasAttribute('data-gp-enhanced')) return;
+  [].forEach.call(root.querySelectorAll('table'), function (t) {
+    if (t.closest('.gp-table-scroll')) return;
+    var label = t.caption && t.caption.textContent.trim();
+    for (var p = t.previousElementSibling; !label && p; p = p.previousElementSibling) {
+      if (/^H[1-4]$/.test(p.tagName)) label = p.textContent.trim();
+    }
+    var wrap = document.createElement('div');
+    wrap.className = 'gp-table-scroll';
+    wrap.tabIndex = -1;
+    wrap.setAttribute('role', 'region');
+    wrap.setAttribute('aria-label', (label || 'Data table') + ' (scrollable)');
+    var rows = t.tBodies.length ? [].reduce.call(t.tBodies, function (n, b) { return n + b.rows.length; }, 0) : t.rows.length;
+    var cols = t.rows[0] ? t.rows[0].cells.length : 0;
+    var meta = document.createElement('p');
+    meta.className = 'gp-table-meta';
+    var count = document.createElement('span');
+    count.textContent = rows + ' rows \u00b7 ' + cols + ' columns';
+    var hint = document.createElement('span');
+    hint.className = 'gp-table-hint';
+    hint.textContent = 'Scroll sideways for more columns \u2192';
+    hint.hidden = true;
+    meta.appendChild(count);
+    meta.appendChild(hint);
+    t.parentNode.insertBefore(meta, t);
+    t.parentNode.insertBefore(wrap, t);
+    wrap.appendChild(t);
+    var authoredNoSticky = t.classList.contains('gp-no-sticky');
+    var longest = [];
+    [].forEach.call(t.rows, function (r) {
+      [].forEach.call(r.cells, function (c, i) { longest[i] = Math.max(longest[i] || 0, c.textContent.trim().length); });
+    });
+    [].forEach.call(t.rows, function (r) {
+      [].forEach.call(r.cells, function (c, i) { if (longest[i] > (i === 0 ? 48 : 32)) c.classList.add('gp-col-wrap'); });
+    });
+    function measure() {
+      var overflows = wrap.scrollWidth > wrap.clientWidth + 1 || wrap.scrollHeight > wrap.clientHeight + 1;
+      hint.hidden = wrap.scrollWidth <= wrap.clientWidth + 1;
+      wrap.tabIndex = overflows ? 0 : -1;
+      var first = t.rows[0] && t.rows[0].cells[0];
+      // A wide row label cannot be pinned: it would hide all other columns.
+      var tooWide = !!first && first.offsetWidth > wrap.clientWidth * 0.4;
+      t.classList.toggle('gp-no-sticky', authoredNoSticky || tooWide);
+      wrap.style.scrollPaddingInlineStart = first && !authoredNoSticky && !tooWide ? first.offsetWidth + 'px' : '';
+      if (t.tHead) wrap.style.scrollPaddingTop = t.tHead.offsetHeight + 'px';
+    }
+    measure();
+    if ('ResizeObserver' in window) new ResizeObserver(measure).observe(wrap);
+  });
+  root.setAttribute('data-gp-enhanced', '');
+})();
+</script>

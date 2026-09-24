@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Built-in table pages add labelled keyboard-scrollable tables with a wrapping no-script fallback; landscape print fit is best-effort.
 - Built-in index pages display grouped Markdown link lists as responsive destination cards, retaining native links and a readable no-script fallback.
 - Built-in board pages group Markdown status headings into responsive read-only lanes, including explicit statuses on wide diagram and table lanes; headings and lists remain usable without JavaScript.
 - Built-in report pages use a CSS-only narrative layout with local table scrolling and an ink-light print treatment (wide-table PDF fit is best-effort).
