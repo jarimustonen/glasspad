@@ -6,12 +6,12 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 
 ## Where we are
 
-**0.18.0 is released** (2026-09-24), verified on crates.io, GitHub Release (12 assets),
+**0.18.1 is released** (2026-09-24), verified on crates.io, GitHub Release (12 assets),
 and the Homebrew formula. Both tag-triggered CI workflows passed. `main` is pushed and clean.
 The locally installed `glasspad` binary was not updated by this repository round; verify its
 version before claiming a localhost deploy is live.
 
-The 2026-09-24 round delivered the complete six-template gallery:
+The 2026-09-24 round delivered the complete six-template gallery in 0.18.0 and a patch in 0.18.1:
 
 - The external designer's original and incremental returns were reviewed against the six
   briefs; findings live in `issues/base-template-gallery/{return-review,update-review}.md`.
@@ -20,8 +20,13 @@ The 2026-09-24 round delivered the complete six-template gallery:
   into the single published package. Each slice passed Rust, publish dry-run, the complete
   51-check + Wave 2a security gate and real-host browser checks. The final 0.18.0 tree passed
   the full release gate again before the tag was pushed. `base-template-gallery` is `done`.
+- Jari accepted the real `relative-markdown-assets` bug for immediate repair. Markdown-authored
+  relative `assets/` image/file links now resolve through the scanned same-space asset route
+  in hosted and loopback mode; local hosted browser checks decoded an AVIF, and the full gate
+  passed again after the 0.18.1 version bump. The public hosted deployment was not touched.
 - Designer `space-nav/` was intentionally not integrated. Wide print tables remain best-effort;
-  relative `.md`/image asset handling is separate. Visual acceptance by Jari is not yet recorded.
+  raw HTML URLs and relative `.md` page navigation were not changed. Visual acceptance by Jari
+  is not yet recorded.
 
 The 2026-09-22 directory-instruction filtering shipped in 0.17.5. The old superseded worker
 branches remain historical cleanup context only; no session-owned run is unsettled.
@@ -32,13 +37,12 @@ Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; th
 orientation only. `relative-markdown-assets` is currently unscheduled context awaiting a human
 lane-or-close decision; it is not accepted, scheduled, or executable work.
 
-The six built-ins are available in release 0.18.0. The next useful product action is to
-look at the actual hosted/loopback light/dark/phone examples and give visual feedback; use the
-published version rather than treating the designer's static preview pages as host evidence.
-If changes are requested, record them in the issue tracker before scheduling work. No new code
-work is implied merely by the outstanding visual review. `relative-markdown-assets` remains
-unscheduled context awaiting Jari's lane-or-close decision; designer `space-nav/` was only a
-proposal, not accepted work.
+The six built-ins are available in release 0.18.1, which also includes the Markdown asset
+repair. **The DAG has no open scheduled or unscheduled issues.** The next useful product action
+is to upgrade/converge the installed CLI through the declared Homebase fleet interface, then
+look at actual hosted/loopback light/dark/phone examples and give visual feedback. The public
+hosted deployment was not updated in this round. If visual changes are requested, capture them
+as new accepted work. Designer `space-nav/` was only a proposal, not accepted work.
 
 One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
