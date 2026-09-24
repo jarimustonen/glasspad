@@ -6,12 +6,13 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 
 ## Where we are
 
-**0.18.1 is released** (2026-09-24), verified on crates.io, GitHub Release (12 assets),
+**0.18.2 is released** (2026-09-24), verified on crates.io, GitHub Release (12 assets),
 and the Homebrew formula. Both tag-triggered CI workflows passed. `main` is pushed and clean.
-The locally installed `glasspad` binary was not updated by this repository round; verify its
-version before claiming a localhost deploy is live.
+The locally installed `glasspad` CLI currently reports 0.18.1; release verification is not
+proof that the public hosted server has been deployed. Check live version before claiming the
+new viewer chrome appears at an existing hosted URL.
 
-The 2026-09-24 round delivered the complete six-template gallery in 0.18.0 and a patch in 0.18.1:
+The 2026-09-24 round delivered the six-template gallery in 0.18.0 and patches in 0.18.1/0.18.2:
 
 - The external designer's original and incremental returns were reviewed against the six
   briefs; findings live in `issues/base-template-gallery/{return-review,update-review}.md`.
@@ -24,9 +25,16 @@ The 2026-09-24 round delivered the complete six-template gallery in 0.18.0 and a
   relative `assets/` image/file links now resolve through the scanned same-space asset route
   in hosted and loopback mode; local hosted browser checks decoded an AVIF, and the full gate
   passed again after the 0.18.1 version bump. The public hosted deployment was not touched.
+- The native-agent-host visual-acceptance Markdown and three AVIFs were tested on the actual
+  hosted service with 0.18.1: images decoded and returned HTTP 200 from same-space assets.
+  The public test URL is `https://glasspad.maalla.dev/p/fjzftqivlexpzxvv53mswzlvja/visual-acceptance`.
+- Jari rejected the old viewer header and requested theme controls in the sidebar. 0.18.2
+  removes the redundant top strip; desktop uses a trusted left sidebar (prose TOC remains
+  sandboxed on the right), mobile uses a bottom dock. Full gate and local 360/1280 browser
+  inspection passed; `viewer-chrome-sidebar` is `done`.
 - Designer `space-nav/` was intentionally not integrated. Wide print tables remain best-effort;
-  raw HTML URLs and relative `.md` page navigation were not changed. Visual acceptance by Jari
-  is not yet recorded.
+  raw HTML URLs and relative `.md` page navigation were not changed. Visual acceptance of
+  the revised chrome on the public host is not yet recorded.
 
 The 2026-09-22 directory-instruction filtering shipped in 0.17.5. The old superseded worker
 branches remain historical cleanup context only; no session-owned run is unsettled.
@@ -37,12 +45,13 @@ Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; th
 orientation only. `relative-markdown-assets` is currently unscheduled context awaiting a human
 lane-or-close decision; it is not accepted, scheduled, or executable work.
 
-The six built-ins are available in release 0.18.1, which also includes the Markdown asset
-repair. **The DAG has no open scheduled or unscheduled issues.** The next useful product action
-is to upgrade/converge the installed CLI through the declared Homebase fleet interface, then
-look at actual hosted/loopback light/dark/phone examples and give visual feedback. The public
-hosted deployment was not updated in this round. If visual changes are requested, capture them
-as new accepted work. Designer `space-nav/` was only a proposal, not accepted work.
+The six built-ins, Markdown asset fix and revised viewer chrome are in 0.18.2. **The DAG has
+no open scheduled or unscheduled issues.** Next, converge the installed CLI and public hosted
+service through the owning Homebase deployment interface after confirming its policy/target;
+the old public test URL still serves the running server's shell until that service is updated.
+Then inspect light/dark/phone examples on that URL and ask Jari for visual feedback. Do not
+mistake a published crate for a completed production deployment. Designer `space-nav/` was
+only a proposal, not accepted work.
 
 One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
