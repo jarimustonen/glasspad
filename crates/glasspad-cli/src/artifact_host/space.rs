@@ -537,6 +537,16 @@ pub fn space_name_for(dir: &Path) -> Result<String, ScanError> {
 /// this returns `Err` and no partial space is produced (the caller keeps serving
 /// the previous snapshot). Never follows symlinks; never escapes `root`.
 pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
+    scan_dir_at_base(root, true)
+}
+
+/// Identical scanner and allowlist, but Markdown asset URLs remain adjacent to
+/// flat `slug.html` pages in static builds rather than targeting `/_c/slug`.
+pub fn scan_dir_for_build(root: &Path) -> Result<Space, ScanError> {
+    scan_dir_at_base(root, false)
+}
+
+fn scan_dir_at_base(root: &Path, content_route: bool) -> Result<Space, ScanError> {
     let root = root.to_path_buf();
     let meta = std::fs::symlink_metadata(&root).map_err(|e| ScanError::Io(root.clone(), e))?;
     if meta.file_type().is_symlink() {
@@ -680,10 +690,11 @@ pub fn scan_dir(root: &Path) -> Result<Space, ScanError> {
         if space.artifacts.contains_key(&stem) {
             return Err(ScanError::DuplicateSlug(stem, path));
         }
-        let body = if template.is_custom {
-            render::render_space_template_to_body(&md, &template.source)
-        } else {
-            render::render_to_body(&md, &template.source)
+        let body = match (template.is_custom, content_route) {
+            (true, true) => render::render_space_template_to_body(&md, &template.source),
+            (true, false) => render::render_space_template_to_body_for_build(&md, &template.source),
+            (false, true) => render::render_to_body(&md, &template.source),
+            (false, false) => render::render_to_body_for_build(&md, &template.source),
         }
         .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
         let len = body.len() as u64;
@@ -2249,6 +2260,27 @@ mod fs_tests {
                 .html
                 .contains("<strong>bold</strong>")
         );
+    }
+
+    #[test]
+    fn markdown_assets_use_content_route_but_static_build_keeps_flat_paths() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Home\n\n![photo](./assets/photo.avif)\n\n[Data](assets/sub/data.json)\n\n[Guide](./guide)\n\n<img src=\"./assets/photo.avif\">\n");
+        d.write("assets/photo.avif", b"image");
+        d.write("assets/sub/data.json", b"{}");
+        let served = scan_dir(d.path()).unwrap();
+        let built = scan_dir_for_build(d.path()).unwrap();
+        let html = &served.artifact("index").unwrap().html;
+        assert!(html.contains("src=\"../assets/photo.avif\""));
+        assert!(html.contains("href=\"../assets/sub/data.json\""));
+        let flat = &built.artifact("index").unwrap().html;
+        assert!(flat.contains("src=\"./assets/photo.avif\""));
+        assert!(flat.contains("href=\"assets/sub/data.json\""));
+        assert!(!flat.contains("../assets/"));
+        for unchanged in ["./guide", "<img src=\"./assets/photo.avif\">"] {
+            assert!(html.contains(unchanged));
+            assert!(flat.contains(unchanged));
+        }
     }
 
     #[test]

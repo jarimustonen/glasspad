@@ -566,8 +566,20 @@ pub async fn serve_on_all(listeners: Vec<TcpListener>, app: Router) -> std::io::
 /// grammar + reserved list. Fail-fast: a malformed / colliding / reserved space
 /// is an error the caller reports informatively (AI-first CLI contract).
 pub fn scan_named(dir: &Path) -> Result<(String, Snapshot), ScanError> {
+    scan_named_at_base(dir, false)
+}
+
+pub fn scan_named_for_build(dir: &Path) -> Result<(String, Snapshot), ScanError> {
+    scan_named_at_base(dir, true)
+}
+
+fn scan_named_at_base(dir: &Path, flat_build: bool) -> Result<(String, Snapshot), ScanError> {
     let name = space::space_name_for(dir)?;
-    let space = space::scan_dir(dir)?;
+    let space = if flat_build {
+        space::scan_dir_for_build(dir)?
+    } else {
+        space::scan_dir(dir)?
+    };
     let mut snap = Snapshot::empty();
     snap.spaces.insert(name.clone(), Arc::new(space));
     Ok((name, snap))

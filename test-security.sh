@@ -88,6 +88,20 @@ printf 'console.log(1)' > "$WORK/myspace/assets/app.js"
 # A hostile SVG asset: must be neutralized (served with `Content-Security-Policy: sandbox`).
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$WORK/myspace/assets/logo.svg"
 printf '{"x":1}' > "$WORK/myspace/assets/sub/data.json"
+# Markdown-authored references must resolve from the private _c route to the
+# same-space asset route in both targets. Raw HTML stays untouched.
+cp brand/logo.avif "$WORK/myspace/assets/sub/photo.avif"
+cat > "$WORK/myspace/visual.md" <<'MD'
+# Visual
+
+![Screenshot](./assets/sub/photo.avif)
+
+[Data](assets/sub/data.json)
+
+[Sales](./sales)
+
+<img src="./assets/sub/photo.avif" id="raw-html-url">
+MD
 
 pkill -f "target/debug/glasspad loopback serve" 2>/dev/null || true
 sleep 0.5
@@ -98,6 +112,7 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 SB="http://127.0.0.1:$SPACE_PORT"
+GLASSPAD_PORT="$SPACE_PORT" node "$SUITE_DIR/markdown-assets.mjs" "$SB/myspace/visual" "$SB/myspace"
 
 code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }
 hdr()  { curl -s -D- -o /dev/null "$1" | tr -d '\r' | awk -F': ' "tolower(\$1)==\"$2\"{print \$2}"; }
@@ -231,6 +246,21 @@ for _ in $(seq 1 40); do
   if curl -fsS "$HOST_ORIGIN/healthz" >/dev/null 2>&1; then break; fi
   sleep 0.25
 done
+
+# Publish the same directory through real hosted ingest, then exercise the
+# browser against the capability-scoped shell and actual asset responses.
+HOST_PUB="$(./target/debug/glasspad --json publish --no-open --target hosted \
+  --server "$HOST_ORIGIN" --api-key "$KEYA" "$WORK/myspace")"
+HOST_SPACE="$(printf '%s' "$HOST_PUB" | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0,"utf8")).slug)')"
+node "$SUITE_DIR/markdown-assets.mjs" "$HOST_ORIGIN/p/$HOST_SPACE/visual" "$HOST_ORIGIN/p/$HOST_SPACE"
+# A rewritten URL is never permission: only exact scanned keys are served.
+for root in "$HOST_ORIGIN/p/$HOST_SPACE"; do
+  for bad in 'assets/%2e%2e/secret.txt' 'assets/%252e%252e/secret.txt' 'assets/sub%2f..%2fsecret.txt' 'assets/sub/..%5csecret.txt'; do
+    result="$(code "$root/$bad")"
+    [ "$result" = 404 ] || [ "$result" = 400 ]; scheck $? "markdown assets: forbidden $root/$bad ($result)"
+  done
+done
+[ "$(code "$HOST_ORIGIN/p/aaaaaaaaaaaaaaaaaaaaaaaaaa/assets/sub/photo.avif")" = 404 ]; scheck $? "markdown assets: foreign capability cannot read asset"
 
 # acme publishes a fragment page (round 0).
 PUB="$(curl -s -X POST "$HOST_ORIGIN/api/v1/pages" -H "Authorization: Bearer $KEYA" \

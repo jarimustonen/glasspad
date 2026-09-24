@@ -655,7 +655,7 @@ pub fn build(
     // Scan the space with the SAME scanner `serve` uses: a symlink, path
     // traversal, reserved slug, collision, or oversize file is refused here just
     // as on the server path (AI-first §1), before any output is written.
-    let (name, snap) = match server::scan_named(&space_dir) {
+    let (name, snap) = match server::scan_named_for_build(&space_dir) {
         Ok(x) => x,
         Err(e) => exit_scan_error(&e, json),
     };

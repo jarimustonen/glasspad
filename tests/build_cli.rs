@@ -47,6 +47,32 @@ fn populate_space(space: &Path) {
 }
 
 #[test]
+fn markdown_asset_links_in_flat_static_build_stay_next_to_assets() {
+    let root = temp_dir("markdown-assets");
+    let space = root.join("sales");
+    write(
+        &space,
+        "index.md",
+        b"# Hello\n\n![x](./assets/photo.avif) [data](assets/sub/data.json)\n",
+    );
+    write(&space, "assets/photo.avif", b"image");
+    write(&space, "assets/sub/data.json", b"{}");
+    let out = root.join("out");
+    let result = bin().arg("build").arg(&space).arg(&out).output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let html = std::fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(html.contains("src=\"./assets/photo.avif\""));
+    assert!(html.contains("href=\"assets/sub/data.json\""));
+    assert!(out.join("assets/photo.avif").is_file());
+    assert!(out.join("assets/sub/data.json").is_file());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn self_contained_build_json_envelope_and_offline_libs() {
     let root = temp_dir("self-contained");
     let space = root.join("sales");

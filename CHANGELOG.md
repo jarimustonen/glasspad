@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- Markdown-authored relative `assets/` image and file links now resolve through the same-space asset route in hosted and loopback spaces without changing raw HTML or page navigation.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.18.0] - 2026-09-24

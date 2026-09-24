@@ -89,12 +89,61 @@ pub fn builtin_template(name: &str) -> Option<&'static str> {
 /// reason `.gp-prose` was hardened against arbitrary markdown-generated markup.
 /// Infallible: `pulldown-cmark` never errors, it lossily parses any input.
 pub fn render_markdown(md: &str) -> String {
-    // A markdown-authored artifact renders once, server-side; the extra parse cost
-    // of a full walk is irrelevant, and a larger buffer avoids reallocs.
-    let parser = Parser::new_ext(md, gfm_options());
+    render_markdown_with_asset_base(md, true)
+}
+
+fn render_markdown_with_asset_base(md: &str, content_route: bool) -> String {
+    // A static build places pages at its root; unlike /_c/slug it needs the
+    // original assets/ URL. The parser and all other output remain identical.
+    let parser = Parser::new_ext(md, gfm_options()).map(|event| {
+        if content_route {
+            rewrite_asset_event(event)
+        } else {
+            event
+        }
+    });
     let mut out = String::with_capacity(md.len() + md.len() / 2 + 64);
     html::push_html(&mut out, parser);
     out
+}
+
+/// Only Markdown-generated image and link destinations pointing into the space's
+/// scanned `assets/` tree are adjusted. The content iframe URL is `…/_c/slug`,
+/// so `../assets/…` resolves to `…/assets/…` without embedding a capability slug
+/// or mount prefix. Never use `<base>`: it changes anchor and navigation semantics.
+/// Raw HTML, page links, external/data URLs and malformed paths are untouched.
+fn rewrite_asset_event(mut event: Event<'_>) -> Event<'_> {
+    match &mut event {
+        Event::Start(Tag::Image { dest_url, .. } | Tag::Link { dest_url, .. }) => {
+            if let Some(url) = space_asset_destination(dest_url) {
+                *dest_url = CowStr::from(url);
+            }
+        }
+        _ => {}
+    }
+    event
+}
+
+/// Mirror the scanned asset segment grammar before adding a parent component.
+/// No percent encoding, backslashes, queries, fragments or dot segments: browser
+/// normalization must not turn an accepted destination into a different path.
+/// The route's exact pre-scanned map lookup remains the authoritative allowlist.
+fn space_asset_destination(url: &str) -> Option<String> {
+    let path = url.strip_prefix("./").unwrap_or(url);
+    let rest = path.strip_prefix("assets/")?;
+    if rest.is_empty()
+        || !rest.split('/').all(|seg| {
+            !seg.is_empty()
+                && seg != "."
+                && seg != ".."
+                && seg
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+        })
+    {
+        return None;
+    }
+    Some(format!("../assets/{rest}"))
 }
 
 /// The GFM parse options shared by every markdown render path (the plain
@@ -141,7 +190,7 @@ struct TocEntry {
 /// natively inside the artifact iframe with no shell involvement. (Uniqueness is
 /// "unique among generated ids": an id an artifact author hand-writes in raw HTML can
 /// still coincide — raw HTML passthrough predates this feature and is a sandboxed sink.)
-fn render_markdown_with_headings(md: &str) -> (String, Vec<TocEntry>) {
+fn render_markdown_with_headings(md: &str, content_route: bool) -> (String, Vec<TocEntry>) {
     // Materialize the event stream so a heading's id can be rewritten *before* it is
     // serialized: the slug is derived from the heading's inner text, which only arrives
     // in the events *after* the `Start(Heading)`. Buffering the whole stream also lets
@@ -149,7 +198,15 @@ fn render_markdown_with_headings(md: &str) -> (String, Vec<TocEntry>) {
     // state exactly as `render_markdown` produces it. The input is bounded upstream
     // (`space::MAX_FILE_BYTES` caps the `.md` source, and the rendered body is re-capped
     // after render), so this O(n) buffer is over a bounded n — not an unbounded artifact.
-    let mut events: Vec<Event> = Parser::new_ext(md, gfm_options()).collect();
+    let mut events: Vec<Event> = Parser::new_ext(md, gfm_options())
+        .map(|event| {
+            if content_route {
+                rewrite_asset_event(event)
+            } else {
+                event
+            }
+        })
+        .collect();
     let mut toc: Vec<TocEntry> = Vec::new();
     let mut used_ids: SlugSet = SlugSet::default();
     // Headings inside a footnote *definition* are page content, not part of the
@@ -301,8 +358,8 @@ fn render_toc(entries: &[TocEntry]) -> String {
 
 /// Render through the canonical prose fragment. Only the built-in prose path
 /// gets this rail; the insertion marker remains directly inside `.gp-prose`.
-fn render_prose_body(markdown: &str) -> String {
-    let (rendered, toc) = render_markdown_with_headings(markdown);
+fn render_prose_body(markdown: &str, content_route: bool) -> String {
+    let (rendered, toc) = render_markdown_with_headings(markdown, content_route);
     // PROSE_TEMPLATE is checked by the built-in fragment test. It is a constant
     // containing exactly one placeholder, so applying it cannot fail.
     let article = apply_template(PROSE_TEMPLATE, &rendered)
@@ -421,15 +478,32 @@ pub fn apply_template(template: &str, rendered: &str) -> Result<String, Template
 /// rejected before the potentially-expensive markdown render), then renders the
 /// markdown and splices it in.
 pub fn render_to_body(markdown: &str, template: &str) -> Result<String, TemplateError> {
+    render_to_body_at_base(markdown, template, true)
+}
+
+/// Render a flat static-build page: its assets/ directory is adjacent to the
+/// generated HTML, not one level above it as with a private content route.
+pub fn render_to_body_for_build(markdown: &str, template: &str) -> Result<String, TemplateError> {
+    render_to_body_at_base(markdown, template, false)
+}
+
+fn render_to_body_at_base(
+    markdown: &str,
+    template: &str,
+    content_route: bool,
+) -> Result<String, TemplateError> {
     // The built-in `prose` reading theme gets the heading-anchored, TOC-aware layout
     // (approach (a): the rail lives inside the artifact's own prose fragment). Every
     // other template — `dashboard`, or a client-supplied custom template — is the
     // unchanged plain splice, so its output is byte-for-byte what it was pre-TOC.
     if template == PROSE_TEMPLATE {
-        return Ok(render_prose_body(markdown));
+        return Ok(render_prose_body(markdown, content_route));
     }
     split_at_placeholder(template)?;
-    apply_template(template, &render_markdown(markdown))
+    apply_template(
+        template,
+        &render_markdown_with_asset_base(markdown, content_route),
+    )
 }
 
 /// Render a producer-supplied **space** template while retaining the per-page TOC
@@ -442,8 +516,24 @@ pub fn render_space_template_to_body(
     markdown: &str,
     template: &str,
 ) -> Result<String, TemplateError> {
+    render_space_template_at_base(markdown, template, true)
+}
+
+/// The custom-template counterpart for static flat build output.
+pub fn render_space_template_to_body_for_build(
+    markdown: &str,
+    template: &str,
+) -> Result<String, TemplateError> {
+    render_space_template_at_base(markdown, template, false)
+}
+
+fn render_space_template_at_base(
+    markdown: &str,
+    template: &str,
+    content_route: bool,
+) -> Result<String, TemplateError> {
     split_at_placeholder(template)?;
-    let (rendered, toc) = render_markdown_with_headings(markdown);
+    let (rendered, toc) = render_markdown_with_headings(markdown, content_route);
     if toc.len() < MIN_TOC_ENTRIES {
         return apply_template(template, &rendered);
     }
@@ -460,6 +550,71 @@ pub fn render_space_template_to_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markdown_asset_urls_are_space_relative_and_conservative() {
+        let md = r#"![image](./assets/sub/photo.avif)
+
+[JSON](assets/sub/data.json) [page](./guide.md) [anchor](#section)
+
+![external](https://example.org/a.png) ![data](data:image/png;base64,AAA)
+
+![traversal](assets/%2e%2e/secret.png) [dot](assets/../secret.png)
+
+![query](assets/photo.png?x=1) [encoded](assets/%252e%252e/secret.png)
+
+<img src="./assets/raw.png"><script src="./assets/raw.js"></script>
+"#;
+        let html = render_markdown(md);
+        assert!(html.contains("src=\"../assets/sub/photo.avif\""));
+        assert!(html.contains("href=\"../assets/sub/data.json\""));
+        for untouched in [
+            "./guide.md",
+            "#section",
+            "https://example.org/a.png",
+            "data:image/png;base64,AAA",
+            "assets/%2e%2e/secret.png",
+            "assets/../secret.png",
+            "assets/photo.png?x=1",
+            "assets/%252e%252e/secret.png",
+            "./assets/raw.png",
+            "./assets/raw.js",
+        ] {
+            assert!(html.contains(untouched), "lost {untouched}: {html}");
+        }
+        for bad in [
+            "assets//a",
+            "assets/./a",
+            "assets/../a",
+            "assets/%2e%2e/a",
+            "assets/%252e%252e/a",
+            "assets/a%2fb",
+            "assets/a\\b",
+            "assets/a b",
+            "assets/a?x=1",
+            "assets/a#frag",
+            "assets/é.png",
+            "/assets/a",
+            "../assets/a",
+            "//other/assets/a",
+        ] {
+            assert!(space_asset_destination(bad).is_none(), "rewrote {bad}");
+        }
+        assert_eq!(
+            space_asset_destination("./assets/a-1_B.png"),
+            Some("../assets/a-1_B.png".into())
+        );
+        for name in BUILTIN_NAMES {
+            let body =
+                render_to_body("![i](assets/i.png)", builtin_template(name).unwrap()).unwrap();
+            assert!(body.contains("../assets/i.png"), "{name}");
+        }
+        assert!(
+            render_space_template_to_body("[file](assets/a.json)", "<main>{{content}}</main>")
+                .unwrap()
+                .contains("../assets/a.json")
+        );
+    }
 
     #[test]
     fn markdown_renders_common_blocks() {
