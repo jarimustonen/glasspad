@@ -6,24 +6,25 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 
 ## Where we are
 
-**0.17.5 is released and live**, verified on crates.io, GitHub Release (12 assets), and the
-Homebrew formula. The tag-triggered publish and release workflows and `main` CI all completed
-successfully. The tree is clean and `main` is pushed.
+**0.18.0 is released** (2026-09-24), verified on crates.io, GitHub Release (12 assets),
+and the Homebrew formula. Both tag-triggered CI workflows passed. `main` is pushed and clean.
+The locally installed `glasspad` binary was not updated by this repository round; verify its
+version before claiming a localhost deploy is live.
 
-The 2026-09-22 round delivered two product outcomes:
+The 2026-09-24 round delivered the complete six-template gallery:
 
-- Directory publication now ignores top-level `AGENTS.md` and `CLAUDE.md` instruction entries
-  without weakening invalid-name, symlink, or traversal validation. This was reproduced from a
-  real documentation publish, passed the full Rust/publish/security gate, and shipped in 0.17.5.
-- Jari approved the six template-gallery areas and priority order: `prose`, `dashboard`,
-  `report`, `board`, `index`, and `table`. A standalone 29-file designer handoff with six briefs,
-  realistic samples, technical/visual references, and four AVIF baseline captures now lives at
-  `issues/base-template-gallery/designer-package/`. The verified ZIP was copied to
-  `hauis:~/Downloads/glasspad-template-gallery-designer-package.zip`.
+- The external designer's original and incremental returns were reviewed against the six
+  briefs; findings live in `issues/base-template-gallery/{return-review,update-review}.md`.
+  The ZIP inputs are gitignored at `history/designer-return/` on this host.
+- `prose`, `dashboard`, `report`, `board`, `index`, and `table` were integrated one at a time
+  into the single published package. Each slice passed Rust, publish dry-run, the complete
+  51-check + Wave 2a security gate and real-host browser checks. The final 0.18.0 tree passed
+  the full release gate again before the tag was pushed. `base-template-gallery` is `done`.
+- Designer `space-nav/` was intentionally not integrated. Wide print tables remain best-effort;
+  relative `.md`/image asset handling is separate. Visual acceptance by Jari is not yet recorded.
 
-The superseded failed worker's retained branch and worktree were explicitly discarded after its
-identical reviewed content had been harvested, fully validated, and released. No session-owned
-work remains.
+The 2026-09-22 directory-instruction filtering shipped in 0.17.5. The old superseded worker
+branches remain historical cleanup context only; no session-owned run is unsettled.
 
 ## ▶ Start here
 
@@ -31,14 +32,13 @@ Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; th
 orientation only. `relative-markdown-assets` is currently unscheduled context awaiting a human
 lane-or-close decision; it is not accepted, scheduled, or executable work.
 
-The next accepted product step is external design, not implementation invention:
-
-- Give the verified ZIP to the external designer.
-- Ask for the six fragment designs, both-theme previews, usage notes, optional enhancement
-  classes, and rationale specified by the package's `RETURN-CHECKLIST.md`.
-- When the designer returns the work, review it against the approved briefs and hard platform
-  contract, then continue `base-template-gallery` with integration and validation. The parent
-  feature deliberately remains open; the package-preparation task is done.
+The six built-ins are available in release 0.18.0. The next useful product action is to
+look at the actual hosted/loopback light/dark/phone examples and give visual feedback; use the
+published version rather than treating the designer's static preview pages as host evidence.
+If changes are requested, record them in the issue tracker before scheduling work. No new code
+work is implied merely by the outstanding visual review. `relative-markdown-assets` remains
+unscheduled context awaiting Jari's lane-or-close decision; designer `space-nav/` was only a
+proposal, not accepted work.
 
 One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
