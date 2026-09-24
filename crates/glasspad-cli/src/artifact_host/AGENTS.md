@@ -66,7 +66,7 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   *tighten* — fails closed), and the trusted shell is a different route built from
   the resolved title via `textContent`, so a template can neither widen the
   boundary nor inject the shell. Built-in templates (`prose` =
-  `<article class="gp-prose gp-read">…</article>` [default; inline reading styles and optional byline/TOC enhancement], `dashboard` = `.gp-card`) are
+  `<article class="gp-prose gp-read">…</article>` [default; inline reading styles and optional byline/TOC enhancement], `dashboard` = `.gp-dash` responsive card grid (ruled sections without JS)) are
   **fragments**, so they inherit `base.css` (incl. the hardened `.gp-prose`
   reading theme) + `bridge.js` for free. `wrap.rs`/`shell.rs` are unchanged.
   **Per-page TOC rail (prose-page-toc):** the built-in `prose` path stamps a
@@ -79,7 +79,7 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   inside the null-origin sandbox — **no shell involvement, no postMessage surface, CSP
   unchanged**. Heading text is untrusted and reaches the rail only server-side
   HTML-escaped. Fewer than 2 H2/H3 (or a non-prose / full-document artifact) degrades to
-  the plain prose fragment (no empty rail). `dashboard`/custom templates are unchanged.
+  the plain prose fragment (no empty rail). `dashboard` uses the same plain splice with client-side card grouping; custom templates remain unchanged.
   **Diagrams (markdown-diagrams):** authored **inline SVG** is the supported diagram
   path — the producer owns SVG generation and embeds it; the `.md`/template renderer
   passes raw HTML/SVG through verbatim (no strip, no rewrite, **no sanitization**), so a

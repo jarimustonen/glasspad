@@ -1,0 +1,236 @@
+<style>
+/* Glasspad built-in template: dashboard — metrics and charts.
+   Plain Markdown: every h2 becomes a card (script) or a ruled section (no script). */
+.gp-dash {
+  container: gp-dash / inline-size;
+  max-width: 90rem;
+  margin-inline: auto;
+}
+.gp-dash h1 { font-size: 1.5rem; letter-spacing: -0.015em; margin: 0 0 0.25rem; }
+.gp-dash h2 {
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gp-text-muted);
+  margin: 0 0 0.75rem;
+}
+.gp-dash h3 { font-size: 0.8125rem; margin: 1rem 0 0.5rem; }
+.gp-dash p { margin: 0 0 0.75rem; }
+.gp-dash strong { color: var(--gp-text); }
+.gp-dash a:focus-visible,
+.gp-dash-scroll:focus-visible {
+  outline: 2px solid var(--gp-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Header: title + freshness line (everything before the first h2). */
+.gp-dash-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 2rem;
+  margin: 0 0 1.25rem;
+}
+.gp-dash-head > h1 { margin: 0; }
+.gp-dash-head > p { margin: 0; font-size: 0.8125rem; color: var(--gp-text-muted); }
+/* Only the title + one freshness line form a compact row. */
+.gp-dash-head:has(> :nth-child(3)),
+.gp-dash-head:has(> :not(h1, p)) { display: block; }
+.gp-dash-head:has(> :nth-child(3)) > p,
+.gp-dash-head:has(> :not(h1, p)) > p { font-size: inherit; color: inherit; margin: 0 0 0.75rem; }
+
+/* Script classifies short, bold-only metrics; explicit values also work without script. */
+.gp-dash .gp-dash-value,
+.gp-dash .gp-stat-value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gp-text);
+  margin: 0 0 0.375rem;
+}
+
+.gp-dash-delta {
+  font-size: 0.8125rem;
+  color: var(--gp-text-secondary);
+}
+
+/* Grid of cards (enhanced). Reading order = source order; spans only. */
+.gp-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+.gp-dash-card {
+  grid-column: span 2;
+  min-width: 0;
+  --gp-dash-pad: 1.25rem;
+  padding: 1.125rem var(--gp-dash-pad) 1.25rem;
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-border);
+  border-radius: 12px;
+  box-shadow: var(--gp-shadow);
+}
+.gp-dash-card > :last-child { margin-bottom: 0; }
+.gp-dash-card.is-metric { grid-column: span 1; }
+.gp-dash-card.is-wide,
+.gp-dash-card.gp-wide { grid-column: 1 / -1; }
+@container gp-dash (max-width: 52rem) {
+  .gp-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gp-dash-card { grid-column: 1 / -1; }
+  .gp-dash-card.is-metric { grid-column: span 1; }
+}
+@container gp-dash (max-width: 18rem) {
+  .gp-dash-grid { grid-template-columns: minmax(0, 1fr); }
+  .gp-dash-card.is-metric { grid-column: 1 / -1; }
+}
+@container gp-dash (max-width: 30rem) {
+  .gp-dash-card { --gp-dash-pad: 1rem; padding: 0.875rem var(--gp-dash-pad) 1rem; }
+  .gp-dash .gp-dash-value,
+  .gp-dash .gp-stat-value { font-size: 1.5rem; }
+}
+
+/* No-script fallback: one ruled column, same type hierarchy. */
+.gp-dash:not([data-gp-enhanced]) > h2 {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--gp-border);
+}
+.gp-dash:not([data-gp-enhanced]) table,
+.gp-dash:not([data-gp-enhanced]) pre { display: block; max-width: 100%; overflow-x: auto; }
+.gp-dash:not([data-gp-enhanced]) .gp-chart { max-width: 100%; overflow-x: auto; }
+
+/* Notes and exceptions */
+.gp-dash blockquote {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--gp-surface-alt);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  color: var(--gp-text-secondary);
+}
+.gp-dash blockquote > :last-child { margin-bottom: 0; }
+.gp-dash .gp-alert {
+  background: var(--gp-status-blocked-soft);
+  box-shadow: inset 0 0 0 1px var(--gp-status-blocked);
+  color: var(--gp-text);
+}
+.gp-dash-card.gp-alert { border-color: var(--gp-status-blocked); }
+
+.gp-dash ul,
+.gp-dash ol { margin: 0 0 0.75rem; padding-inline-start: 1.25rem; }
+.gp-dash li { margin: 0.3rem 0; }
+.gp-dash li:has(> input[type="checkbox"]:first-child) {
+  list-style: none;
+  margin-inline-start: -1.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.gp-dash li > input[type="checkbox"]:first-child {
+  flex: none;
+  margin: 0;
+  transform: translateY(0.125em);
+  accent-color: var(--gp-accent);
+}
+.gp-dash li:has(> input[type="checkbox"]:checked) { color: var(--gp-text-muted); }
+
+/* Tables: compact rows, scroll inside the card. */
+.gp-dash-scroll { overflow-x: auto; margin: 0 calc(-1 * var(--gp-dash-pad)) 0.75rem; padding: 0 var(--gp-dash-pad); }
+.gp-dash table { font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.gp-dash th,
+.gp-dash td { padding: 0.5rem 0.75rem; white-space: nowrap; border-bottom: 1px solid var(--gp-border); }
+.gp-dash th { font-size: 0.6875rem; border-bottom-color: var(--gp-border-strong); }
+.gp-dash :is(th, td):first-child { padding-inline-start: 0; }
+.gp-dash :is(th, td):last-child { padding-inline-end: 0; }
+.gp-dash tbody tr:last-child td { border-bottom: 0; }
+.gp-dash [align="right"] { text-align: right; }
+.gp-dash td code { font-size: 0.75rem; }
+.gp-dash :is(.gp-dash-scroll, table) + p { font-size: 0.75rem; color: var(--gp-text-muted); }
+
+.gp-dash .gp-chart,
+.gp-dash [data-gp-chart] { margin: 0.25rem 0 0.75rem; max-width: 100%; overflow-x: auto; }
+.gp-dash .gp-diagram { margin: 0.5rem 0 0; }
+
+@media (max-width: 30rem) { body { padding: 1rem; } }
+
+@media print {
+  :root, :root[data-theme] {
+    --gp-bg: #fff; --gp-surface: #fff; --gp-surface-alt: #f4f4f4; --gp-surface-hover: #fff;
+    --gp-text: #111; --gp-text-secondary: #333; --gp-text-muted: #555; --gp-text-faint: #777;
+    --gp-accent: #111; --gp-accent-hover: #111; --gp-accent-soft: #fff; --gp-accent-border: #999;
+    --gp-accent-tag: #eee; --gp-accent-text: #111;
+    --gp-border: #ccc; --gp-border-subtle: #e2e2e2; --gp-border-strong: #999;
+    --gp-code-text: #111; --gp-shadow: none; --gp-chart-bg: transparent;
+  }
+  body { background: #fff; padding: 0; }
+  .gp-dash-grid { gap: 8pt; }
+  .gp-dash-card { break-inside: avoid; box-shadow: none; padding: 10pt 12pt; }
+  .gp-dash-card:not(.is-metric) { grid-column: 1 / -1; }
+  .gp-dash-scroll { overflow: visible; margin: 0; padding: 0; }
+  .gp-dash th, .gp-dash td { white-space: normal; }
+}
+</style>
+<div class="gp-dash">
+{{content}}
+</div>
+<script>
+/* Progressive enhancement: group each h2 and its following blocks into a card,
+   classify cards (metric / chart / wide) and give tables a scroll region.
+   Moves existing nodes only; never re-parses or evaluates content. */
+(function () {
+  var root = document.currentScript && document.currentScript.previousElementSibling;
+  if (!root || !root.classList || !root.classList.contains('gp-dash')) root = document.querySelector('.gp-dash');
+  if (!root || root.hasAttribute('data-gp-enhanced')) return;
+  var head = document.createElement('header');
+  var grid = document.createElement('div');
+  var card = null;
+  head.className = 'gp-dash-head';
+  grid.className = 'gp-dash-grid';
+  [].slice.call(root.children).forEach(function (el) {
+    if (el.tagName === 'H2') {
+      card = document.createElement('section');
+      card.className = 'gp-dash-card';
+      grid.appendChild(card);
+    }
+    (card || head).appendChild(el);
+  });
+  [].forEach.call(grid.children, function (c) {
+    var h = c.firstElementChild;
+    if (h) {
+      if (h.id) c.setAttribute('aria-labelledby', h.id);
+      else c.setAttribute('aria-label', h.textContent.trim());
+    }
+    if (c.querySelector('table, pre')) c.classList.add('is-wide');
+    else if (c.querySelector('.gp-chart, [data-gp-chart], .gp-diagram')) c.classList.add('is-chart');
+    var v = h && h.nextElementSibling;
+    if (!c.classList.contains('is-wide') && !c.classList.contains('is-chart') && v && v.tagName === 'P' &&
+        v.children.length === 1 && v.firstElementChild.tagName === 'STRONG' &&
+        v.textContent.trim() === v.firstElementChild.textContent.trim() && v.textContent.trim().length <= 24) {
+      c.classList.add('is-metric');
+      v.classList.add('gp-dash-value');
+      var d = v.nextElementSibling;
+      if (d && d.tagName === 'P') d.classList.add('gp-dash-delta');
+    }
+    [].forEach.call(c.querySelectorAll('table'), function (t) {
+      if (t.parentElement.classList.contains('gp-dash-scroll')) return;
+      var w = document.createElement('div');
+      w.className = 'gp-dash-scroll';
+      w.tabIndex = 0;
+      w.setAttribute('role', 'region');
+      w.setAttribute('aria-label', (h ? h.textContent.trim() : 'Table') + ' (scrollable)');
+      t.parentNode.insertBefore(w, t);
+      w.appendChild(t);
+    });
+  });
+  if (head.children.length) root.appendChild(head);
+  if (grid.children.length) root.appendChild(grid);
+  root.setAttribute('data-gp-enhanced', '');
+  window.dispatchEvent(new Event('resize'));
+})();
+</script>

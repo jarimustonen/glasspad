@@ -51,6 +51,7 @@ pub const DEFAULT_TEMPLATE: &str = "prose";
 /// source is used for name resolution and TOC-aware rendering. Custom template
 /// strings (including custom space templates) retain their existing semantics.
 const PROSE_TEMPLATE: &str = include_str!("templates/prose.html");
+const DASHBOARD_TEMPLATE: &str = include_str!("templates/dashboard.html");
 
 /// Resolve a built-in template name to its HTML fragment, or `None` if the name is
 /// not a built-in. Both fragments carry exactly one `{{content}}` and are
@@ -60,11 +61,11 @@ const PROSE_TEMPLATE: &str = include_str!("templates/prose.html");
 ///
 /// * `prose` — `<article class="gp-prose">` so rendered blocks are direct children
 ///   of `.gp-prose` (the hardened reading theme's render contract).
-/// * `dashboard` — the default dashboard look, content in a `.gp-card` surface.
+/// * `dashboard` — a responsive metrics/card composition with a no-script column.
 pub fn builtin_template(name: &str) -> Option<&'static str> {
     match name {
         "prose" => Some(PROSE_TEMPLATE),
-        "dashboard" => Some("<div class=\"gp-card\">\n{{content}}\n</div>\n"),
+        "dashboard" => Some(DASHBOARD_TEMPLATE),
         _ => None,
     }
 }
@@ -511,9 +512,20 @@ mod tests {
     }
 
     #[test]
-    fn builtin_dashboard_uses_card_surface() {
+    fn builtin_dashboard_is_a_valid_fragment() {
         let t = builtin_template("dashboard").unwrap();
-        assert!(t.contains(r#"class="gp-card""#));
+        assert!(t.contains(r#"class="gp-dash""#));
+        assert_eq!(t.matches(PLACEHOLDER).count(), 1);
+        assert_eq!(t.matches("<style>").count(), 1);
+        assert_eq!(t.matches("<script>").count(), 1);
+        let body = render_to_body(
+            "# Status\n\n## Requests\n\n184,320\n\n## Detail\n\n| a | b |\n|---|---|\n| 1 | 2 |",
+            t,
+        )
+        .unwrap();
+        assert!(body.contains("<h2>Requests</h2>"));
+        assert!(body.contains("<p>184,320</p>"));
+        assert!(body.contains("<table>"));
         assert!(t.contains(PLACEHOLDER));
         assert!(builtin_template("nope").is_none());
     }

@@ -2305,13 +2305,13 @@ mod fs_tests {
         d.write("index.md", b"# Dash\n");
         d.write("glasspad.yaml", b"template: dashboard\n");
         let space = scan_dir(d.path()).unwrap();
-        // `dashboard` wraps in a `.gp-card` surface instead of `.gp-prose`.
+        // `dashboard` wraps in its own responsive `.gp-dash` surface.
         assert!(
             space
                 .artifact("index")
                 .unwrap()
                 .html
-                .contains(r#"class="gp-card""#)
+                .contains(r#"class="gp-dash""#)
         );
         assert!(!space.artifact("index").unwrap().html.contains("gp-prose"));
     }
@@ -2328,7 +2328,7 @@ mod fs_tests {
                 .artifact("about")
                 .unwrap()
                 .html
-                .contains(r#"class="gp-card""#)
+                .contains(r#"class="gp-dash""#)
         );
     }
 

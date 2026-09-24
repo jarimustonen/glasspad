@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Built-in dashboard pages arrange Markdown sections as responsive metric, chart, and detail cards with a no-script fallback.
 - Built-in prose pages use the new long-form reading design while retaining heading anchors and the optional table-of-contents rail.
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
