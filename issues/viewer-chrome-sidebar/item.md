@@ -2,10 +2,12 @@
 created: 2026-09-24
 updated: 2026-09-24
 type: improvement
-status: in-progress
+status: done
 priority: normal
 lane: shell-chrome
 collision: [crates/glasspad-core/src/artifact_host/shell.rs, crates/glasspad-cli/src/artifact_host/assets/base.css]
+closed: 2026-09-24
+closed_by: pi
 ---
 
 # Move viewer theme control into sidebar and remove redundant header
