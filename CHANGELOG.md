@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Built-in board pages group Markdown status headings into responsive read-only lanes, including explicit statuses on wide diagram and table lanes; headings and lists remain usable without JavaScript.
 - Built-in report pages use a CSS-only narrative layout with local table scrolling and an ink-light print treatment (wide-table PDF fit is best-effort).
 - Built-in dashboard pages arrange Markdown sections as responsive metric, chart, and detail cards with a no-script fallback.
 - Built-in prose pages use the new long-form reading design while retaining heading anchors and the optional table-of-contents rail.

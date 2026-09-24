@@ -356,7 +356,7 @@ pub async fn render(
             "the template renders a full HTML document (opens with <!doctype>/<html>): \
              it is served verbatim, so glasspad does NOT link base.css (the .gp-prose \
              theme) or inject bridge.js (in-frame live reload). Use a fragment template \
-             (e.g. the built-in prose/dashboard/report) to keep those, or link base.css yourself."
+             (e.g. the built-in prose/dashboard/report/board) to keep those, or link base.css yourself."
                 .to_string(),
         );
     }

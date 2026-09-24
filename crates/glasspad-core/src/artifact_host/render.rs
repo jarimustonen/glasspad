@@ -39,10 +39,10 @@ use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, 
 /// braces is tolerated (`{{ content }}` == `{{content}}`); see [`apply_template`].
 pub const PLACEHOLDER: &str = "{{content}}";
 
-/// A built-in template name (`--template prose|dashboard|report`). Public so the CLI can
+/// A built-in template name (`--template prose|dashboard|report|board`). Public so the CLI can
 /// report which built-in resolved and reject an unknown name with an `expected`
 /// allowlist (AI-first §10).
-pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard", "report"];
+pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard", "report", "board"];
 
 /// The default template when `--template` is omitted: the reading theme.
 pub const DEFAULT_TEMPLATE: &str = "prose";
@@ -53,6 +53,7 @@ pub const DEFAULT_TEMPLATE: &str = "prose";
 const PROSE_TEMPLATE: &str = include_str!("templates/prose.html");
 const DASHBOARD_TEMPLATE: &str = include_str!("templates/dashboard.html");
 const REPORT_TEMPLATE: &str = include_str!("templates/report.html");
+const BOARD_TEMPLATE: &str = include_str!("templates/board.html");
 
 /// Resolve a built-in template name to its HTML fragment, or `None` if the name is
 /// not a built-in. All fragments carry exactly one `{{content}}` and are
@@ -64,11 +65,13 @@ const REPORT_TEMPLATE: &str = include_str!("templates/report.html");
 ///   of `.gp-prose` (the hardened reading theme's render contract).
 /// * `dashboard` — a responsive metrics/card composition with a no-script column.
 /// * `report` — a CSS-only narrative report with a print layout.
+/// * `board` — status lanes with progressive enhancement and a ruled no-script fallback.
 pub fn builtin_template(name: &str) -> Option<&'static str> {
     match name {
         "prose" => Some(PROSE_TEMPLATE),
         "dashboard" => Some(DASHBOARD_TEMPLATE),
         "report" => Some(REPORT_TEMPLATE),
+        "board" => Some(BOARD_TEMPLATE),
         _ => None,
     }
 }
@@ -517,7 +520,7 @@ mod tests {
     #[test]
     fn builtin_report_is_a_plain_splice_and_valid_fragment() {
         let t = builtin_template("report").unwrap();
-        assert_eq!(BUILTIN_NAMES, &["prose", "dashboard", "report"]);
+        assert_eq!(BUILTIN_NAMES, &["prose", "dashboard", "report", "board"]);
         assert_eq!(t.matches(PLACEHOLDER).count(), 1);
         assert_eq!(t.matches("<style>").count(), 1);
         assert!(!t.contains("<script"));
@@ -548,6 +551,22 @@ mod tests {
         assert!(body.contains("<table>"));
         assert!(t.contains(PLACEHOLDER));
         assert!(builtin_template("nope").is_none());
+    }
+
+    #[test]
+    fn builtin_board_is_a_plain_splice_and_valid_fragment() {
+        let t = builtin_template("board").unwrap();
+        assert_eq!(t.matches(PLACEHOLDER).count(), 1);
+        assert_eq!(t.matches("<style>").count(), 1);
+        assert_eq!(t.matches("<script>").count(), 1);
+        assert!(!t.contains("<html"));
+        let md = "# Board\n\n## Done\n\n- **Ready**: owner: Mina: tested\n\n## Dependency view\n\n<figure class=\"gp-diagram\"><svg></svg></figure>";
+        let body = render_to_body(md, t).unwrap();
+        assert!(body.contains("<div class=\"gp-board\">\n<h1>Board</h1>"));
+        assert!(body.contains("<h2>Done</h2>"));
+        assert!(body.contains("<figure class=\"gp-diagram\">"));
+        assert!(!body.contains("gp-toc"));
+        assert_eq!(body, apply_template(t, &render_markdown(md)).unwrap());
     }
 
     #[test]

@@ -120,7 +120,7 @@ enum Commands {
         /// Bearer API key for hosted ingest auth (hosted target).
         #[arg(long)]
         api_key: Option<String>,
-        /// Template for markdown pages: a built-in name (prose [default] / dashboard / report)
+        /// Template for markdown pages: a built-in name (prose [default] / dashboard / report / board)
         /// or a path to a template file with one {{content}} slot. Defaults to the
         /// config `template:` value, else `prose`.
         #[arg(long)]
@@ -187,7 +187,7 @@ enum Commands {
         /// Treat the file as markdown, rendered server-side (optionally --template).
         #[arg(long)]
         markdown: bool,
-        /// With --markdown: a built-in template name (prose/dashboard/report) or a template
+        /// With --markdown: a built-in template name (prose/dashboard/report/board) or a template
         /// file path with one {{content}} slot.
         #[arg(long)]
         template: Option<String>,
@@ -356,7 +356,7 @@ enum LoopbackCmd {
         /// A directory (`.html` served verbatim; `.md`/`.markdown` rendered), a
         /// single file, or omitted (serve only the built-in fixtures).
         path: Option<PathBuf>,
-        /// Template for a single markdown file: a built-in name (prose/dashboard/report)
+        /// Template for a single markdown file: a built-in name (prose/dashboard/report/board)
         /// or a path to a template file with one {{content}} slot.
         #[arg(long)]
         template: Option<String>,
