@@ -249,10 +249,11 @@ pub fn render_with_groups(
   aside.gp-sidebar ul ul {{ margin-left:12px; border-left:1px solid rgba(127,127,127,0.25); }}
   @media (max-width: 600px) {{
     .gp-body {{ flex-direction:column-reverse; }}
-    aside.gp-sidebar {{ width:100%; flex:0 0 auto; max-height:35dvh; overflow-y:auto;
+    aside.gp-sidebar {{ width:100%; flex:0 0 auto; max-height:35dvh; overflow:hidden;
       border-right:0; border-top:1px solid var(--gp-shell-border);
       padding:6px 12px; gap:4px; }}
-    .gp-controls {{ flex-direction:row; align-items:center; gap:8px; padding:0; flex-wrap:wrap; }}
+    nav.gp-nav {{ min-height:0; overflow-y:auto; }}
+    .gp-controls {{ flex:0 0 auto; flex-direction:row; align-items:center; gap:8px; padding:0; flex-wrap:wrap; }}
     #gp-theme-toggle {{ min-height:44px; text-align:center; }}
     #gp-delivery {{ flex-basis:100%; }}
     nav.gp-nav {{ flex-direction:row; overflow-x:auto; white-space:nowrap; }}
