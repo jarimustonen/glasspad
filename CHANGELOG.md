@@ -10,14 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+### Fixed
+<!-- oss-changelog:unreleased-end -->
+
+## [0.18.0] - 2026-09-24
+
+### Changed
 - Built-in table pages add labelled keyboard-scrollable tables with a wrapping no-script fallback; landscape print fit is best-effort.
 - Built-in index pages display grouped Markdown link lists as responsive destination cards, retaining native links and a readable no-script fallback.
 - Built-in board pages group Markdown status headings into responsive read-only lanes, including explicit statuses on wide diagram and table lanes; headings and lists remain usable without JavaScript.
 - Built-in report pages use a CSS-only narrative layout with local table scrolling and an ink-light print treatment (wide-table PDF fit is best-effort).
 - Built-in dashboard pages arrange Markdown sections as responsive metric, chart, and detail cards with a no-script fallback.
 - Built-in prose pages use the new long-form reading design while retaining heading anchors and the optional table-of-contents rail.
-### Fixed
-<!-- oss-changelog:unreleased-end -->
 
 ## [0.17.5] - 2026-09-22
 
@@ -537,7 +541,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.17.5...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/jarimustonen/glasspad/compare/v0.17.5...v0.18.0
 [0.17.5]: https://github.com/jarimustonen/glasspad/compare/v0.17.4...v0.17.5
 [0.17.4]: https://github.com/jarimustonen/glasspad/compare/v0.17.3...v0.17.4
 [0.17.3]: https://github.com/jarimustonen/glasspad/compare/v0.17.2...v0.17.3
