@@ -2,7 +2,7 @@
 created: 2026-09-24
 updated: 2026-09-24
 type: improvement
-status: open
+status: in-progress
 priority: normal
 lane: shell-chrome
 collision: [crates/glasspad-core/src/artifact_host/shell.rs, crates/glasspad-cli/src/artifact_host/assets/base.css]
