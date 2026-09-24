@@ -122,6 +122,20 @@ node "$SUITE_DIR/html-relative-assets.mjs" "$SB/myspace"
 code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }
 hdr()  { curl -s -D- -o /dev/null "$1" | tr -d '\r' | awk -F': ' "tolower(\$1)==\"$2\"{print \$2}"; }
 
+check_html_alias() { # space root; requires its server to be running
+  local root="$1" asset bad result
+  for asset in 'sub/photo.avif' 'site.css' 'app.js'; do
+    result="$(code "$root/_c/assets/$asset")"
+    [ "$result" = 200 ]; scheck $? "HTML relative asset alias $root/$asset ($result)"
+    [ "$(hdr "$root/_c/assets/$asset" content-security-policy)" = sandbox ]; scheck $? "HTML alias retains asset sandbox"
+  done
+  for bad in 'assets/%2e%2e/secret.txt' 'assets/%252e%252e/secret.txt' 'assets/sub%2f..%2fsecret.txt' 'assets/sub/..%5csecret.txt' 'assets/missing.js'; do
+    result="$(code "$root/_c/$bad")"
+    [ "$result" = 404 ] || [ "$result" = 400 ]; scheck $? "HTML alias forbidden $root/_c/$bad ($result)"
+  done
+}
+check_html_alias "$SB/myspace"
+
 # Real content + assets serve.
 [ "$(code "$SB/myspace/_c/index")" = "200" ]; scheck $? "live artifact served (200)"
 [ "$(code "$SB/myspace/assets/app.js")" = "200" ]; scheck $? "real asset served (200)"
@@ -260,16 +274,7 @@ HOST_SPACE="$(printf '%s' "$HOST_PUB" | node -e 'process.stdout.write(JSON.parse
 node "$SUITE_DIR/markdown-assets.mjs" "$HOST_ORIGIN/p/$HOST_SPACE/visual" "$HOST_ORIGIN/p/$HOST_SPACE"
 node "$SUITE_DIR/html-relative-assets.mjs" "$HOST_ORIGIN/p/$HOST_SPACE"
 # The alias is the same checked asset map, not a generic content/file route.
-for root in "$SB/myspace" "$HOST_ORIGIN/p/$HOST_SPACE"; do
-  for asset in 'sub/photo.avif' 'site.css' 'app.js'; do
-    [ "$(code "$root/_c/assets/$asset")" = 200 ]; scheck $? "HTML relative asset alias $root/$asset"
-    [ "$(hdr "$root/_c/assets/$asset" content-security-policy)" = sandbox ]; scheck $? "HTML alias retains asset sandbox"
-  done
-  for bad in 'assets/%2e%2e/secret.txt' 'assets/%252e%252e/secret.txt' 'assets/sub%2f..%2fsecret.txt' 'assets/sub/..%5csecret.txt' 'assets/missing.js'; do
-    result="$(code "$root/_c/$bad")"
-    [ "$result" = 404 ] || [ "$result" = 400 ]; scheck $? "HTML alias forbidden $root/_c/$bad ($result)"
-  done
-done
+check_html_alias "$HOST_ORIGIN/p/$HOST_SPACE"
 [ "$(code "$HOST_ORIGIN/p/aaaaaaaaaaaaaaaaaaaaaaaaaa/_c/assets/sub/photo.avif")" = 404 ]; scheck $? "HTML alias foreign capability denied"
 # A rewritten URL is never permission: only exact scanned keys are served.
 for root in "$HOST_ORIGIN/p/$HOST_SPACE"; do
