@@ -10,9 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
-- Viewer navigation and theme controls now live in a trusted responsive sidebar instead of the horizontal header; single-page spaces omit redundant page links.
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
+
+## [0.18.2] - 2026-09-24
+
+### Changed
+- Viewer navigation and theme controls now live in a trusted responsive sidebar instead of the horizontal header; single-page spaces omit redundant page links.
 
 ## [0.18.1] - 2026-09-24
 
@@ -547,7 +551,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/jarimustonen/glasspad/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/jarimustonen/glasspad/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/jarimustonen/glasspad/compare/v0.17.5...v0.18.0
 [0.17.5]: https://github.com/jarimustonen/glasspad/compare/v0.17.4...v0.17.5
