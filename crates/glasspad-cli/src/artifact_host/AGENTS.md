@@ -167,9 +167,13 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   wire/store carry `nav_groups` (`#[serde(default)]`, re-reconciled on the untrusted
   ingest boundary).
 - `mod.rs` — routes (`/{space}/`, `/{space}/{slug}`, `/{space}/_c/{slug}`,
-  `/{space}/assets/{*path}`, `/_gp/reload`, `/_gp/v1/*`), slug/space grammar +
-  reserved-name rejection, header wiring, the live-snapshot + fixtures resolution,
-  and the `ArtifactHost` state (atomic snapshot swap + SSE reload broadcast).
+  `/{space}/assets/{*path}`, `/{space}/_c/assets/{*path}`, `/_gp/reload`, `/_gp/v1/*`),
+  slug/space grammar + reserved-name rejection, header wiring, the live-snapshot +
+  fixtures resolution, and the `ArtifactHost` state (atomic snapshot swap + SSE
+  reload broadcast). The `_c/assets` alias uses the same scanned asset handler
+  as `assets` so full-document HTML's authored `assets/x` resolves against its
+  iframe URL without rewriting stored pages; neither route reads arbitrary files
+  or widens the content CSP.
   Space **asset** responses carry `nosniff` + `Content-Security-Policy: sandbox`
   so a hostile top-level SVG/HTML asset runs script-less in a null origin (the
   `sandbox` directive is ignored for subresource loads, so JS/CSS/img still load

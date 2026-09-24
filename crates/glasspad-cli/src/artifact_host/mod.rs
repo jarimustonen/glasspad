@@ -290,6 +290,11 @@ pub fn spaces_router(host: Arc<ArtifactHost>) -> Router {
     Router::new()
         .route("/{space}/", get(space_entry))
         .route("/{space}/_c/{slug}", get(artifact_content))
+        // A browser resolves authored `assets/x` against the iframe's `_c/slug`
+        // URL. Alias ONLY the scanned assets subtree; never turn arbitrary `_c`
+        // paths into file reads or relax the asset key validator. This also fixes
+        // already-published spaces without rewriting stored HTML.
+        .route("/{space}/_c/assets/{*path}", get(space_asset))
         .route("/{space}/assets/{*path}", get(space_asset))
         .route("/{space}/{slug}", get(shell_page))
         .with_state(host)
@@ -599,7 +604,8 @@ fn render_shell(
     (hmap, Html(body)).into_response()
 }
 
-/// A space's static asset (`/{space}/assets/{*path}`). Path-traversal is
+/// A space's static asset (`/{space}/assets/{*path}` or the relative-URL
+/// alias `/{space}/_c/assets/{*path}`). Path-traversal is
 /// structurally impossible: the request path is grammar-checked into a key, and
 /// that key must exact-match the pre-scanned asset map — which only ever holds
 /// real, symlink-vetted files under the space root. MIME is detected at scan

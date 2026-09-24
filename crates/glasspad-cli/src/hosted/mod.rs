@@ -779,6 +779,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persisted_html_relative_assets_use_the_same_scanned_asset_route() {
+        let root = tmp_root("relative-html");
+        let (app, _, _) = app_with(&root);
+        let r = send(&app, space_req(Some(KEY), serde_json::json!({
+            "pages": [
+                { "slug": "index", "html": "<!doctype html><img src=\"assets/sub/photo.avif\"><link rel=\"stylesheet\" href=\"assets/site.css\">" },
+                { "slug": "guide", "html": "<!doctype html><script src=\"assets/app.js\"></script><a href=\"#section\">section</a>" }
+            ],
+            "assets": [
+                { "path": "sub/photo.avif", "content_base64": "aW1hZ2U=" },
+                { "path": "site.css", "content_base64": "Ym9keXt9" },
+                { "path": "app.js", "content_base64": "Y29uc29sZS5sb2coMSk=" }
+            ]
+        }))).await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+        // Restart from disk: the alias must work for existing publications, not
+        // depend on ingest-time rewriting or the original in-memory snapshot.
+        drop(app);
+        let (app, _, _) = app_with(&root);
+        for page in ["index", "guide"] {
+            let r = send(&app, get_req(format!("/p/{slug}/_c/{page}"))).await;
+            assert_eq!(r.status(), StatusCode::OK);
+            let html = String::from_utf8(
+                axum::body::to_bytes(r.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(html.contains("assets/") && !html.contains("<base href="));
+        }
+        for (path, mime) in [
+            ("sub/photo.avif", "image/avif"),
+            ("site.css", "text/css; charset=utf-8"),
+            ("app.js", "text/javascript; charset=utf-8"),
+        ] {
+            let r = send(&app, get_req(format!("/p/{slug}/_c/assets/{path}"))).await;
+            assert_eq!(r.status(), StatusCode::OK, "{path}");
+            assert_eq!(r.headers()["content-type"], mime);
+            assert_eq!(r.headers()["content-security-policy"], "sandbox");
+            assert!(r.headers().get("access-control-allow-origin").is_none());
+            assert_eq!(r.headers()["x-robots-tag"], "noindex, nofollow");
+        }
+        for bad in [
+            format!("/p/{slug}/_c/assets/nope.js"),
+            format!("/p/{slug}/_c/assets/%2e%2e/sub/photo.avif"),
+            format!("/p/{slug}/_c/assets/sub%2f..%2fphoto.avif"),
+            format!("/p/{slug}/_c/assets/%252e%252e/secret.txt"),
+            "/p/aaaaaaaaaaaaaaaaaaaaaaaaaa/_c/assets/site.css".into(),
+        ] {
+            let status = send(&app, get_req(&bad)).await.status();
+            assert!(
+                matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST),
+                "{bad}: {status}"
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
     async fn hostile_body_cannot_widen_csp_on_hosted_route() {
         let root = tmp_root("hostile");
         let (app, _, _) = app_with(&root);

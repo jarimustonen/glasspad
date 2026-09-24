@@ -77,17 +77,21 @@ trap 'cleanup; cleanup_space' EXIT
 # A clean, servable space. `secret` lives OUTSIDE it — the symlink probe targets it.
 printf 'SECRET-OUTSIDE-THE-SPACE' > "$WORK/secret.txt"
 mkdir -p "$WORK/myspace/assets/sub"
-printf '<!doctype html><title>Home</title><h1>hi</h1>' > "$WORK/myspace/index.html"
 printf '<!doctype html><title>Sales Q3</title><h1>sales</h1>' > "$WORK/myspace/sales.html"
 # Wave 4 nav-injection probe (server side): a hostile artifact TITLE that the
 # resolver DECODES to raw markup as text. The trusted parent nav must never emit
 # it as executable markup — it lives in the nav data literal JSON-for-script
 # encoded, and is inserted client-side via textContent.
 printf '<!doctype html><title>&quot;&gt;&lt;img src=x onerror=alert(1)&gt;&lt;script&gt;alert(2)&lt;/script&gt;</title><h1>inj</h1>' > "$WORK/myspace/inject.html"
-printf 'console.log(1)' > "$WORK/myspace/assets/app.js"
 # A hostile SVG asset: must be neutralized (served with `Content-Security-Policy: sandbox`).
 printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' > "$WORK/myspace/assets/logo.svg"
 printf '{"x":1}' > "$WORK/myspace/assets/sub/data.json"
+printf '#styled{color:rgb(7,8,9)}' > "$WORK/myspace/assets/site.css"
+printf 'document.addEventListener("DOMContentLoaded",()=>{document.querySelector("#scripted").textContent="loaded"})' > "$WORK/myspace/assets/app.js"
+cat > "$WORK/myspace/index.html" <<'HTML'
+<!doctype html><html><head><link rel="stylesheet" href="assets/site.css"><script src="assets/app.js"></script></head><body><img id="photo" src="assets/sub/photo.avif"><div id="styled">styled</div><div id="scripted"></div><a href="#section">section</a><div id="section">section</div><a id="guide-link" href="../guide" target="_top">guide</a></body></html>
+HTML
+printf '<!doctype html><html><body><img id="nested-photo" src="assets/sub/photo.avif"></body></html>' > "$WORK/myspace/guide.html"
 # Markdown-authored references must resolve from the private _c route to the
 # same-space asset route in both targets. Raw HTML stays untouched.
 cp brand/logo.avif "$WORK/myspace/assets/sub/photo.avif"
@@ -113,6 +117,7 @@ for _ in $(seq 1 40); do
 done
 SB="http://127.0.0.1:$SPACE_PORT"
 GLASSPAD_PORT="$SPACE_PORT" node "$SUITE_DIR/markdown-assets.mjs" "$SB/myspace/visual" "$SB/myspace"
+node "$SUITE_DIR/html-relative-assets.mjs" "$SB/myspace"
 
 code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }
 hdr()  { curl -s -D- -o /dev/null "$1" | tr -d '\r' | awk -F': ' "tolower(\$1)==\"$2\"{print \$2}"; }
@@ -253,6 +258,19 @@ HOST_PUB="$(./target/debug/glasspad --json publish --no-open --target hosted \
   --server "$HOST_ORIGIN" --api-key "$KEYA" "$WORK/myspace")"
 HOST_SPACE="$(printf '%s' "$HOST_PUB" | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0,"utf8")).slug)')"
 node "$SUITE_DIR/markdown-assets.mjs" "$HOST_ORIGIN/p/$HOST_SPACE/visual" "$HOST_ORIGIN/p/$HOST_SPACE"
+node "$SUITE_DIR/html-relative-assets.mjs" "$HOST_ORIGIN/p/$HOST_SPACE"
+# The alias is the same checked asset map, not a generic content/file route.
+for root in "$SB/myspace" "$HOST_ORIGIN/p/$HOST_SPACE"; do
+  for asset in 'sub/photo.avif' 'site.css' 'app.js'; do
+    [ "$(code "$root/_c/assets/$asset")" = 200 ]; scheck $? "HTML relative asset alias $root/$asset"
+    [ "$(hdr "$root/_c/assets/$asset" content-security-policy)" = sandbox ]; scheck $? "HTML alias retains asset sandbox"
+  done
+  for bad in 'assets/%2e%2e/secret.txt' 'assets/%252e%252e/secret.txt' 'assets/sub%2f..%2fsecret.txt' 'assets/sub/..%5csecret.txt' 'assets/missing.js'; do
+    result="$(code "$root/_c/$bad")"
+    [ "$result" = 404 ] || [ "$result" = 400 ]; scheck $? "HTML alias forbidden $root/_c/$bad ($result)"
+  done
+done
+[ "$(code "$HOST_ORIGIN/p/aaaaaaaaaaaaaaaaaaaaaaaaaa/_c/assets/sub/photo.avif")" = 404 ]; scheck $? "HTML alias foreign capability denied"
 # A rewritten URL is never permission: only exact scanned keys are served.
 for root in "$HOST_ORIGIN/p/$HOST_SPACE"; do
   for bad in 'assets/%2e%2e/secret.txt' 'assets/%252e%252e/secret.txt' 'assets/sub%2f..%2fsecret.txt' 'assets/sub/..%5csecret.txt'; do
