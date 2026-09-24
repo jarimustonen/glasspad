@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.18.4] - 2026-09-24
+
+### Fixed
+- Self-hosted macOS release jobs now install cargo-dist into a unique runner-temporary directory instead of touching the runner's persistent Cargo binaries. Linux release jobs retain their generated installer and plan cache.
+
 ## [0.18.3] - 2026-09-24
 
 ### Fixed
@@ -556,7 +561,9 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.4...HEAD
+[0.18.4]: https://github.com/jarimustonen/glasspad/compare/v0.18.3...v0.18.4
+[0.18.3]: https://github.com/jarimustonen/glasspad/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/jarimustonen/glasspad/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/jarimustonen/glasspad/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/jarimustonen/glasspad/compare/v0.17.5...v0.18.0
