@@ -2235,7 +2235,7 @@ mod fs_tests {
         let index = space.artifact("index").unwrap();
         // Rendered through the default `prose` fragment template (base.css hardened
         // reading theme), so it is a fragment the serve path wraps + bridges.
-        assert!(index.html.contains(r#"<article class="gp-prose">"#));
+        assert!(index.html.contains(r#"<article class="gp-prose gp-read">"#));
         assert!(index.html.contains(r#"<h1 id="home">Home</h1>"#));
         // The relative markdown link survives so same-space nav resolves.
         assert!(index.html.contains(r#"href="./guide""#));
@@ -2458,7 +2458,7 @@ mod fs_tests {
         // The script text is present but inert — it only ever runs inside the frozen
         // sandbox, and `connect-src 'none'` (set on the response) blocks the fetch.
         assert!(body.contains("evil.example"));
-        assert!(body.contains(r#"<article class="gp-prose">"#));
+        assert!(body.contains(r#"<article class="gp-prose gp-read">"#));
     }
 
     #[test]

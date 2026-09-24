@@ -505,7 +505,7 @@ MB="http://127.0.0.1:$SPACE_PORT"
 # The md page renders and serves — through the default `prose` fragment template.
 [ "$(code "$MB/mdspace/_c/index")" = "200" ]; scheck $? "md: a markdown page renders and serves (200)"
 MDBODY="$(curl -s "$MB/mdspace/_c/index")"
-grep -q '<article class="gp-prose">' <<< "$MDBODY"; scheck $? "md: the page rendered through the prose template"
+grep -q '<article class="gp-prose gp-read">' <<< "$MDBODY"; scheck $? "md: the page rendered through the prose template"
 grep -qE '<h1[^>]*>Home</h1>' <<< "$MDBODY"; scheck $? "md: markdown was rendered to HTML server-side"
 # Cross-page nav: the relative markdown link survives so same-space nav resolves,
 # and the target md page it points at actually serves (functional, not just textual).

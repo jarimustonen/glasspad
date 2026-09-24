@@ -47,14 +47,10 @@ pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard"];
 /// The default template when `--template` is omitted: the reading theme.
 pub const DEFAULT_TEMPLATE: &str = "prose";
 
-/// The built-in `prose` fragment, as a single source of truth. Both
-/// [`builtin_template`] (the `--template prose` resolution) and [`render_to_body`]
-/// (which routes this exact fragment through the TOC-aware [`render_prose_body`])
-/// reference it, so the "is this the prose template?" dispatch can never silently
-/// drift from the string it dispatches on. `render_prose_body` reproduces the same
-/// `<article class="gp-prose">…</article>` shape (it must — it emits an optional TOC
-/// sibling around it), which this constant documents as the canonical form.
-const PROSE_TEMPLATE: &str = "<article class=\"gp-prose\">\n{{content}}\n</article>\n";
+/// The designer's prose fragment is shipped with the core; the same canonical
+/// source is used for name resolution and TOC-aware rendering. Custom template
+/// strings (including custom space templates) retain their existing semantics.
+const PROSE_TEMPLATE: &str = include_str!("templates/prose.html");
 
 /// Resolve a built-in template name to its HTML fragment, or `None` if the name is
 /// not a built-in. Both fragments carry exactly one `{{content}}` and are
@@ -290,22 +286,20 @@ fn render_toc(entries: &[TocEntry]) -> String {
     out
 }
 
-/// Render a markdown body as the built-in `prose` fragment, with the per-page TOC
-/// rail. When the page has fewer than [`MIN_TOC_ENTRIES`] H2/H3 headings the rail is
-/// omitted and the output is the plain `<article class="gp-prose">…</article>`
-/// fragment (the pre-TOC layout) — graceful fallback, no empty rail. With enough
-/// headings, the article and the rail sit side by side inside a `.gp-doc` grid (the
-/// rail is a sibling of `.gp-prose`, so the "rendered blocks are direct children of
-/// `.gp-prose`" render contract is preserved). Everything is one artifact fragment —
-/// the anchors work natively inside the null-origin sandbox, no shell involvement.
+/// Render through the canonical prose fragment. Only the built-in prose path
+/// gets this rail; the insertion marker remains directly inside `.gp-prose`.
 fn render_prose_body(markdown: &str) -> String {
     let (rendered, toc) = render_markdown_with_headings(markdown);
+    // PROSE_TEMPLATE is checked by the built-in fragment test. It is a constant
+    // containing exactly one placeholder, so applying it cannot fail.
+    let article = apply_template(PROSE_TEMPLATE, &rendered)
+        .expect("built-in prose fragment must have exactly one content marker");
     if toc.len() < MIN_TOC_ENTRIES {
-        return format!("<article class=\"gp-prose\">\n{rendered}\n</article>\n");
+        return article;
     }
-    let rail = render_toc(&toc);
     format!(
-        "<div class=\"gp-doc\">\n<article class=\"gp-prose\">\n{rendered}\n</article>\n{rail}</div>\n"
+        "<div class=\"gp-doc\">\n{article}\n{}</div>\n",
+        render_toc(&toc)
     )
 }
 
@@ -483,17 +477,37 @@ mod tests {
     fn builtin_prose_is_the_default_and_wraps_gp_prose() {
         assert_eq!(DEFAULT_TEMPLATE, "prose");
         let t = builtin_template("prose").unwrap();
-        assert!(t.contains(r#"<article class="gp-prose">"#));
+        assert!(t.contains(r#"<article class="gp-prose gp-read">"#));
         assert!(t.contains(PLACEHOLDER));
         // The render contract: rendered blocks are DIRECT children of .gp-prose —
         // the placeholder sits immediately inside the article, nothing between.
         let body = render_to_body("# Hi\n\ntext", t).unwrap();
-        let article_open = body.find(r#"<article class="gp-prose">"#).unwrap();
+        let article_open = body.find(r#"<article class="gp-prose gp-read">"#).unwrap();
         // The prose path now stamps a server-generated anchor id on every heading.
         let h1 = body.find(r#"<h1 id="hi">Hi</h1>"#).unwrap();
         // Only whitespace between the article tag and the first rendered block.
-        let between = &body[article_open + r#"<article class="gp-prose">"#.len()..h1];
+        let between = &body[article_open + r#"<article class="gp-prose gp-read">"#.len()..h1];
         assert!(between.trim().is_empty(), "not a direct child: {between:?}");
+    }
+
+    #[test]
+    fn designer_prose_fragment_is_a_valid_builtin_and_preserves_custom_splice() {
+        let t = builtin_template("prose").unwrap();
+        assert_eq!(t.matches(PLACEHOLDER).count(), 1);
+        assert_eq!(t.matches("<style>").count(), 1);
+        assert_eq!(t.matches("<script>").count(), 1);
+        assert!(t.contains("<article class=\"gp-prose gp-read\">\n{{content}}"));
+        let md = "# Reading\n\n*Byline*\n\nLead.\n\n## One\n\nText\n\n## Two\n";
+        let built = render_to_body(md, t).unwrap();
+        assert!(built.contains("<nav class=\"gp-toc\""));
+        assert!(built.contains("<h2 id=\"one\">One</h2>"));
+        assert!(built.contains("<p><em>Byline</em></p>\n<p>Lead.</p>"));
+        let custom = "<main class=\"mine\">{{content}}</main>";
+        assert_eq!(
+            render_to_body(md, custom).unwrap(),
+            apply_template(custom, &render_markdown(md)).unwrap()
+        );
+        assert!(!render_to_body(md, custom).unwrap().contains("gp-toc"));
     }
 
     #[test]
@@ -558,11 +572,11 @@ mod tests {
     #[test]
     fn render_to_body_end_to_end() {
         let out = render_to_body("## Sub\n", builtin_template("prose").unwrap()).unwrap();
-        assert!(out.contains(r#"<article class="gp-prose">"#));
+        assert!(out.contains(r#"<article class="gp-prose gp-read">"#));
         // A single heading gets an anchor id but no rail (below MIN_TOC_ENTRIES).
         assert!(out.contains(r#"<h2 id="sub">Sub</h2>"#));
-        assert!(!out.contains("gp-toc"));
-        assert!(!out.contains("gp-doc"));
+        assert!(!out.contains("<nav class=\"gp-toc\""));
+        assert!(!out.contains("<div class=\"gp-doc\""));
     }
 
     #[test]
@@ -571,7 +585,7 @@ mod tests {
         let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
         // Layout: the rail is a sibling of the prose article inside .gp-doc.
         assert!(out.contains(r#"<div class="gp-doc">"#));
-        assert!(out.contains(r#"<article class="gp-prose">"#));
+        assert!(out.contains(r#"<article class="gp-prose gp-read">"#));
         assert!(out.contains(r#"<nav class="gp-toc""#));
         // Headings carry server-generated anchor ids…
         assert!(out.contains(r#"<h2 id="alpha">Alpha</h2>"#));
@@ -588,11 +602,11 @@ mod tests {
         // Zero H2/H3 → no rail, plain prose fragment (the pre-TOC layout).
         let none =
             render_to_body("# Title\n\njust body\n", builtin_template("prose").unwrap()).unwrap();
-        assert!(!none.contains("gp-doc") && !none.contains("gp-toc"));
-        assert!(none.starts_with(r#"<article class="gp-prose">"#));
+        assert!(!none.contains("<div class=\"gp-doc\"") && !none.contains("<nav class=\"gp-toc\""));
+        assert!(none.contains(r#"<article class="gp-prose gp-read">"#));
         // One H2 → still no rail (one entry is not a table of contents).
         let one = render_to_body("## Only\n\nbody\n", builtin_template("prose").unwrap()).unwrap();
-        assert!(!one.contains("gp-doc") && !one.contains("gp-toc"));
+        assert!(!one.contains("<div class=\"gp-doc\"") && !one.contains("<nav class=\"gp-toc\""));
     }
 
     #[test]
@@ -701,7 +715,7 @@ mod tests {
         let out = render_to_body(md, builtin_template("prose").unwrap()).unwrap();
         // Only one real rail entry → below MIN_TOC_ENTRIES → no rail at all.
         assert!(
-            !out.contains("gp-toc"),
+            !out.contains("<nav class=\"gp-toc\""),
             "text-less heading padded the rail: {out}"
         );
         // No empty anchor was emitted.
@@ -789,7 +803,7 @@ Where we are:
         assert!(body.contains(r#"<path class="gp-edge""#));
         assert!(body.contains(r#"<text class="gp-node-label""#));
         // …and it is spliced inside the prose article (the direct-child render contract).
-        assert!(body.contains(r#"<article class="gp-prose">"#));
+        assert!(body.contains(r#"<article class="gp-prose gp-read">"#));
     }
 
     #[test]

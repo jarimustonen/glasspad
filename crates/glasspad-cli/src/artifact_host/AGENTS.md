@@ -66,7 +66,7 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   *tighten* — fails closed), and the trusted shell is a different route built from
   the resolved title via `textContent`, so a template can neither widen the
   boundary nor inject the shell. Built-in templates (`prose` =
-  `<article class="gp-prose">…</article>` [default], `dashboard` = `.gp-card`) are
+  `<article class="gp-prose gp-read">…</article>` [default; inline reading styles and optional byline/TOC enhancement], `dashboard` = `.gp-card`) are
   **fragments**, so they inherit `base.css` (incl. the hardened `.gp-prose`
   reading theme) + `bridge.js` for free. `wrap.rs`/`shell.rs` are unchanged.
   **Per-page TOC rail (prose-page-toc):** the built-in `prose` path stamps a

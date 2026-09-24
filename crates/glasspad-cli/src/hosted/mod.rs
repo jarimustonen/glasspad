@@ -1332,7 +1332,7 @@ mod tests {
             .unwrap();
         let html = String::from_utf8_lossy(&bytes);
         assert!(html.contains(r#"<h1 id="hello">Hello</h1>"#));
-        assert!(html.contains(r#"<article class="gp-prose">"#));
+        assert!(html.contains(r#"<article class="gp-prose gp-read">"#));
         std::fs::remove_dir_all(&root).ok();
     }
 
