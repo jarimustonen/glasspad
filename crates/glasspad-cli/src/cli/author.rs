@@ -356,7 +356,7 @@ pub async fn render(
             "the template renders a full HTML document (opens with <!doctype>/<html>): \
              it is served verbatim, so glasspad does NOT link base.css (the .gp-prose \
              theme) or inject bridge.js (in-frame live reload). Use a fragment template \
-             (e.g. the built-in prose/dashboard) to keep those, or link base.css yourself."
+             (e.g. the built-in prose/dashboard/report) to keep those, or link base.css yourself."
                 .to_string(),
         );
     }
@@ -412,7 +412,7 @@ pub async fn render(
 
 /// Resolve `--template <ref>` (default `prose`) to `(watcher handle, source string,
 /// kind, label)`. **Resolution rule:** an exact built-in name (`prose` /
-/// `dashboard`) resolves to that built-in; **anything else** is a filesystem path
+/// `dashboard` / `report`) resolves to that built-in; **anything else** is a filesystem path
 /// to a template file (read strictly). Built-in names contain no `/` or `.`, so a
 /// local file literally named `prose` is reachable as `./prose` (≠ `"prose"` → a
 /// path) — unambiguous. `kind` is `"builtin"`/`"file"` for the envelope; `label` is

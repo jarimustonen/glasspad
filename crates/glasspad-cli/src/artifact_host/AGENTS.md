@@ -132,7 +132,7 @@ request/response handling, storage, fixtures, and guards remain here at the I/O 
   structurally impossible — you can only fetch a key that already exists).
   **Markdown-native spaces (Gap 2):** a top-level `.md`/`.markdown` file is a page
   too — `scan_dir` buffers it, then renders it through a built-in fragment template
-  (`render::render_to_body`; `prose` default or `dashboard`, selected per-space via
+  (`render::render_to_body`; `prose` default, `dashboard`, or `report`, selected per-space via
   `glasspad.yaml`'s `template:` key) into an artifact **body** (slug = stem), which
   then flows through the identical serve path as an `.html` artifact — so the
   security boundary is unchanged (the template governs only the body; the CSP /

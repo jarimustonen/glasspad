@@ -1270,6 +1270,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn report_fragment_uses_existing_sandbox_and_wrap() {
+        let body = render::render_to_body(
+            "# Report\n\nDate.\n\n## Summary\n\nDetails.\n",
+            render::builtin_template("report").unwrap(),
+        )
+        .unwrap();
+        let resp = get_on(host_with_rendered_body(&body), "/r/_c/index").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let csp = header(&resp, "content-security-policy");
+        assert!(csp.starts_with("sandbox allow-scripts"));
+        assert!(csp.contains("connect-src 'none'"));
+        let html = body_string(resp).await;
+        assert!(html.contains("/_gp/v1/base.css"));
+        assert!(html.contains("/_gp/v1/bridge.js"));
+        assert!(html.contains("<article class=\"gp-report\">"));
+        assert!(!html.contains("gp-toc"));
+    }
+
+    #[tokio::test]
     async fn hostile_template_body_cannot_widen_csp() {
         // A template/markdown that tries to widen CSP (a <meta http-equiv> tag), run
         // arbitrary script, or break out of the body (a stray </body></html>) must

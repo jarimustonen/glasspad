@@ -1,0 +1,244 @@
+<style>
+/* Glasspad built-in template: report — narrative analytical deliverable.
+   Wide screens: h2 section labels sit in a left rail; narrative keeps a reading
+   measure while tables and charts use the full content column. Pure CSS. */
+.gp-report {
+  --gp-report-rail: 12rem;
+  --gp-report-measure: 40rem;
+  display: grid;
+  grid-template-columns: var(--gp-report-rail) minmax(0, 1fr);
+  align-items: start;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-block: clamp(0.5rem, 3vw, 2.5rem) 4rem;
+  overflow-x: clip;
+  font-family: var(--gp-font-serif);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  color: var(--gp-text);
+  overflow-wrap: break-word;
+}
+.gp-report > * {
+  grid-column: 2;
+  min-width: 0;
+  max-width: var(--gp-report-measure);
+  margin: 0 0 1.1em;
+}
+.gp-report > :is(table, pre, figure, .gp-chart, [data-gp-chart], .gp-diagram, .gp-recommendation) { max-width: none; }
+.gp-report > .gp-wide { grid-column: 1 / -1; max-width: none; }
+.gp-report p,
+.gp-report li { text-wrap: pretty; }
+
+/* Title block: the first h1 and the paragraph after it. */
+.gp-report > h1:first-child {
+  grid-column: 1 / -1;
+  max-width: 24ch;
+  margin: 0 0 0.6rem;
+  font-size: clamp(2rem, 1.3rem + 2.6vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.gp-report > h1:first-child + p {
+  grid-column: 1 / -1;
+  max-width: none;
+  margin: 0 0 2.5rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 2px solid var(--gp-text);
+  font-family: var(--gp-font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--gp-text-secondary);
+}
+.gp-report > h1:first-child + p strong { font-weight: 500; color: inherit; }
+
+/* Section labels in the rail; the rule runs the full width via ::after. */
+.gp-report > h2 {
+  grid-column: 1;
+  position: relative;
+  max-width: none;
+  margin: 2.25rem 0 0;
+  padding: 1.15rem 1.5rem 0 0;
+  border-top: 1px solid var(--gp-border-strong);
+  font-family: var(--gp-font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--gp-text);
+  text-wrap: balance;
+}
+.gp-report > h2::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 100%;
+  width: 100vw;
+  border-top: 1px solid var(--gp-border-strong);
+}
+.gp-report > h3 {
+  margin: 1.75rem 0 0.4rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--gp-text);
+}
+
+/* Executive summary: first section after the title block, or .gp-summary. */
+.gp-report > h1:first-child + p + h2 + p,
+.gp-report > .gp-summary {
+  font-size: 1.25rem;
+  line-height: 1.55;
+  letter-spacing: -0.003em;
+}
+
+.gp-report a {
+  color: var(--gp-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--gp-accent-border);
+  text-underline-offset: 0.16em;
+  overflow-wrap: anywhere;
+}
+.gp-report a:hover { color: var(--gp-accent-hover); text-decoration-color: currentColor; }
+.gp-report a:focus-visible { outline: 2px solid var(--gp-focus); outline-offset: 2px; border-radius: 2px; }
+
+.gp-report ul { padding-inline-start: 1.25rem; }
+.gp-report li { margin: 0.35em 0; }
+.gp-report li::marker { color: var(--gp-text-muted); }
+.gp-report > ol { list-style: none; padding: 0; }
+.gp-report > ol > li {
+  position: relative;
+  margin: 0.55em 0;
+  padding-inline-start: 2.5rem;
+}
+.gp-report > ol > li::before {
+  content: counter(list-item, decimal-leading-zero);
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0.3em;
+  font-family: var(--gp-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  color: var(--gp-text-muted);
+}
+
+.gp-report > blockquote {
+  padding: 0.125rem 0 0.125rem 1.25rem;
+  border-inline-start: 2px solid var(--gp-border-strong);
+  font-style: italic;
+  color: var(--gp-text-secondary);
+}
+.gp-report blockquote > :last-child { margin-bottom: 0; }
+.gp-report blockquote :is(code, pre) { font-style: normal; }
+
+/* Data: sans, tabular, scroll locally. */
+.gp-report table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  margin-block: 1.25rem 1.75rem;
+  font-family: var(--gp-font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.gp-report th,
+.gp-report td {
+  padding: 0.55rem 1.5rem 0.55rem 0;
+  border-bottom: 1px solid var(--gp-border);
+  vertical-align: top;
+}
+.gp-report :is(th, td):last-child { padding-inline-end: 0; }
+.gp-report th {
+  font-size: inherit;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--gp-text);
+  border-bottom: 1px solid var(--gp-text);
+  vertical-align: bottom;
+}
+.gp-report tbody tr:hover { background: none; }
+.gp-report [align="right"] { text-align: right; }
+
+.gp-report > :where(.gp-chart, [data-gp-chart]) { margin-block: 1.25rem 1.75rem; }
+.gp-report figure { margin-inline: 0; }
+.gp-report figcaption,
+.gp-report .gp-source-note {
+  margin-top: 0.5rem;
+  font-family: var(--gp-font-sans);
+  font-size: 0.8125rem;
+  color: var(--gp-text-muted);
+}
+.gp-report img { max-width: 100%; height: auto; border: 1px solid var(--gp-border); border-radius: 8px; }
+.gp-report :not(pre) > code { font-size: 0.82em; }
+.gp-report pre { font-size: 0.8125rem; }
+
+/* Optional blocks */
+.gp-report > .gp-recommendation {
+  padding: 1.25rem 1.5rem;
+  background: var(--gp-surface-alt);
+  border-radius: 12px;
+}
+.gp-report > .gp-recommendation > :last-child { margin-bottom: 0; }
+.gp-report > .gp-sources {
+  font-family: var(--gp-font-sans);
+  font-size: 0.8125rem;
+  color: var(--gp-text-secondary);
+}
+/* Keep any first block level with its section label, including tables and charts. */
+.gp-report > h2 + * { margin-top: 2.25rem; padding-top: 0.875rem; }
+
+@media (max-width: 52rem) {
+  .gp-report { display: block; font-size: 1rem; }
+  .gp-report > * { max-width: none; }
+  .gp-report > h1:first-child { max-width: none; }
+  .gp-report > h2 {
+    margin: 2.5rem 0 0.75rem;
+    padding: 1rem 0 0;
+    font-size: 1rem;
+  }
+  .gp-report > h2::after { display: none; }
+  .gp-report > h2 + * { margin-top: 0; padding-top: 0; }
+  .gp-report > h1:first-child + p + h2 + p,
+  .gp-report > .gp-summary { font-size: 1.125rem; }
+}
+@media (max-width: 30rem) { body { padding: 1rem; } }
+
+@page { margin: 20mm 18mm 22mm; }
+@media print {
+  :root, :root[data-theme] {
+    --gp-bg: #fff; --gp-surface: #fff; --gp-surface-alt: #f4f4f4; --gp-surface-hover: #fff;
+    --gp-text: #111; --gp-text-secondary: #333; --gp-text-muted: #555; --gp-text-faint: #777;
+    --gp-accent: #111; --gp-accent-hover: #111; --gp-accent-soft: #fff; --gp-accent-border: #999;
+    --gp-accent-tag: #eee; --gp-accent-text: #111;
+    --gp-border: #ccc; --gp-border-subtle: #e2e2e2; --gp-border-strong: #999;
+    --gp-code-text: #111; --gp-shadow: none; --gp-chart-bg: transparent;
+  }
+  body { background: #fff; padding: 0; }
+  .gp-report { display: block; max-width: none; padding: 0; overflow: visible; font-size: 10.5pt; line-height: 1.5; }
+  .gp-report > * { max-width: none; }
+  .gp-report > h1:first-child { font-size: 24pt; }
+  .gp-report > h1:first-child + p { margin-bottom: 16pt; }
+  .gp-report > h2 { margin: 18pt 0 6pt; padding: 6pt 0 0; font-size: 12pt; break-after: avoid; }
+  .gp-report > h2::after { display: none; }
+  .gp-report > h2 + * { margin-top: 0; padding-top: 0; }
+  .gp-report > h3 { break-after: avoid; }
+  .gp-report p, .gp-report li { orphans: 3; widows: 3; }
+  .gp-report table { display: table; width: 100%; overflow: visible; font-size: 8.5pt; }
+  .gp-report thead { display: table-header-group; }
+  .gp-report tr { break-inside: avoid; }
+  .gp-report :is(th, td) { padding-inline-end: 8pt; overflow-wrap: anywhere; }
+  .gp-report :is(pre, blockquote, figure, .gp-chart, [data-gp-chart], .gp-recommendation) { break-inside: avoid; }
+  .gp-report pre { white-space: pre-wrap; }
+  .gp-report a { color: inherit; }
+  .gp-report a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.8em; color: #555; }
+}
+</style>
+<article class="gp-report">
+{{content}}
+</article>

@@ -2317,6 +2317,18 @@ mod fs_tests {
     }
 
     #[test]
+    fn manifest_report_template_renders_markdown_without_toc() {
+        let d = TempDir::new();
+        d.write("index.md", b"# Report\n\nDate.\n\n## Summary\n\nText.\n\n## Data\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
+        d.write("glasspad.yaml", b"template: report\n");
+        let space = scan_dir(d.path()).unwrap();
+        let html = &space.artifact("index").unwrap().html;
+        assert!(html.contains("<article class=\"gp-report\">"));
+        assert!(html.contains("<table>"));
+        assert!(!html.contains("gp-toc"));
+    }
+
+    #[test]
     fn manifest_template_orders_and_resolves_regardless_of_scan_order() {
         // `about.md` sorts before `glasspad.yaml`; the template must still apply.
         let d = TempDir::new();

@@ -28,7 +28,7 @@
 //! lives inside the artifact's OWN fragment, so its `#anchor` links resolve natively
 //! inside the null-origin sandbox — no shell involvement, no new postMessage surface,
 //! CSP unchanged. Heading text is untrusted and reaches the rail only HTML-escaped.
-//! Every other template (`dashboard`, custom) is the unchanged plain splice.
+//! Every other template (`dashboard`, `report`, custom) is the unchanged plain splice.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -39,10 +39,10 @@ use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, 
 /// braces is tolerated (`{{ content }}` == `{{content}}`); see [`apply_template`].
 pub const PLACEHOLDER: &str = "{{content}}";
 
-/// A built-in template name (`--template prose|dashboard`). Public so the CLI can
+/// A built-in template name (`--template prose|dashboard|report`). Public so the CLI can
 /// report which built-in resolved and reject an unknown name with an `expected`
 /// allowlist (AI-first §10).
-pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard"];
+pub const BUILTIN_NAMES: &[&str] = &["prose", "dashboard", "report"];
 
 /// The default template when `--template` is omitted: the reading theme.
 pub const DEFAULT_TEMPLATE: &str = "prose";
@@ -52,9 +52,10 @@ pub const DEFAULT_TEMPLATE: &str = "prose";
 /// strings (including custom space templates) retain their existing semantics.
 const PROSE_TEMPLATE: &str = include_str!("templates/prose.html");
 const DASHBOARD_TEMPLATE: &str = include_str!("templates/dashboard.html");
+const REPORT_TEMPLATE: &str = include_str!("templates/report.html");
 
 /// Resolve a built-in template name to its HTML fragment, or `None` if the name is
-/// not a built-in. Both fragments carry exactly one `{{content}}` and are
+/// not a built-in. All fragments carry exactly one `{{content}}` and are
 /// fragments (not full documents), so the content route wraps them with
 /// `base.css` + `bridge.js` — the `--gp-*` system styles them with no extra
 /// wiring.
@@ -62,10 +63,12 @@ const DASHBOARD_TEMPLATE: &str = include_str!("templates/dashboard.html");
 /// * `prose` — `<article class="gp-prose">` so rendered blocks are direct children
 ///   of `.gp-prose` (the hardened reading theme's render contract).
 /// * `dashboard` — a responsive metrics/card composition with a no-script column.
+/// * `report` — a CSS-only narrative report with a print layout.
 pub fn builtin_template(name: &str) -> Option<&'static str> {
     match name {
         "prose" => Some(PROSE_TEMPLATE),
         "dashboard" => Some(DASHBOARD_TEMPLATE),
+        "report" => Some(REPORT_TEMPLATE),
         _ => None,
     }
 }
@@ -509,6 +512,23 @@ mod tests {
             apply_template(custom, &render_markdown(md)).unwrap()
         );
         assert!(!render_to_body(md, custom).unwrap().contains("gp-toc"));
+    }
+
+    #[test]
+    fn builtin_report_is_a_plain_splice_and_valid_fragment() {
+        let t = builtin_template("report").unwrap();
+        assert_eq!(BUILTIN_NAMES, &["prose", "dashboard", "report"]);
+        assert_eq!(t.matches(PLACEHOLDER).count(), 1);
+        assert_eq!(t.matches("<style>").count(), 1);
+        assert!(!t.contains("<script"));
+        assert!(!t.contains("<html"));
+        let md = "# Report\n\nContext.\n\n## Summary\n\n[link](https://example.org)\n\n| A | B |\n|---|---|\n| x | y |";
+        let body = render_to_body(md, t).unwrap();
+        assert!(body.contains("<article class=\"gp-report\">\n<h1>Report</h1>"));
+        assert!(body.contains("<table>"));
+        assert!(body.contains("<a href=\"https://example.org\">link</a>"));
+        assert!(!body.contains("gp-toc"));
+        assert_eq!(body, apply_template(t, &render_markdown(md)).unwrap());
     }
 
     #[test]

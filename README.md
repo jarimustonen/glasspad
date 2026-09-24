@@ -78,7 +78,8 @@ to adopt an existing URL explicitly (including URLs published before this behavi
 
 Markdown files can sit alongside HTML in a space; `publish`, `loopback serve`, and
 `build` render them through the built-in prose template or a template selected in
-`glasspad.yaml`. They retain the same null-origin sandbox as HTML artifacts. The built-in
+`glasspad.yaml` (`prose`, `dashboard`, or `report`). They retain the same
+null-origin sandbox as HTML artifacts. The built-in
 prose layout uses a centered reading column, optional italic-only byline immediately
 after the title (detected with JavaScript), larger opening paragraph, and an "On this page" rail for two or more
 H2/H3 headings. The rail is hidden on narrow screens and in print; heading anchors
@@ -86,7 +87,9 @@ and content remain available without JavaScript (the byline then remains an ordi
 italic paragraph). Wide tables and code scroll within
 the column on screen. Byline detection is deliberately limited to an italic-only
 paragraph directly after H1; custom templates keep their own styles and rendering
-behavior. Relative Markdown image paths are not rewritten or hosted automatically.
+behavior. The CSS-only `report` layout keeps narrative readable, tables locally
+scrollable, and provides an ink-light print layout; wide-table PDF fit is best-effort.
+Relative Markdown image paths are not rewritten or hosted automatically.
 For glossary autolinks, cross-references, and custom semantic link styling, see
 [Markdown preprocessing](docs/markdown-preprocessing.md).
 
