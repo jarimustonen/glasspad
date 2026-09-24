@@ -54,12 +54,11 @@ pub struct NavGroupView<'a> {
 }
 
 /// Render the shell document for `space`/`slug` with the **flat** nav bar only
-/// (today's byte-compatible chrome). Thin shim over [`render_with_groups`] with no
-/// groups — the grouped sidebar is inactive and the horizontal `nav` bar renders
-/// exactly as before. Test-only: the production CLI adapter's `render_shell`
+/// (the trusted sidebar chrome). Thin shim over [`render_with_groups`] with no
+/// groups — the grouped sidebar is inactive and the vertical navigation renders. Test-only: the production CLI adapter's `render_shell`
 /// calls [`render_with_groups`] (passing the space's reconciled groups, which
 /// may be empty), so this shim exists purely to keep the many flat-nav unit tests
-/// concise and to document/exercise the byte-compatible fallback in the CLI adapter.
+/// concise and to document/exercise the flat fallback in the CLI adapter.
 #[cfg(test)]
 pub fn render(
     mount: &str,
@@ -77,10 +76,10 @@ pub fn render(
 /// table `(slug, title)` — the complete low-authority allowlist the bridge resolves
 /// navigation against (its titles are inserted as **text**). `groups`, when
 /// non-empty, drives a **grouped vertical sidebar** (named groups with ordered
-/// members and one level of nested companions) instead of the flat horizontal bar;
+/// members and one level of nested companions) instead of the flat sidebar;
 /// every group member's slug is still in `nav` (the allowlist), and its label/title
 /// are inserted client-side via `textContent` only. Empty `groups` → the flat bar
-/// (byte-compatible fallback). `title` is the current artifact's resolved display
+/// (flat fallback). `title` is the current artifact's resolved display
 /// title (empty → `space / slug`); `nonce` matches the CSP.
 #[allow(clippy::too_many_arguments)]
 pub fn render_with_groups(
@@ -116,7 +115,7 @@ pub fn render_with_groups(
     // Labels + titles are producer/artifact-derived; the json_for_script encoding
     // below neutralizes any markup (so a hostile label can't close the <script>),
     // and the client inserts each one via textContent (never innerHTML). Empty →
-    // the flat nav bar renders instead (byte-compatible fallback).
+    // the flat sidebar navigation renders instead (flat fallback).
     fn item_json(item: &NavItemView<'_>) -> serde_json::Value {
         json!({
             "slug": item.slug,
@@ -221,54 +220,53 @@ pub fn render_with_groups(
     }}
   }}
   html,body {{ margin:0; height:100%; }}
-  body {{ display:flex; flex-direction:column; background:var(--gp-shell-bg); color:var(--gp-shell-text); }}
-  header.gp-chrome {{ font:14px system-ui,sans-serif; flex:0 0 auto;
-                      background:var(--gp-shell-bg); color:var(--gp-shell-text);
-                      border-bottom:1px solid var(--gp-shell-border); }}
-  header.gp-chrome .gp-bar {{ display:flex; justify-content:flex-end; align-items:center; gap:12px; padding:6px 12px; }}
-  header.gp-chrome #gp-delivery {{ flex:0 1 auto; max-width:42ch; font-size:12px;
-                      color:inherit; opacity:0.78; text-align:right; white-space:nowrap;
-                      overflow:hidden; text-overflow:ellipsis; }}
-  header.gp-chrome #gp-delivery[data-state="long-wait"],
-  header.gp-chrome #gp-delivery[data-state="collected"] {{ opacity:1; font-weight:600; }}
-  header.gp-chrome #gp-theme-toggle {{ flex:0 0 auto; font:inherit; padding:2px 10px; cursor:pointer;
-                      border:1px solid var(--gp-shell-border); border-radius:6px; background:transparent; color:inherit; }}
-  nav.gp-nav {{ display:flex; gap:4px; padding:0 8px 6px; overflow-x:auto; white-space:nowrap; }}
-  nav.gp-nav a {{ font:inherit; color:inherit; text-decoration:none; padding:3px 10px;
-                  border:1px solid transparent; border-radius:6px; cursor:pointer;
-                  max-width:22ch; overflow:hidden; text-overflow:ellipsis; }}
-  nav.gp-nav a:hover {{ background:rgba(127,127,127,0.14); }}
-  nav.gp-nav a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
+  body {{ background:var(--gp-shell-bg); color:var(--gp-shell-text); }}
+  .gp-body {{ height:100dvh; display:flex; min-height:0; }}
+  aside.gp-sidebar {{ flex:0 0 176px; width:176px; overflow-y:auto; box-sizing:border-box;
+    font:13px system-ui,sans-serif; background:var(--gp-shell-bg); color:var(--gp-shell-text);
+    border-right:1px solid var(--gp-shell-border); padding:18px 10px;
+    display:flex; flex-direction:column; gap:18px; }}
+  .gp-controls {{ padding:0 8px; display:flex; flex-direction:column; gap:8px; }}
+  .gp-controls label {{ font-size:11px; font-weight:650; letter-spacing:.06em; text-transform:uppercase; opacity:.7; }}
+  #gp-theme-toggle {{ font:inherit; text-align:left; padding:8px 10px; cursor:pointer;
+    border:1px solid var(--gp-shell-border); border-radius:8px;
+    background:transparent; color:inherit; min-height:40px; }}
+  #gp-theme-toggle:hover, aside.gp-sidebar a:hover {{ background:rgba(127,127,127,0.14); }}
+  #gp-theme-toggle:focus-visible, aside.gp-sidebar a:focus-visible {{ outline:2px solid currentColor; outline-offset:2px; }}
+  #gp-delivery {{ font-size:12px; line-height:1.4; overflow-wrap:anywhere; }}
+  #gp-delivery[hidden] {{ display:none; }}
+  nav.gp-nav {{ display:flex; flex-direction:column; gap:2px; }}
   nav.gp-nav:empty {{ display:none; }}
-  /* Body area below the header: a row so the grouped sidebar can sit beside the
-     iframe. With no sidebar (flat nav) the empty aside is hidden and the iframe
-     fills the row exactly as before. */
-  .gp-body {{ flex:1 1 auto; display:flex; min-height:0; }}
-  aside.gp-sidebar {{ flex:0 0 auto; width:240px; max-width:42vw; overflow-y:auto;
-                      font:14px system-ui,sans-serif; background:var(--gp-shell-bg);
-                      color:var(--gp-shell-text); border-right:1px solid var(--gp-shell-border);
-                      padding:10px 6px; box-sizing:border-box; }}
-  aside.gp-sidebar:empty {{ display:none; }}
   aside.gp-sidebar .sb-group {{ margin-bottom:16px; }}
   aside.gp-sidebar .sb-group-h {{ font-weight:600; opacity:0.72; padding:2px 8px;
-                      text-transform:uppercase; letter-spacing:0.03em; font-size:11px; }}
+    text-transform:uppercase; letter-spacing:0.03em; font-size:11px; }}
   aside.gp-sidebar ul {{ list-style:none; margin:2px 0; padding:0; }}
   aside.gp-sidebar li {{ margin:0; }}
   aside.gp-sidebar a {{ display:block; font:inherit; color:inherit; text-decoration:none;
-                      padding:3px 8px; border-radius:6px; cursor:pointer;
-                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-  aside.gp-sidebar a:hover {{ background:rgba(127,127,127,0.14); }}
+    padding:7px 8px; border-radius:6px; cursor:pointer;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
   aside.gp-sidebar a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
   aside.gp-sidebar ul ul {{ margin-left:12px; border-left:1px solid rgba(127,127,127,0.25); }}
+  @media (max-width: 600px) {{
+    .gp-body {{ flex-direction:column-reverse; }}
+    aside.gp-sidebar {{ width:100%; flex:0 0 auto; max-height:35dvh; overflow-y:auto;
+      border-right:0; border-top:1px solid var(--gp-shell-border);
+      padding:6px 12px; gap:4px; }}
+    .gp-controls {{ flex-direction:row; align-items:center; gap:8px; padding:0; flex-wrap:wrap; }}
+    #gp-theme-toggle {{ min-height:44px; text-align:center; }}
+    #gp-delivery {{ flex-basis:100%; }}
+    nav.gp-nav {{ flex-direction:row; overflow-x:auto; white-space:nowrap; }}
+    nav.gp-nav a {{ flex:0 0 auto; max-width:22ch; }}
+  }}
+  @media print {{ aside.gp-sidebar {{ display:none; }} }}
   iframe#gp-artifact {{ display:block; border:0; flex:1 1 auto; width:100%; min-height:0; }}
 </style>
 </head><body>
-<header class="gp-chrome">
-  <div class="gp-bar"><span id="gp-delivery" role="status" aria-live="polite" hidden></span><button id="gp-theme-toggle" type="button" aria-label="Theme: Auto. Activate to select the next theme.">Theme: Auto</button></div>
-  <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
-</header>
 <div class="gp-body">
-<aside class="gp-sidebar" id="gp-sidebar" aria-label="Documents in this space"></aside>
+<aside class="gp-sidebar" id="gp-sidebar" aria-label="Space controls and documents">
+  <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
+  <div class="gp-controls"><label for="gp-theme-toggle">Appearance</label><button id="gp-theme-toggle" type="button" aria-label="Theme: Auto. Activate to select the next theme.">Theme: Auto</button><span id="gp-delivery" role="status" aria-live="polite" hidden></span></div>
+</aside>
 <iframe id="gp-artifact" title="{esc_title_attr}"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
         data-src="{esc_src}"></iframe>
@@ -281,7 +279,7 @@ pub fn render_with_groups(
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
   var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
-  var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat nav bar
+  var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat sidebar navigation
   var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
   var STATUS_PATH = {status_json};   // hosted exact-submission status base; null on loopback
   var MAX_SLUG = 64;       // matches the server-side slug grammar
@@ -335,7 +333,7 @@ pub fn render_with_groups(
   }}
 
   // --- Grouped sidebar takes precedence when the space declares groups; otherwise
-  // the flat horizontal nav bar renders (byte-compatible fallback). Exactly one of
+  // the flat sidebar navigation renders (flat fallback). Exactly one of
   // the two surfaces is populated; the other stays :empty and is hidden by CSS.
   if (GROUPS.length) {{
     document.body.classList.add("gp-grouped");
@@ -373,10 +371,10 @@ pub fn render_with_groups(
       section.appendChild(ul);
       sbFrag.appendChild(section);
     }}
-    sidebarEl.appendChild(sbFrag);
+    navEl.appendChild(sbFrag);
   }} else {{
     var navFrag = document.createDocumentFragment();
-    for (var k = 0; k < NAV.length; k++) {{
+    for (var k = 0; k < NAV.length && NAV.length > 1; k++) {{
       var item = NAV[k];
       if (!item || typeof item.slug !== "string") continue;
       navFrag.appendChild(makeNavLink(item.slug, item.title));
@@ -454,7 +452,7 @@ pub fn render_with_groups(
   // Nav-chrome clicks: a primary, unmodified click on a known entry swaps the
   // iframe in place. Modified / non-primary clicks keep native behavior (the href
   // opens the shell for that artifact in a new tab), and any unknown slug is left
-  // to the browser too. Attached to BOTH the flat nav bar and the grouped sidebar,
+  // to the browser too. Attached to BOTH the flat sidebar navigation and the grouped sidebar,
   // so every swap goes through the same validated navigateTo path.
   function onNavClick(event) {{
     if (event.defaultPrevented) return;
@@ -937,7 +935,7 @@ mod tests {
         let bootstrap = html.find(r#"<script nonce="n">"#).unwrap();
         assert!(bootstrap < html.find("<style>").unwrap());
         assert!(bootstrap < html.find("<body>").unwrap());
-        // The same choice is applied to the trusted shell itself, whose header uses
+        // The same choice is applied to the trusted shell itself, whose sidebar uses
         // explicit light/dark variables rather than fixed browser-default colours.
         assert!(html.contains(r#"document.documentElement.setAttribute("data-theme", theme)"#));
         assert!(html.contains("Activate to select the next theme."));
@@ -961,6 +959,27 @@ mod tests {
         assert!(html.contains(r#"title="Article title""#));
         // …but the shell no longer paints a second standalone copy above an artifact's H1.
         assert!(!html.contains(r#"id="gp-title""#));
+    }
+
+    #[test]
+    fn shell_chrome_is_sidebar_only_and_keeps_status() {
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "Article",
+            &nav_of(&["index"]),
+            "n",
+            None,
+        );
+        assert!(!html.contains("<header"));
+        assert!(!html.contains("gp-bar"));
+        assert!(html.contains("NAV.length > 1")); // one page has no redundant nav link
+        assert!(html.contains("id=\"gp-delivery\" role=\"status\" aria-live=\"polite\""));
+        assert!(html.contains("function showDelivery(state, text)"));
+        assert!(html.contains("sidebarEl.addEventListener(\"click\", onNavClick"));
+        assert!(html.contains("getItem(\"gp-theme\")"));
+        assert!(html.contains("sandbox=\"allow-scripts allow-top-navigation-by-user-activation\""));
     }
 
     #[test]
@@ -1263,7 +1282,7 @@ mod tests {
     #[test]
     fn shell_flat_fallback_when_no_groups_is_byte_identical() {
         // Empty groups → the thin `render` shim and `render_with_groups(&[])` produce
-        // the identical document, and the flat nav bar (not the sidebar) is populated.
+        // the identical document, and the flat sidebar navigation is populated.
         let nav = nav_of(&["index", "sales"]);
         let shim = render("", "demo", "index", "Home", &nav, "n", None);
         let full = render_with_groups("", "demo", "index", "Home", &nav, &[], "n", None);
@@ -1275,8 +1294,7 @@ mod tests {
                 || shim.contains("var GROUPS = []")
                 || shim.contains("var GROUPS = [ ]")
         );
-        // The flat nav bar is populated (createElement path present) and the sidebar
-        // aside stays empty (hidden by `aside.gp-sidebar:empty`).
+        // The flat navigation is populated client-side inside the trusted sidebar.
         assert!(shim.contains(r#"<nav class="gp-nav" id="gp-nav""#));
         assert!(shim.contains(r#"<aside class="gp-sidebar" id="gp-sidebar""#));
     }

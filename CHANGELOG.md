@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Viewer navigation and theme controls now live in a trusted responsive sidebar instead of the horizontal header; single-page spaces omit redundant page links.
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 

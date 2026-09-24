@@ -366,10 +366,10 @@ async function main() {
         stillLight === "light", `data-theme=${stillLight}`);
     }
 
-    // (d3) The trusted header follows that same live transition. Capture explicit
+    // (d3) The trusted sidebar follows that same live transition. Capture explicit
     // light colours, advance to dark without a reload, and wait on the actual state.
     const lightChrome = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
@@ -382,14 +382,14 @@ async function main() {
       undefined,
       { timeout: 4000 });
     const darkChrome = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
         color: s.color,
       };
     });
-    check("bridge-theme: trusted header visibly follows light→dark without reload",
+    check("bridge-theme: trusted sidebar visibly follows light→dark without reload",
       lightChrome.theme === "light" && darkChrome.theme === "dark" &&
         darkChrome.background !== lightChrome.background &&
         darkChrome.color !== lightChrome.color,
@@ -404,16 +404,16 @@ async function main() {
       { timeout: 4000 });
     await page.emulateMedia({ colorScheme: "light" });
     const autoLight = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
       return { background: s.backgroundColor, color: s.color };
     });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForFunction(
-      (oldBackground) => getComputedStyle(document.querySelector("header.gp-chrome")).backgroundColor !== oldBackground,
+      (oldBackground) => getComputedStyle(document.querySelector("aside.gp-sidebar")).backgroundColor !== oldBackground,
       autoLight.background,
       { timeout: 4000 });
     const autoDark = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("header.gp-chrome"));
+      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
@@ -490,11 +490,11 @@ async function main() {
         fired: window.__navInjectionFired === true,
         // No unexpected element node anywhere in the trusted chrome (nav is anchors
         // only; the header carries no img/script/style/iframe/form/meta/svg).
-        strayNavEls: document.querySelectorAll("#gp-nav :not(a)").length,
+        strayNavEls: document.querySelectorAll("#gp-nav :not(a, div.sb-group, div.sb-group-h, ul, li)").length,
         strayHeaderEls: document.querySelectorAll(
-          "header.gp-chrome img, header.gp-chrome script, header.gp-chrome style, " +
-          "header.gp-chrome iframe, header.gp-chrome form, header.gp-chrome meta, " +
-          "header.gp-chrome svg, header.gp-chrome object").length,
+          "aside.gp-sidebar img, aside.gp-sidebar script, aside.gp-sidebar style, " +
+          "aside.gp-sidebar iframe, aside.gp-sidebar form, aside.gp-sidebar meta, " +
+          "aside.gp-sidebar svg, aside.gp-sidebar object").length,
         // No duplicate critical ids (an id-clobbering breakout would add one).
         dupIds: document.querySelectorAll("#gp-nav").length !== 1 ||
                 document.querySelectorAll("#gp-title").length !== 0 ||
