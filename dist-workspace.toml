@@ -42,6 +42,12 @@ hosting = "github"
 # whose install path is curl-to-shell / Homebrew. cargo-dist scopes the extra
 # id-token / attestations permissions to the artifact-building job.
 github-attestations = true
+# cargo-dist has no hook before its generated local-artifact installer. Keep the
+# checked-in CI override for the self-hosted macOS installer. Native `dist
+# generate --mode ci --check` refuses to run with this setting. Instead run
+# `python3 scripts/release_workflow.py --check` with pinned dist 0.33.0 and
+# `python3 tests/release_workflow.py` to verify generation + isolation.
+allow-dirty = ["ci"]
 
 # Route the macOS build to the operator's self-hosted Apple Silicon runner.
 # The two Linux targets stay on GitHub-hosted Ubuntu runners. This personal,
