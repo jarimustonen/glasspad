@@ -5,268 +5,194 @@ cli_version: "0.18.4"
 schema_version: 1
 ---
 
-# Glasspad — hand it markdown, get a URL
+# Glasspad
 
-**One verb: `glasspad publish <path>`.** Give it a Markdown (or HTML) file — or a
-directory of them — and it returns a **URL** the user opens. Where that URL lives
-is decided by config, not by you choosing a command: a `target` of `loopback`
-(serve on this machine, the zero-config default) or `hosted` (upload to a share
-server, return a public link). You author content; `publish` handles the rest.
+Glasspad turns a Markdown or HTML file, or a directory of them, into a page the
+user opens in a browser. You author the content; `glasspad publish <path>` returns
+the URL. A page can also carry the user's answer back to you, so a form or a row of
+buttons becomes a way to ask something richer than a chat message allows.
 
 ```bash
-glasspad publish ./report.md        # → a URL (loopback by default; hosted if configured)
-glasspad publish ./dashboard/       # a directory of pages → one multi-page space
+glasspad publish ./report.md      # one file → a one-page space
+glasspad publish ./dashboard/     # a directory → a multi-page space
 ```
 
-Every command takes paths as arguments, emits a stable `--json` envelope, and
-fails with an informative error (never an interactive prompt).
+Every command validates its input strictly, takes `--json` for a stable envelope,
+and fails with a structured error instead of prompting. Exit 1 means your input
+needs fixing, 2 a system or I/O problem. `glasspad <command> --help` documents the
+flags. This file covers what the help cannot: the model, the sandbox you are
+authoring into, and the traps.
 
-## The model
+## Where the URL lives
 
-- **Markdown is the standard input.** Hand glasspad `.md`/`.markdown` and it renders
-  automatically through a built-in theme. `.html` works too: fragments are wrapped,
-  while complete HTML documents are preserved inside their artifact iframe.
-- A **single file is a one-page space**; a **directory is an N-page space**.
-- A **space** is a URL namespace holding one or more **artifacts** (pages). Each
-  artifact is addressed by a **slug** = its filename stem (`sales.md` → slug
-  `sales`). Link between pages with ordinary relative links (`<a href="./detail">`).
-- The user-facing space URL is always Glasspad's trusted shell and navigation around
-  a null-origin sandboxed artifact iframe. Authored HTML controls the document inside
-  that iframe, not the top-level browser tab.
-- Pick the Markdown theme per space in an optional per-space `glasspad.yaml` with
-  `template: prose` (default reading theme), `template: dashboard` (card look),
-  `template: report`, `template: board`, `template: index` (linked directory), `template: table` (data table), or
-  a relative path to a producer-owned fragment template such as
-  `template: templates/brand.html`. A custom template has exactly one `{{content}}`
-  slot and is applied to every Markdown page; it must be a regular UTF-8 fragment
-  inside the space (no symlinks, traversal, or full HTML document). It is rendered
-  into the uploaded page bodies, so hosted spaces are self-contained. `.md` and
-  `.html` pages coexist; a `.md` and `.html` sharing a stem is a hard collision.
+`publish` has no "where" argument. It reads a `target` from config: `loopback`
+serves on this machine and is the default when no config exists; `hosted` uploads
+to a share server and returns a link others can open. Config merges per key, and
+the first file that sets a key wins: a `.glasspad.yaml` found by walking up from the
+working directory, then the home config. `glasspad config path` prints the home
+file's effective location and `glasspad config show` the resolved values with their
+provenance. Flags and `GLASSPAD_*` environment variables override both. A repo can
+therefore pin `target: hosted` and `server:` while the API key stays in the home
+config.
 
-## Where it lands: the `target`
+The two targets behave differently on purpose.
 
-`publish` resolves its target from config, **per key**, first file that sets a key
-wins:
+**Loopback is live.** `publish` binds `127.0.0.1`, opens the browser, watches the
+files, and reloads the page whenever you edit them. It announces the URL as soon as
+it binds and then keeps running until killed, so start it in the background. To
+change what the user sees, edit the file. `glasspad loopback stop` halts the server.
+Nothing leaves the machine; this is the private "show me while I work" view.
 
-1. **`.glasspad.yaml`** in your repo (found by walking up from the working dir).
-   This is the repo-local config — distinct from the per-space `glasspad.yaml`
-   (which is structure only: nav/title/theme).
-2. **`~/.config/glasspad/config.yaml`** — the home config.
-3. **Built-in default** — `target: loopback`. So with **no config at all**,
-   `publish` just serves loopback. Zero-config local works out of the box.
+**Hosted is a snapshot.** `publish` uploads the space and prints a `/p/<slug>/` URL
+whose slug is an unguessable capability, served `noindex`: anyone holding the link
+can read it, nobody else finds it. Running the same `publish <path>` again updates
+the same URL in place. Identity derives locally from the source's canonical path
+(the path itself is not sent), or from a `space_key` set in config or with
+`--space-key` when the identity should survive moving the source or changing
+machines. `--new` deliberately mints a fresh URL. `--update <slug>` retargets a URL
+you already hold and refuses rather than creates if your key does not own it. Each
+hosted publish replaces the whole space: title, favicon, nav, and page set come from
+this publish, so a page you drop 404s at its old address and a title you stop
+declaring disappears. Publish the complete space, not a diff.
 
-Because the merge is per key, a repo can set only `target`/`favicon` and inherit
-`server` + `api_key` from the home config.
+Before a hosted publish, notice what is in the content. Loopback shows the user
+their own data; hosted puts it on a server behind a link that may be forwarded. The
+configured target is usually the user's answer to that question already. Sensitive
+material heading for a hosted target is the one case worth a sentence to them first.
 
-```yaml
-# .glasspad.yaml (repo root) — the keys publish reads
-target: hosted                 # loopback (default) | hosted
-server: https://pad.example.com
-api_key: sk_live_…             # inline, OR an indirection (below)
-template: prose                # default template for markdown pages
-space_key: my-docsite          # optional: stable identity independent of source location
-```
+**Credentials.** `api_key` in config accepts `{ env: VAR }` or `{ file: path }`
+(relative to the config file's directory) as well as an inline value; the
+indirections keep the secret out of a file that might be committed. Keep the key in
+the home config, not the repo. When a repo's `.glasspad.yaml` sets `server:` while
+the key comes from your home config, `publish` warns, because a cloned repository
+could otherwise redirect your credential to a server of its choosing; passing
+`--server` or `--api-key` explicitly is how you say you meant it. The key is never
+printed, and the follow-up commands `publish` suggests omit it so they can be pasted
+without putting a secret on argv or into shell history.
 
-**API-key indirection.** `api_key` accepts an env var or a key file, not only an
-inline secret — keep plaintext out of the file:
+## Spaces, pages, and the two YAML files
 
-```yaml
-api_key: { env: GLASSPAD_API_KEY }     # read from the environment at publish time
-api_key: { file: /run/secrets/gp-key } # read from a file (or: api_key_file: <path>)
-```
+A space is a URL namespace holding one or more pages. A page's slug is its filename
+stem (`sales.md` → `sales`): lowercase `[a-z0-9-]`, starting alphanumeric, at most
+64 characters, and not one of the reserved names `_gp`, `_c`, `assets`, `api`. Two
+files mapping to one slug (`sales.md` beside `sales.html`) are a hard error, never
+silently resolved. Pages link to each other with ordinary relative links. Files under
+`assets/` are served by path. The home page is `index`, else `home`, else the first
+page in nav order.
 
-A relative `file:` path resolves against the **config file's** directory, not the
-working directory. Keep credentials in your **home** config: if a repo's
-`.glasspad.yaml` sets `server:` while the key comes from your home config,
-`publish` warns loudly (a cloned/untrusted repo could redirect your key) — pass
-`--server`/`--api-key` explicitly to confirm.
+An optional `glasspad.yaml` inside the space describes structure only: `title`,
+`nav` (an ordered list of slugs), `groups` (a labelled sidebar with one level of
+nesting, for docsite-sized spaces), and `template`. It is usually absent. The
+repo-root `.glasspad.yaml` is a different file with a different job: `target`,
+`server`, `api_key`, a default `template`, `space_key`, and `favicon`. `bind` is
+honoured from the home config only, for the reason given under LAN reach below.
 
-- **`target: loopback`** → serves the space live on `127.0.0.1` (keeps the
-  DNS-rebinding Host guard), opens the browser, and **live-reloads** on file edits.
-  Runs until killed — start it backgrounded. The private "show me while I work" view.
-- **`target: hosted`** → uploads the space and returns a public capability-slug URL
-  (`/p/<slug>/…`, `noindex` — "hold the link"). A snapshot; repeating the same
-  `publish <path>` command updates it **in place at the same URL**. Default identity
-  is derived locally from the source's canonical path; the path itself is not sent.
-  Relative and absolute spellings (and symlink aliases) converge. Moving the source
-  intentionally gives it a new identity.
-  - `--new` — intentionally create a separate space and URL from a source that may
-    have been published before.
-  - `--space-key <k>` (or config `space_key:`) — choose identity independent of the
-    source location. Every publish with that key updates in place; useful across moves
-    or machines.
-  - `--update <slug>` — replace the exact existing `/p/<slug>/` URL, for example
-    after moving the source or to adopt a URL published before automatic source
-    identity existed. A successful update binds the current source path, so later
-    plain publishes without a configured `space_key` keep that URL. Owner-scoped and
-    **fail-if-missing**: a slug your
-    key does not own (or one that expired) is `no_such_space`, never a new page.
-    Mutually exclusive with `--space-key` and `--new`.
+The scanner rejects symlinks, paths that resolve outside the space, non-UTF-8 files,
+files over 8 MiB, and spaces over 64 MiB. Each of those is either an escape route or
+a resource-exhaustion vector for a host that serves untrusted authored content.
+Errors name the file and the rule.
 
-  Stable republishing and explicit update are **whole-space replaces** (like
-  re-uploading): the title, favicon, nav, and
-  page set come from the publish you run — a `<path>` that no longer declares a title
-  clears it, and a page dropped from the bundle 404s at its old sub-URL. Publish the
-  complete space each time, not a partial diff.
+## Authoring into the sandbox
 
-  The "let a colleague / another machine open it" path.
+Every page renders inside a null-origin sandboxed iframe under a strict Content
+Security Policy, with Glasspad's trusted shell around it for navigation and theme.
+Your HTML controls the document inside the iframe, never the browser tab. The
+policy shapes what you can write:
 
-The loopback↔hosted asymmetry is intended: loopback is live, hosted is a snapshot.
+- The artifact has no network. `connect-src 'none'` blocks `fetch`, beacons, and
+  websockets. Scripts, styles, and fonts load only from Glasspad's own host; images
+  from the host or `data:` URLs. Inline everything else: data, images, styles. A Vega
+  spec with `data.url` fails at load.
+- Inline `<script>` and `'unsafe-eval'` are allowed, so the page can compute.
+- Native form submission is off. The bridge intercepts it (next section), so a plain
+  `<form>` still works, as a return channel rather than a navigation.
 
-**Overrides** (flag > env > config): `--target loopback|hosted` / `$GLASSPAD_TARGET`;
-`--server` / `$GLASSPAD_SERVER`; `--api-key` / `$GLASSPAD_API_KEY`; `--template`;
-`--space-key` / `$GLASSPAD_SPACE_KEY`; `--new` (hosted, intentionally mint a new
-URL); `--update <slug>` (hosted, flag-only — replace an existing space by its
-capability slug); `--title`; `--port` (loopback);
-`--no-open`. The API key is never printed.
+**Markdown** is the standard input. It renders through a template: `prose` (default,
+for reading), `dashboard` (cards), `report`, `board`, `index` (a linked directory),
+`table` (a data table), or a relative path to your own fragment template with one
+`{{content}}` slot. A custom template applies to every Markdown page and is rendered
+into the uploaded bodies, so hosted spaces stay self-contained. Raw HTML in Markdown
+passes through unsanitized, so a chart or a form can live in a `.md` page. Glasspad
+does not infer document semantics; glossary links and cross-references belong in the
+producer's build step (`docs/markdown-preprocessing.md` in the repository).
 
-## Inspect configuration
-
-Use `glasspad config path` to see the effective home config-file location. It is
-read-only and explicitly says when no file exists. Use `glasspad config show` (or
-`glasspad config show --json`) to inspect the resolved hosted server, API-key
-status, target, template, space key, bind address, and favicon. Each value includes its source: `flag`, `env`, `config-file`,
-or `default`. Pass `--server` / `--api-key` to `config show` only when checking the
-same overrides a publish invocation would use. API-key material is always redacted.
-
-## Authoring
-
-**Markdown** is rendered through the space's template. For full control, author
-**HTML**:
-
-- **Fragment (default).** Write body content; glasspad wraps it in a themed skeleton
-  (design tokens, correct light/dark theme, the nav bridge, opt-in base libraries):
-
-  ```html
-  <h1>Sales Q3</h1>
-  <div id="chart"></div>
-  <script>gp.chart('#chart', { /* vega-lite spec */ })</script>
-  ```
-
-- **Full document.** A file starting with `<!doctype html>` / `<html>` (after any
-  BOM / whitespace / comments — detected tolerantly) is served **verbatim as the
-  artifact iframe document**. You control that complete document, but the trusted
-  Glasspad space shell remains around the sandboxed iframe; this is not a chrome-free
-  or raw top-level page. Opt into in-space nav by including `/_gp/v1/bridge.js`
-  yourself.
-
-Base libraries live under `/_gp/v1/*` (`base.css`; `charts.js` = a thin
-`gp.chart(el, spec)` over Vega-Lite). `assets/*` in a space are served by path.
-
-## Return channel: get user input back (interactive artifacts)
-
-An artifact can send user input **back to you** — a form answer, a button choice, a
-wizard step — so an agent↔human round-trip through a rich UI works. The artifact
-never gets network access; input flows `artifact → trusted shell → server → you`,
-and you read it with `glasspad await-submission`.
-
-**Author side (in a fragment artifact).** Call `gp.submit(data)` with any
-JSON-serializable value, or just write an ordinary `<form>` — its submit is
-intercepted and routed for you:
+**HTML fragments** are wrapped in a themed skeleton with `base.css` (the `--gp-*`
+design tokens, which follow the user's light or dark theme) and `bridge.js`
+(navigation and the return channel) injected. The chart helper is not injected;
+include it yourself:
 
 ```html
-<button type="button" onclick="gp.submit({approved: true})">Ship it</button>
-<button type="button" onclick="gp.submit({approved: false})">Hold</button>
-<!-- …or a plain form: -->
+<h1>Sales Q3</h1>
+<div id="chart"></div>
+<script src="/_gp/v1/charts.js"></script>
+<script>
+  gp.chart('#chart', {
+    mark: 'bar',
+    data: { values: [ /* inline rows */ ] },
+    encoding: { /* … */ }
+  });
+</script>
+```
+
+`gp.chart(el, vegaLiteSpec)` renders through Vega-Lite, reads the `--gp-*` tokens
+for its theme, and re-renders when the theme flips.
+
+**Full HTML documents** (first markup `<!doctype html>` or `<html>`, detected after
+any BOM, whitespace, or comments) are served verbatim inside the iframe. You get the
+whole document and none of the injection: no tokens, no navigation, no `gp.submit`.
+Loading `/_gp/v1/base.css` and `/_gp/v1/bridge.js` yourself restores most of it, but
+fragments are the tested path, especially for forms, so prefer a fragment unless you
+need to control the document.
+
+## Getting an answer back
+
+In the page, call `gp.submit(data)` with any JSON-serializable value, or write an
+ordinary `<form>`; the bridge serializes it on submit and routes it through the
+trusted shell to the server. The page never gains network access.
+
+```html
+<button onclick="gp.submit({approved: true})">Ship it</button>
 <form><input name="note"><button type="submit">Send</button></form>
 ```
 
-`gp.submit` is available in **fragment** artifacts. A full-document artifact controls
-its iframe document but does not receive this injected return channel; keep to
-fragments for forms.
+On your side, `glasspad await-submission <slug>` long-polls the server and returns
+when the user submits. It blocks, so run it in the background and act when it comes
+back. The slug is the space name on loopback (the directory name or file stem; pass
+`--port` to reach your local server) and the page slug on hosted. A timeout returns
+`{"timed_out":true,"cursor":N}` with exit 3; re-arm with `--since N` so you do not
+see the same submission twice. `--stream --follow` rides an SSE stream instead, for
+many pages or sub-second latency.
 
-**Agent side — run `await-submission` BACKGROUNDED.** It blocks on a server-side
-long-poll and returns the human's answer as its result, so you fire it in the
-background and get re-invoked with the answer when the user submits:
+A hosted page keeps every submission for the server's retention window whether or
+not anyone is listening. If you published, left, and came back, `glasspad
+submissions <slug>` returns the whole backlog in one non-blocking call and exits 0
+even when empty. `publish` prints that command, and the retention period when the
+server reports one. Loopback has no durable store; it is a live session.
 
-```bash
-# Loopback: --port targets your local publish. Run it backgrounded.
-glasspad await-submission myspace --port 3000 --timeout 120 --json
-# → {"timed_out":false,"submissions":[{"id":1,"data":{"approved":true},...}],"cursor":1}
+**Multiple rounds.** After a submission you can replace the page the user is looking
+at. On loopback, rewrite the file. On hosted, `glasspad push-round <slug> <file>`
+(with `--markdown` for a Markdown body) swaps the content for every connected viewer.
+Each round carries a content version, and a submission from a stale round is rejected
+with HTTP 409, so an answer to the old question cannot pass as an answer to the new
+one.
 
-# Hosted: a --server (or $GLASSPAD_SERVER) + API key; <slug> is the page slug.
-glasspad await-submission <slug> --server https://pad.example.com --json
-```
+## Other tools
 
-- The **slug** is the space name (loopback) or the page slug (hosted).
-- On a submission: stdout is one compact JSON submission per line; exit `0`.
-- On **timeout**: `{"timed_out":true,"cursor":N}` and exit `3` — re-arm with
-  `--since N` or give up.
-- `--since <cursor>` dedupes across arms; `--timeout <secs>` bounds the hold
-  (1–300, default 30). Optional `--stream` (+`--follow`) rides an SSE stream instead
-  of the long-poll, with the same result shape, for sub-second / many-page cases.
+`glasspad data <file>` parses a legacy CSV, JSON, or mbox file to JSON rows on
+stdout so you can inline the data into a page; it never starts a server.
+`glasspad build <space> <out>` renders a space to self-contained static HTML, for an
+offline docsite or to inspect what the wrapper produced. `glasspad loopback
+serve|open|stop` gives explicit control of the loopback server when `publish` folds
+too much together, for example to serve the built-in fixtures.
 
-**Came back later? Drain the backlog with `submissions`.** A hosted page keeps every
-answer in a durable store whether or not an agent is listening, so if you published a
-page and walked away, the submissions are still there. `glasspad submissions <slug>`
-does a single non-blocking poll and returns the whole retained backlog at once — no
-long-poll, no cursor bookkeeping:
+**LAN reach.** `loopback serve --bind <LAN-IPv4>` additionally serves on one private
+address so another device on the same network can open the space. It is off by
+default and accepts only a literal RFC1918, link-local, or CGNAT IPv4 address: a
+hostname would reintroduce the DNS-rebinding attack the Host guard exists to stop,
+and a public or wildcard address would expose a server that has no authentication.
+Traffic is plaintext HTTP. Only the home config may set `bind`, so a cloned repository
+cannot opt the machine onto its LAN. It is a trusted-network convenience and the
+startup warning names the reachable URL.
 
-```bash
-# Hosted only: --server (or $GLASSPAD_SERVER) + API key; <slug> is the page slug.
-glasspad submissions <slug> --server https://pad.example.com --json
-# → {"submissions":[{"id":1,"data":{...}},{"id":2,...}],"cursor":2}
-```
-
-- `--since <cursor>` (default `0` = the whole retained backlog) skips already-seen
-  ids. Owner-scoped: a slug your key does not own is an opaque `no_such_page`.
-- Exit `0` whether or not the backlog is empty (an empty backlog is a valid answer,
-  not an error). Submissions survive the server's retention window; `publish` prints
-  both this command and the exact retention for the page you just published.
-
-**Multi-round (re-render in place).** After a submission you can update the *same
-live page* and the user's open view swaps to the new content:
-
-- **Loopback**: just rewrite the served file — the browser reloads automatically.
-- **Hosted**: `glasspad push-round <slug> <file>` (same `--server`/API key as
-  publish; add `--markdown [--template …]` for markdown). Only the owning tenant may
-  push. Every connected viewer's page swaps in place.
-
-Each round stays inside the frozen null-origin sandbox, and a submission answering a
-**stale** round is rejected (HTTP 409). Pattern: `await-submission` → act →
-`push-round` (or rewrite the file) → `await-submission` again.
-
-## Also available
-
-- **`glasspad data <file>`** — parse a legacy `.csv`/`.json`/`.mbox` file to JSON
-  rows on stdout (never starts a server), so you can fold that data into an HTML
-  artifact you author. `--format` forces the parser; `--meta` adds inferred types.
-- **`--json`** on any command → a stable envelope: results/data on stdout, errors
-  `{schema_version, error:{code, message, …}}` on stderr with a non-zero exit
-  (1 = your input to fix, 2 = system/IO).
-
-## Advanced (see `--help`, not the standard flow)
-
-- **`glasspad build <space> <out>`** — statically render a space to self-contained
-  HTML files (no server, no live reload). For an offline docsite, or to inspect the
-  raw wrapped HTML yourself while debugging.
-- **`glasspad loopback <serve|open|stop>`** — explicit loopback-server management.
-  `publish` (loopback target) already folds serve + open; reach for `loopback serve`
-  only for direct control (e.g. serving the built-in fixtures, a custom port, or
-  `loopback stop` to halt a running server). See `glasspad loopback --help`.
-  - **`--bind <LAN-IPV4>` (LAN reach, security-sensitive, opt-in):** also serve on
-    this explicit **private LAN IPv4** so other devices on the same local network can
-    load the space (e.g. `glasspad loopback serve ./dir --bind 192.168.1.50`). OFF by
-    default — no flag stays loopback-only. Loopback is always kept, so local tooling
-    (`await-submission`/`open`/`stop`) is unaffected. The DNS-rebinding Host guard is
-    NOT dropped: only that one IP (plus loopback) is accepted; every other Host — a
-    rebinding attacker, a different LAN IP, a foreign port, an absolute-form/`:authority`
-    mismatch — is still refused. It carries **no API key** — a trusted-LAN convenience,
-    never a public bind: **hostnames are refused** (a name in the allowlist would
-    reintroduce DNS rebinding), as are wildcard (`0.0.0.0`), IPv6, and public IPs (only
-    RFC1918 / link-local / CGNAT ranges bind). Also settable via `bind:` in your **HOME**
-    config only (a repo-local `.glasspad.yaml bind:` is ignored so a cloned repo can't
-    opt you in); precedence flag > `$GLASSPAD_BIND` > home config. Traffic is plaintext
-    HTTP — only use it on a network you trust. A loud startup warning names the exact
-    reachable URL.
-
-## Rules enforced on load (informative errors, no silent fixups)
-
-- Slug/space names: lowercase `[a-z0-9-]`, start alphanumeric, ≤64 chars.
-- Reserved names (`_gp`, `_c`, `assets`, `api`) and slug collisions are hard errors.
-  So are symlinks, path traversal, non-UTF-8 files, and oversize files.
-- Home artifact: `index` > `home` > first in nav order. Nav order comes from an
-  optional per-space `glasspad.yaml` (`nav: [home, sales, detail]`), else
-  lexicographic. That `glasspad.yaml` is structure only (title / theme / nav plus a
-  local template path), never page content — usually absent, and distinct from the repo-root `.glasspad.yaml` that
-  carries the publish `target`.
+`glasspad doctor` checks the configuration and that this skill's metadata matches the
+installed binary. `glasspad skill install` refreshes this file when they drift.
