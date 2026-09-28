@@ -5,11 +5,12 @@ agent-written page renders inside a null-origin sandboxed iframe and cannot esca
 reach another space, or exfiltrate data. The deterministic decisions (the CSP text,
 the shell markup, fragment wrapping, markdown rendering, title sanitization, the
 content-version hash) live in `crates/glasspad-core/src/artifact_host/`; the modules
-of the same name here (`headers.rs`, `shell.rs`, `wrap.rs`, `render.rs`) are one-line
-re-exports. The code that is actually here is the directory scanner (`space.rs`), the
-routes and the atomic snapshot (`mod.rs`), the control-plane guards (`guards.rs`), the
-deliberately hostile `demo` fixtures (`fixtures.rs`), and the base libraries served at
-`/_gp/v1/` from `assets/`.
+of the same name here (`headers.rs`, `shell.rs`, `wrap.rs`, `render.rs`) are thin
+re-exports, with `headers.rs` adding only the HTTP-typed `hardening_headers` list. The
+code that is actually here is the directory scanner (`space.rs`), the routes and the
+atomic snapshot (`mod.rs`), the control-plane guards (`guards.rs`), the deliberately
+hostile `demo` fixtures (`fixtures.rs`), and the base libraries served at `/_gp/v1/`
+from `assets/`.
 
 The security model is written once, in `issues/html-artifact-host-rewrite/design.md`,
 and every module's doc comment explains its own piece well. This file adds what those
@@ -27,10 +28,12 @@ pages are addressed by capability slugs that no other tenant may learn.
 
 The defence is layered, and each layer does one job (design.md §8). The sandbox without
 `allow-same-origin` isolates the DOM and the origin; it does not stop the artifact from
-sending requests. The CSP closes egress. The Host and Origin guards protect the control
-plane independently of both. Most reasoning about a change here comes down to knowing
-which layer is responsible for the property you are about to touch. "The sandbox blocks
-fetch" is a common and wrong belief; `connect-src 'none'` does that.
+sending requests. The CSP closes egress. The Host guard, applied to every route, and the
+`Origin` allowlist on the submit endpoints protect the server independently of both;
+`guards::control_origin_guard` is currently unwired. Most reasoning about a change here
+comes down to knowing which layer is responsible for the property you are about to
+touch. "The sandbox blocks fetch" is a common and wrong belief; `connect-src 'none'`
+does that.
 
 The decisions in the next section are Jari's product decisions, made with their
 trade-offs in view. Relaxing one, adding a sandbox token, or naming anything new in the
@@ -67,10 +70,11 @@ full-document artifact gets no `bridge.js`, so its author navigates between page
 `script-src` includes `'unsafe-eval'` because Vega-Lite compiles its expression
 language with the `Function` constructor; without it `gp.chart()` cannot render. This
 was verified, not assumed: in debug builds the content route honours `?csp=noeval`,
-which serves the same policy minus that one token, and the adversarial suite proves the
-chart breaks under it. It is acceptable because the artifact already runs inline
-attacker script under `'unsafe-inline'`; containment was never "can it run JS" but
-egress plus origin isolation, and those are untouched.
+which serves the same policy minus that one token, and the adversarial suite proves
+that the `Function` constructor Vega-Lite depends on is blocked under it. It is
+acceptable because the artifact already runs inline attacker script under
+`'unsafe-inline'`; containment was never "can it run JS" but egress plus origin
+isolation, and those are untouched.
 
 `connect-src 'none'` is the exfiltration boundary, and it closes requests to the
 artifact's own host too. Live reload works because the trusted shell holds the
@@ -110,8 +114,11 @@ loads no same-origin script file, and `'self'` would authorize a parser-created
 same origin, if any markup injection into the shell ever appeared. Trusted Types is
 required with no default policy, so any string assigned to an HTML sink throws. That is
 the reason all chrome is built with `createElement` and `textContent`, and why
-artifact-derived titles reach the page only inside a JSON-for-script data literal with
-`<` encoded. The server-side probe in `test-security.sh` checks exactly that encoding.
+artifact-derived titles reach the shell's script only inside a JSON-for-script data
+literal with `<` encoded. The current title's server-rendered copies in `<title>` and
+the iframe's `title` attribute are HTML-escaped, the attribute copy with quotes encoded
+too, because a stray `"` there could inject a second `sandbox` attribute. The
+server-side probe in `test-security.sh` checks the data-literal encoding.
 
 The parent side of the postMessage bridge checks `event.source === iframe.contentWindow`
 and not `event.origin`, which is the string `"null"` for every sandboxed frame and
@@ -119,7 +126,7 @@ proves nothing. It accepts an exact small schema, rate-caps messages, and reject
 transferred ports. Nav clicks and bridge messages share one validated `navigateTo`
 path against the space's slug allowlist; a same-slug navigate is a no-op so a hostile
 child cannot loop the parent. The structured-clone cost of a flood cannot be bounded
-inside the listener and is an accepted residual (shell.rs explains).
+inside the listener and is an accepted residual (core's `shell.rs` explains).
 
 ## The scanner and the snapshot
 
@@ -191,6 +198,7 @@ the browser for anything the CSP or sandbox does, the server for anything the sc
 guards, or handlers do. Check counts written in documents drift; the script's summary is
 the truth.
 
-The base libraries under `assets/` are compiled into the binary, and `glasspad build`
-bundles the same set through `fixtures::BASE_LIB_NAMES`, so there is one list of what
-is served; do not introduce a second.
+The base libraries under `assets/` are compiled into the binary and served through the
+match in `fixtures::gp_asset`. `glasspad build` bundles `fixtures::BASE_LIB_NAMES`,
+which is that set minus the test-only `probe.js`, and resolves each name through
+`gp_asset`. A new base library needs an entry in both; do not introduce a third list.
