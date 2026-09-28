@@ -13,7 +13,8 @@ reveal.
 ## How the repository is documented
 
 Every directory that needs agent context has an `AGENTS.md`, with `CLAUDE.md` as a
-symlink to it and `AGENTS-<TOPIC>.md` files for topics too large to inline. Durable
+symlink to it (the issuectl-managed `issues/AGENTS.md` and `.issuectl/AGENTS.md` have
+none) and `AGENTS-<TOPIC>.md` files for topics too large to inline. Durable
 knowledge belongs in the most specific of these, not in a personal memory store.
 
 Two directories are gitignored on purpose: `history/` is the agents' scratchpad for
@@ -28,10 +29,11 @@ the isolated-world gotcha, the Vega-Lite axis notes) still apply; its rebuild an
 
 Every command follows the family's AI-first CLI canon: strict input validation,
 `--json` envelopes, JSONL logs, no interactive prompts, informative errors, composable
-commands. The canon is the `/ai-first-cli-canon` skill shipped by `project-canon`.
-There is deliberately no repo-local copy: an earlier copy drifted from the canon, so
-changes to the canon go to the `project-canon` source and are reinstalled from the
-released tool.
+commands. The canon is the `/ai-first-cli-canon` skill shipped by `project-canon`. The
+repo-local copies under `.claude/skills/ai-first-cli-canon/` and `.codex/prompts/` are
+written by `project-canon skill install`, never by hand: an earlier hand-kept
+`AGENTS-AI-FIRST-CLI.md` copy drifted from the canon, so changes to the canon go to the
+`project-canon` source and are reinstalled from the released tool.
 
 ## Issues and planning
 
@@ -46,21 +48,22 @@ The reason is traceability: closed issues keep their plans, so `ARCHITECTURE.md`
 send a reader to an issue for the *why* behind a decision. If a piece of work needs a
 plan, it needs an issue first.
 
-`TODO.md` at the repo root is the round-by-round handoff for `/stint` sessions: where
-things stand, what to start on, and the standing lessons earlier rounds paid for. It is
-orientation only; `issuectl dag` is authoritative for scheduling. Read its standing
-lessons before writing a worker brief, since several of them exist because a brief
-once omitted them.
+`TODO.md` at the repo root is the round-by-round handoff for `/stint-start` sessions:
+where things stand, what to start on, and the standing lessons earlier rounds paid for.
+It is orientation only; `issuectl dag` is authoritative for scheduling. Read its
+standing lessons before writing a worker brief, since several of them exist because a
+brief once omitted them.
 
 ## How work moves
 
-A `/stint` session is the orchestrator the user talks to in product-owner language. It
-plans rounds, triages incoming bugs, reports status, and owns the local deploy. It does
-not write code itself: coding happens in worktrees spawned via the `/worktree` family,
-so that units run in parallel and `main` is never half-edited under them. Autonomous
-spinoffs (`/worktree-spinoff --headless`) are the default and self-merge once their
-brief's review and adversarial tests pass; interactive `/worktree-code` units are for
-work the user wants to review, and the user merges those with `/worktree-merge`. A unit
+A `/stint-start` session is the orchestrator the user talks to in product-owner
+language. It plans rounds, triages incoming bugs, reports status, and owns the local
+deploy. It does not write code itself: coding happens in worktrees spawned via the
+`/worktree` family, so that units run in parallel and `main` is never half-edited under
+them. Autonomous spinoffs (`/worktree-spinoff --headless`) are the default and
+self-merge once their brief's review and adversarial tests pass; interactive units
+(`taskfleet run create --kind spinoff --interactive`) are for work the user wants to
+review, and the user finalizes those with `taskfleet run merge` or `run cancel`. A unit
 that touches production or security code gets `/llm-review` plus `/assess-findings` in
 its brief.
 
