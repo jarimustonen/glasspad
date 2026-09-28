@@ -1,130 +1,195 @@
 # Glasspad
 
-AI-friendly scratchpad for rich data views. Lightweight web service that lets
-AI agents create and share visual content (dashboards, charts, interactive UIs)
-via a simple API.
+Glasspad is an HTML-artifact host for AI agents: an agent writes HTML or markdown
+into a directory, `glasspad publish ./dir` returns a loopback or hosted URL, and every
+page renders inside a null-origin sandboxed iframe. The whole product promise is that
+hostile content cannot escape that sandbox, reach another space, or exfiltrate data.
+`README.md` describes the product, `ARCHITECTURE.md` maps the code, `DESIGN.md` is the
+visual design system, and `crates/glasspad-cli/src/artifact_host/AGENTS.md` holds the
+security contract and its frozen decisions. This file adds what those do not: how the
+repository is worked, what is at stake in it, and the traps that the sources do not
+reveal.
 
-## Documentation Pattern
+## How the repository is documented
 
-Every directory follows this structure:
+Every directory that needs agent context has an `AGENTS.md`, with `CLAUDE.md` as a
+symlink to it and `AGENTS-<TOPIC>.md` files for topics too large to inline. Durable
+knowledge belongs in the most specific of these, not in a personal memory store.
 
-- `CLAUDE.md` — symlink to `AGENTS.md`
-- `AGENTS.md` — all AI-relevant info (consolidated)
-- `AGENTS-<TOPIC>.md` — complex topics split out (optional)
+Two directories are gitignored on purpose: `history/` is the agents' scratchpad for
+ephemeral notes and review reports, and `.worktree/` holds agent worktree checkouts.
 
-## CLI Design Principles
+`AGENTS-GUI-DEBUGGING.md` predates the artifact host and still describes the removed
+pad server and `dashboard.js`. Its browser-automation mechanics (Brave via osascript,
+the isolated-world gotcha, the Vega-Lite axis notes) still apply; its rebuild and
+`deploy` workflow does not.
 
-Use the `/ai-first-cli-canon` skill shipped by `project-canon` as the maintained AI-first CLI canon. It is the binding reference for CLI surface work: strict input validation, `--json` output, JSONL logs, no interactive prompts, informative errors and composable commands. Do not keep or edit a repo-local `AGENTS-AI-FIRST-CLI.md` copy; update the canon in the `project-canon` source package and reinstall the skill from the released tool.
+## The CLI surface
 
+Every command follows the family's AI-first CLI canon: strict input validation,
+`--json` envelopes, JSONL logs, no interactive prompts, informative errors, composable
+commands. The canon is the `/ai-first-cli-canon` skill shipped by `project-canon`.
+There is deliberately no repo-local copy: an earlier copy drifted from the canon, so
+changes to the canon go to the `project-canon` source and are reinstalled from the
+released tool.
 
-## Gitignored directories
+## Issues and planning
 
-- `history/` — agent scratchpad and ephemeral planning docs (not tracked)
-- `.worktree/` — agent worktree checkouts (not tracked)
+Work is tracked with `issuectl` under `issues/`, one descriptive kebab-case slug per
+issue, status in frontmatter. The `/issue` skill documents the commands and the JSON
+contract; `.issuectl/AGENTS.md` carries the tracker's own agent policy. Slugs are
+words, never numbers, because agents and humans grep for them by meaning.
 
-## Issues & Planning
+Planning documents (plans, analyses, designs, todos) live under the issue they serve,
+as `issues/<slug>/plan.md`, `analysis.md`, or `design.md`, never as standalone files.
+The reason is traceability: closed issues keep their plans, so `ARCHITECTURE.md` can
+send a reader to an issue for the *why* behind a decision. If a piece of work needs a
+plan, it needs an issue first.
 
-Work is tracked with **`issuectl`** in a flat, slug-based layout. Use `/issue` (or `issuectl` directly) to create, search, update, and close issues. `issuectl doctor` health-checks the tree.
+`TODO.md` at the repo root is the round-by-round handoff for `/stint` sessions: where
+things stand, what to start on, and the standing lessons earlier rounds paid for. It is
+orientation only; `issuectl dag` is authoritative for scheduling. Read its standing
+lessons before writing a worker brief, since several of them exist because a brief
+once omitted them.
 
-- `issues/<slug>/item.md` — one issue (status lives in frontmatter, not the directory)
-- `issues/.schema.yaml` — frontmatter schema (types, statuses, priorities)
-- `issues/AGENTS.md` + `.issuectl/AGENTS.md` — workflow and agent policy docs
+## How work moves
 
-Slugs are descriptive kebab-case (`html-artifact-host-rewrite`), never numbered. Create with `issuectl new --slug <2-3-word-kebab> …`.
+A `/stint` session is the orchestrator the user talks to in product-owner language. It
+plans rounds, triages incoming bugs, reports status, and owns the local deploy. It does
+not write code itself: coding happens in worktrees spawned via the `/worktree` family,
+so that units run in parallel and `main` is never half-edited under them. Autonomous
+spinoffs (`/worktree-spinoff --headless`) are the default and self-merge once their
+brief's review and adversarial tests pass; interactive `/worktree-code` units are for
+work the user wants to review, and the user merges those with `/worktree-merge`. A unit
+that touches production or security code gets `/llm-review` plus `/assess-findings` in
+its brief.
 
-All planning documents (plans, analyses, designs, todos) belong under their parent issue directory — not as standalone files. If work needs a planning document, it also needs an issue. This ties every piece of planning to a trackable item.
+Parallel worktrees branch from whatever `main` currently is, so `main` stays committed.
+Commit issue, status, and doc changes as you make them, and never leave `main` modified
+but uncommitted across a session boundary.
 
-- `issues/<slug>/plan.md` — architecture, implementation plans
-- `issues/<slug>/analysis.md` — research and analysis
-- `issues/<slug>/design.md` — design documents
+**On interrupting the user.** These sessions run long and largely unattended, and the
+user's attention is the scarcest resource in the system. A question is worth asking
+when the outcomes differ in a way the user would care about and you cannot tell which
+they would choose: a genuine fork where reasonable people disagree, something that
+cannot be done, or the fix / defer / not-a-bug call on a reported bug, which is always
+the user's. Everything routine is yours: spawning worktrees, merging landed units,
+deploying to localhost, starting the next unit, syncing `main` with `origin` (pull
+with rebase, resolve, push), and cutting releases. Make the choice, say what you chose,
+keep moving. The user has said, on three separate occasions, that being asked "shall I
+cut the release?" is a cost, not a courtesy; "continue developing" does not suspend any
+of this.
 
-The repo-root `TODO.md` is the round-by-round handoff for `/stint`; the issue tracker is the source of truth for detail.
+Anything in a worktree that only reads, builds, or tests is free to run: `cargo build`,
+`cargo test`, `cargo clippy`, the security suite, browser automation. Verifying a change
+end to end before it merges is the expected standard, not a nicety.
 
-## Operating Policy
+## Releasing
 
-Generic operating policy for orchestrated work sessions (`/stint`) and worktrees.
+A release is a technical gate, not a permission. When a releasable change is on `main`
+and the gate is green, cutting the release is part of moving work forward, and the
+decision is yours. Report after the fact.
 
-**Roles.** A `/stint` session is the **orchestrator** the user talks to in product-owner language. It plans rounds, triages incoming bugs, reports status, and owns the single local deploy — it **does not write code in its own session**. Actual coding happens in worktrees spawned via `/worktree` (interactive `/worktree-code` for reviewed work, `/worktree-spinoff` for autonomous units).
+The gate is wider than CI's. All of these pass before a tag is pushed:
 
-**Pre-authorized in any worktree** (no need to ask): read anything, `cargo build`, `cargo test`, `cargo clippy`, and `./test-browser.sh` (check `./test-browser.sh errors` first). Verifying a change end-to-end before merge is expected, not optional.
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo publish --dry-run
+./test-security.sh
+shipshape audit --json      # readiness core must report complete
+```
 
-**Standing autonomy (granted 2026-07-24).** The orchestrator has standing authority to **push planned work forward without asking permission** — spawn worktrees, merge landed units, deploy to localhost, and start the next unit, all autonomously. Work should keep moving; do not pause for go/no-go on routine spawns, merges, or the localhost deploy. **Prefer spinoffs** (`/worktree-spinoff --headless`, self-merging) over interactive `/worktree-code`, with `/llm-review` (+ `/assess-findings`) in the brief for any unit that touches production/security code. Still pause only for: a genuine fork where reasonable people disagree, something that cannot be done, or a bug fix/defer/not-a-bug decision (always the user's call). (Originally granted to drive the v0.2 HTML-artifact-host rewrite, which completed 2026-07-24; the posture carries forward to subsequent rounds.)
+The version to cut is the one in `Cargo.toml`; bumping it is not a separate user
+decision. The bundled skill's `cli_version` in `crates/glasspad-cli/src/skill.md` has
+to match, and a test pins that, so run the gate again after both edits. Check the
+`[Unreleased]` section of `CHANGELOG.md` against what actually landed before finalizing
+it: units have written their line into an already-published section when a release was
+cut while their branch was alive.
 
-**Release autonomy (granted 2026-08-05).** The orchestrator additionally has standing authority to **cut and publish a release end-to-end without asking permission — including triggering the irreversible CI publish steps.** This extends the standing autonomy above to `git push`, flipping the GitHub default branch, and `git tag` + pushing the version tag; the tag push triggers all three CI-owned channels. The operator never runs a real local `cargo publish` and never runs `gh release create`; see **Publishing runs in CI** below. **It is a gate, not a permission prompt:** proceed only once the release gates are all green — `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo publish --dry-run`, and `./test-security.sh` (41 checks + Wave 2a, the regression gate) — and `shipshape audit` reports `core_complete`. The version to cut is the one recorded in `OSS-RELEASE.md` / the release epic / `Cargo.toml` (the bump is not a separate user decision here). A version bump also updates the bundled skill metadata; re-run the full test gate after both changes. Publishing is **irreversible** (a crates.io `name@version` is permanent, a pushed tag is proxy-cached), so the dry-run + full green gate are mandatory *before* the tag push — but a green gate **is** the go.
+**Publishing happens in CI, triggered by the tag push alone.** Pushing a
+`vMAJOR.MINOR.PATCH` tag runs `publish-crates.yml` (crates.io, via the
+`CARGO_REGISTRY_TOKEN` repo secret) and cargo-dist's `release.yml` (binaries, the GitHub
+Release, the Homebrew formula) in parallel. So "cut a release" is: land the change,
+push `main`, tag, push the tag. Nothing else. Do not run a real local `cargo publish`
+(the local `~/.cargo/credentials.toml` may be stale, and a 403 from it says nothing
+about the release path) and do not `gh release create` (cargo-dist owns Release
+creation; a second one collides). Shipshape knows this boundary and journals the
+publish steps rather than running them. A crates.io version is permanent and a pushed
+tag is proxy-cached, which is why the dry run and the full gate come first and why a
+failed CI leg is retried with "Re-run failed jobs" on the original run, never by
+deleting and re-pushing the tag. The rest of the release contract, including why each
+channel is declared the way it is, is in `OSS-RELEASE.md`.
 
-**The decision to release is also the agent's.** The orchestrator does not wait to be told — when the gates are green and a releasable change has landed on `main`, it may **decide on its own judgment to cut the release** and carry it through, reporting after the fact. It likewise runs the ordinary git-sync sequence autonomously: **`git pull --rebase` → resolve → `push`** (and `tag` push), keeping `main` current with `origin` without asking.
+The only reasons to stop short of a release and surface it: a gate fails and the fix is
+a genuine fork; the release tooling on this machine has not converged (say so; do not
+skip or substitute a gate); or the CI-side crates.io credential is genuinely absent.
 
-**No permission is needed for a release — do NOT ask (reaffirmed 2026-08-11).** A green gate plus a releasable change on `main` **is itself the authorization**; decide and cut the release, then report after the fact. Do **not** surface "shall I cut 0.X.0?" / "leikataanko release?" as an open decision, do not park a landed-but-unreleased change waiting on the user, and do not treat "the API surface is new/irreversible" as a reason to hold — the mandatory dry-run + full green gate already cover irreversibility, and a green gate is the go. The user asking to "continue developing" does not suspend this: if releasable work is sitting green on `main`, releasing it is part of moving the work forward. The **only** release pauses are the ones already enumerated in **Release autonomy**: a gate fails and its fix is a genuine fork, required release tooling has not yet converged on the machine (surface it; never skip or substitute the gate), or the CI-side crates.io credential is genuinely absent — never a routine go/no-go.
+**Cross-platform is a hard requirement.** glasspad installs and runs on macOS and
+Linux; a release path that covers only one is incomplete. The binary matrix in
+`dist-workspace.toml` is deliberately narrower than the family's Shipshape canon, and
+the comments there explain each choice (gnu rather than musl on Linux; no Intel-Mac or
+Windows binaries, those users install with `cargo install glasspad`). Two things about
+that file are easy to break. The macOS build is routed to a personal self-hosted Apple
+Silicon runner under `[dist.github-custom-runners]`; that is the operator's
+infrastructure, not project canon, and other users of the repo will not have it. That
+sub-table has to stay last in the file, because in TOML any key written after its
+header belongs to the sub-table, not to `[dist]`. And `release.yml` is generated from
+`dist-workspace.toml` with an approved override applied by `scripts/release_workflow.py`;
+edit the config and regenerate rather than hand-editing the workflow.
 
-**Publishing runs in CI, not from a local `cargo publish`.** Both release workflows are triggered by the **version-tag push itself** (`push: tags: v[0-9]+.[0-9]+.[0-9]+*`), NOT by a `release: published` event: `.github/workflows/publish-crates.yml` publishes to crates.io (using the **`CARGO_REGISTRY_TOKEN`** repo secret; `workflow_dispatch` is always dry-run-only and has no real-publish input), and `.github/workflows/release.yml` (cargo-dist) builds the binaries, **creates the GitHub Release itself** via `GITHUB_TOKEN`, and pushes the Homebrew formula. (publish-crates keys off the tag precisely *because* a Release created by `GITHUB_TOKEN` emits no `release` workflow event.) The secret is provisioned once as a repository secret via `gh secret set`. So "cut a release" concretely means: land the change → `push` main → **`tag` + push the tag** — the tag push alone triggers both workflows; **no `gh release create` step is needed or wanted** (cargo-dist owns Release creation). Shipshape honors this CI-only boundary: the contract's `cargo-publish-ci` and `cargo-dist` adapters are delegated targets, so its `publish-all` phase journals and skips them rather than publishing from the host. Never run a real local `cargo publish`, and do **not** rely on a local `~/.cargo/credentials.toml` (it may be stale — a local publish 403 is not the release path). Confirmed by the 0.4.0 cut (2026-08-10): a single tag push published all three channels. **Still pause only** when a gate fails and the fix is a genuine fork, when required release tooling has not yet converged on the machine, or when the CI-side credential is genuinely absent (`gh secret list` shows no `CARGO_REGISTRY_TOKEN` and no approved secret source is available) — surfaced to the user, never worked around.
+## Crate layout
 
-**Cross-platform is a hard requirement (macOS AND Linux).** glasspad MUST install and run on **both macOS and Linux** — a release path that works on only one OS is incomplete, matching the `/shipshape-*` family canon (see [Shipshape's `AGENTS.md`](https://github.com/jarimustonen/ossctl/blob/main/AGENTS.md); the repository coordinate is unchanged). In practice the release ships a **source path** (`cargo install glasspad`) plus prebuilt binaries + installers (shell + Homebrew tap `jarimustonen/homebrew-glasspad`), covering **macOS arm64** and **Linux arm64 + x86_64**. glasspad's binary matrix is *narrower* than the Shipshape canon by two deliberate, glasspad-specific choices, both wired in `dist-workspace.toml`: **(1)** the Linux targets are `gnu`, not statically-linked `musl` (`gnu` is the low-friction default on the GitHub-hosted Ubuntu runners; `musl` would need extra CI toolchain setup for a glibc-independent static binary this project doesn't need — `reqwest` uses `rustls-tls`, so OpenSSL is *not* the reason); **(2)** `x86_64-apple-darwin` and Windows are **not** built as binaries — the macOS release currently uses a personal self-hosted Apple Silicon runner (Homebrew Rust = no rustup, so it cannot cross-compile the Intel-mac target), and Windows binaries are out of scope for this project. **Intel-Mac and Windows users install via the source path (`cargo install glasspad`)** — so those platforms stay covered, just without a prebuilt artifact. The self-hosted-runner routing in `dist-workspace.toml` (`[dist.github-custom-runners]`, which MUST stay at the end of the `[dist]` table) is a **personal / non-standard infra override**, not glasspad canon: other users of the repo will not have that runner. Treat a macOS-only or Linux-only install story as a release gap.
+`ARCHITECTURE.md` has the map. Three decisions behind it are not obvious from the code
+and have been challenged before:
 
-**Merge & review.** Autonomous spinoff units self-merge once their brief's review + adversarial tests pass and no user decision is required; anything genuinely ambiguous is surfaced to the orchestrator, not decided silently. (Interactive `/worktree-code` units, when used, are merged by the user via `/worktree-merge`.)
+`crates/glasspad-core` is pure: no `clap`, no `std::fs`, no network, no
+`SystemTime::now()`. Time enters through the `Clock` trait in `time.rs`, with the
+wall-clock implementation at the CLI edge, so domain decisions are testable without a
+clock. When you touch core, verify purity by grep rather than by reading.
 
-**Main stays clean.** Commit issue/status/doc changes immediately; never leave `main` modified-but-uncommitted across a session boundary (parallel worktrees branch from `main`'s current state). Pushing and publishing are **pre-authorized** (see **Release autonomy**), gated on green checks rather than a per-step go-ahead — not held for the user.
+The two crate roots are one published package on purpose. `Cargo.toml` points `[lib]`
+and `[[bin]]` at the two roots so that `cargo publish`, `cargo install glasspad`,
+cargo-dist, and the tag-triggered CI stay single-package operations. Splitting into two
+published crates would break the source-install path that Intel-Mac and Windows users
+depend on. A CLI-canon conformance report that calls the incomplete split a shortfall
+is correct and accepted; it is not a defect to fix.
 
-**CLI surface** follows the AI-first conventions above: strict validation, `--json`, no interactive prompts, informative errors.
+`hosted` stays in the CLI crate. It is a durable on-disk store plus an HTTP surface
+with a few hundred filesystem and network touchpoints; it *is* the shell the canon's
+library-first section means. A canon audit that flags it as an unmoved domain module
+should be rejected. The pure parts worth extracting (rendering, sanitization, shell and
+template output, CSP policy) already live in core.
 
-## Crate layout (library-first core/cli split)
+## Working on the host
 
-Landed 2026-08-20 (`cli-canon-s22`, AI-first CLI canon §22). Three facts a change here
-must not break:
+After changing host code or a base library under `/_gp/v1/` (`base.css`, `charts.js`,
+`bridge.js`, `manifest.json`), the assets are compiled into the binary: rebuild,
+restart the loopback server, reload the space.
 
-**1. `crates/glasspad-core` is pure — keep it that way.** No `clap`, no `std::fs`, no
-`SystemTime::now()`. Time comes from the injected `Clock` trait
-(`crates/glasspad-core/src/time.rs`); implementations live at the edge, so domain
-decisions stay testable without reading a wall clock. Verify by grep, not by inspection.
-`crates/glasspad-cli` owns the clap surface and all I/O.
+`./test-security.sh` is the regression gate for the product promise. It builds, boots a
+loopback server on a test port with its own pid file and state directory (so it does not
+disturb a running local deploy), drives headless Chromium through the adversarial
+probes, then runs the server-side Wave 2a probes. Run it after any change to the host,
+headers, CSP, shell, or bridge. Green means the run reached its final "Wave 2a
+space-model probes PASSED" line and exited 0. The script is `set -e`, so the first
+failing probe aborts mid-suite, and a worker can truthfully report "all Phase 1 checks
+passed" while Wave 2a never ran; a release was halted once for exactly that. The check
+count drifts as probes are added, so trust the script's own summary, not a number
+written in a document. A leftover `glasspad` serve process from an earlier run causes
+a spurious early death.
 
-**2. It is ONE published package with two crate roots — deliberately.** `Cargo.toml`
-points `[lib]` at `crates/glasspad-core/src/lib.rs` and `[[bin]]` at
-`crates/glasspad-cli/src/main.rs`. This is what keeps `cargo publish`, `cargo install
-glasspad`, cargo-dist, and the tag-triggered CI unchanged. **Do not "complete" the split
-into two separately published crates** — that breaks the documented source-install path
-(`cargo install glasspad`) for Intel-Mac and Windows users. A §22 conformance report
-calling this a shortfall is correct and accepted; it is not a defect to fix.
+`cargo test` can fail `tests/version_cli.rs` with `commit … got: Null` on a local
+incremental build. `build.rs` stamps the git SHA into the binary, and cargo does not
+re-run it when only the SHA changed, so the binary keeps a stale stamp. It is not a
+defect; clean CI and release builds never see it. Clear it with:
 
-**3. `hosted` stays on the I/O edge, permanently.** With ~280 filesystem/network
-touchpoints it is a durable on-disk store plus an HTTP surface — it *is* the shell §22
-means. A canon audit flagging it as an unmoved domain module should be **rejected**, not
-actioned. The worthwhile `artifact_host` extraction is complete: pure rendering,
-sanitization, shell/template output, CSP policy, and related deterministic decisions live
-in `glasspad-core`; routes, response assembly, filesystem access, and storage stay in the
-CLI crate.
+```bash
+rm -rf target/debug/build/glasspad-* && cargo test
+```
 
-## Debugging rendered output
-
-Glasspad is an **HTML-artifact host** (v0.2): the calling agent authors HTML in
-a directory and `glasspad publish ./dir` (loopback target; `glasspad loopback
-serve ./dir` for explicit server control) hosts each file in a null-origin
-sandboxed iframe. There is no content-DSL and no server-side renderer — the old
-`src/spec/*` + `src/client/dashboard.js` path was removed. The host's pure rendering and security decisions live in
-**`crates/glasspad-core/src/artifact_host/`**; the HTTP/filesystem adapters live in
-**`crates/glasspad-cli/src/artifact_host/`** (see its `AGENTS.md`).
-
-Base libraries are served under `/_gp/v1/`: `base.css` (the `--gp-*` design
-system), `charts.js` (`gp.chart(el, spec)` over Vega-Lite), `bridge.js`
-(auto-injected same-space nav + theme), `manifest.json`. After changing host
-code or a base lib: `cargo build`, restart `glasspad loopback serve`, reload the
-space.
-
-**The security contract is the gate.** `./test-security.sh` is a self-contained
-Playwright suite (41 adversarial browser checks + Wave 2a space-model probes:
-per-channel exfil, sandbox-escape, direct-open, postMessage abuse, traversal/
-symlink, injection, vega/eval). Run it after any change to the host, headers,
-CSP, or bridge — it must stay green. Legacy data formats (CSV/JSON/mbox) parse
-via the optional `glasspad data` CLI helper, not the host.
-
-**Green-gate gotcha — false `version_cli` failure.** `cargo test` may report a
-spurious `commit … got: Null` in `tests/version_cli.rs`: `build.rs` stamps the git
-SHA into `option_env!(GLASSPAD_COMMIT)`, but cargo/sccache doesn't re-bake it on an
-incremental rebuild when only the build-script SHA changed, so the local binary keeps a
-stale/`null` stamp. Fix: `rm -rf target/debug/build/glasspad-* && cargo test`. Clean
-CI/release builds never hit this — it is a local-incremental artifact, not a real defect.
-
-Use `./test-browser.sh` for ad-hoc browser automation (requires Brave > View >
-Developer > Allow JavaScript from Apple Events). Always check
-`./test-browser.sh errors` first.
-
-Full debugging guide: **[AGENTS-GUI-DEBUGGING.md](AGENTS-GUI-DEBUGGING.md)**
+`./test-browser.sh` drives the user's Brave browser through osascript for ad-hoc DOM
+checks, so it is macOS-only and needs Brave's "Allow JavaScript from Apple Events"
+enabled. Run its `errors` command first: the page shows chart errors visibly, and
+automated checks have missed errors that were sitting on screen.
