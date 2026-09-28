@@ -198,4 +198,12 @@ cannot opt the machine onto its LAN. It is a trusted-network convenience and the
 startup warning names the reachable URL.
 
 `glasspad doctor` checks the configuration and that this skill's metadata matches the
-installed binary. `glasspad skill install` refreshes this file when they drift.
+installed binary. `glasspad skill list` and `glasspad skill print glasspad` expose the
+bundled skill; bare `glasspad skill` prints its raw text for older callers. `glasspad
+skill install` writes that same text to the selected agent's skill directory. For a
+project, `--agent pi` writes `.pi/skills/glasspad/SKILL.md`; `--agent claude` writes
+`.claude/skills/glasspad/SKILL.md` (and requires `.claude/` to exist). With `--user`,
+the destinations are `~/.pi/agent/skills/glasspad/SKILL.md` and
+`~/.claude/skills/glasspad/SKILL.md`. The default `--agent all` writes both. The
+older `skill --install-claude` spelling still uses this installer. Reinstall after
+upgrading the CLI when the installed skill drifts from the binary.
