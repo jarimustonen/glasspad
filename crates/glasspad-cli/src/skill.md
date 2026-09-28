@@ -25,15 +25,15 @@ authoring into, and the traps.
 
 ## Where the URL lives
 
-`publish` has no "where" argument. It reads a `target` from config: `loopback`
-serves on this machine and is the default when no config exists; `hosted` uploads
-to a share server and returns a link others can open. Config merges per key, and
-the first file that sets a key wins: a `.glasspad.yaml` found by walking up from the
-working directory, then the home config. `glasspad config path` prints the home
-file's effective location and `glasspad config show` the resolved values with their
-provenance. Flags and `GLASSPAD_*` environment variables override both. A repo can
-therefore pin `target: hosted` and `server:` while the API key stays in the home
-config.
+`publish` has no "where" argument. It reads a `target` from config, which `--target`
+overrides for one run: `loopback` serves on this machine and is the default when no
+config exists; `hosted` uploads to a share server and returns a link others can
+open. Config merges per key, and the first file that sets a key wins: a
+`.glasspad.yaml` found by walking up from the working directory, then the home
+config. `glasspad config path` prints the home file's effective location and
+`glasspad config show` the resolved values with their provenance. Flags and
+`GLASSPAD_*` environment variables override both. A repo can therefore pin
+`target: hosted` and `server:` while the API key stays in the home config.
 
 The two targets behave differently on purpose.
 
@@ -66,7 +66,8 @@ indirections keep the secret out of a file that might be committed. Keep the key
 the home config, not the repo. When a repo's `.glasspad.yaml` sets `server:` while
 the key comes from your home config, `publish` warns, because a cloned repository
 could otherwise redirect your credential to a server of its choosing; passing
-`--server` or `--api-key` explicitly is how you say you meant it. The key is never
+`--server` explicitly, or moving `server` into the home config, is how you say you
+meant it (`--api-key` alone does not silence the warning). The key is never
 printed, and the follow-up commands `publish` suggests omit it so they can be pasted
 without putting a secret on argv or into shell history.
 
@@ -76,9 +77,11 @@ A space is a URL namespace holding one or more pages. A page's slug is its filen
 stem (`sales.md` → `sales`): lowercase `[a-z0-9-]`, starting alphanumeric, at most
 64 characters, and not one of the reserved names `_gp`, `_c`, `assets`, `api`. Two
 files mapping to one slug (`sales.md` beside `sales.html`) are a hard error, never
-silently resolved. Pages link to each other with ordinary relative links. Files under
-`assets/` are served by path. The home page is `index`, else `home`, else the first
-page in nav order.
+silently resolved. A top-level `AGENTS.md` or `CLAUDE.md` is skipped, not published.
+Pages link to each other with ordinary relative links. Files under `assets/` are
+served by path. The home page is `index`, else `home`; a space with neither and two
+or more pages (or grouped nav) gets a generated table-of-contents landing at `index`,
+and a lone page is its own home.
 
 An optional `glasspad.yaml` inside the space describes structure only: `title`,
 `nav` (an ordered list of slugs), `groups` (a labelled sidebar with one level of
@@ -158,10 +161,10 @@ trusted shell to the server. The page never gains network access.
 On your side, `glasspad await-submission <slug>` long-polls the server and returns
 when the user submits. It blocks, so run it in the background and act when it comes
 back. The slug is the space name on loopback (the directory name or file stem; pass
-`--port` to reach your local server) and the page slug on hosted. A timeout returns
-`{"timed_out":true,"cursor":N}` with exit 3; re-arm with `--since N` so you do not
-see the same submission twice. `--stream --follow` rides an SSE stream instead, for
-many pages or sub-second latency.
+`--port` to reach your local server) and the page slug on hosted. A timeout exits 3
+and, under `--json`, returns `{"timed_out":true,"cursor":N}`; re-arm with `--since N`
+so you do not see the same submission twice. `--stream --follow` rides an SSE stream
+instead, for many pages or sub-second latency.
 
 A hosted page keeps every submission for the server's retention window whether or
 not anyone is listening. If you published, left, and came back, `glasspad
