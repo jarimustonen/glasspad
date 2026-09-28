@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.18.5] - 2026-09-28
+
+### Changed
+- The bundled `/glasspad` skill and the repository's agent guidance are rewritten to explain purpose, knowledge, and considerations instead of prescribing steps, and their claims are checked against the source (homebase `rethink-all-instructions`).
+
 ## [0.18.4] - 2026-09-24
 
 ### Fixed
@@ -561,7 +566,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.4...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.5...HEAD
+[0.18.5]: https://github.com/jarimustonen/glasspad/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/jarimustonen/glasspad/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/jarimustonen/glasspad/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/jarimustonen/glasspad/compare/v0.18.1...v0.18.2
