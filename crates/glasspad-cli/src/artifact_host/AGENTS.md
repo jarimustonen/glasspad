@@ -1,293 +1,196 @@
-# `artifact_host` — v0.2 HTML-artifact host (security core)
+# `artifact_host`: the sandboxed artifact host
 
-The null-origin sandboxed iframe host and its security contract. This is the
-**Wave 1 security gate** the whole `html-artifact-host-rewrite` branches from;
-read `issues/html-artifact-host-rewrite/{design,plan,wave-plan}.md` first.
-It runs **alongside** the v0.1 pad server — no old code is removed until Wave 5.
+This directory is the HTTP and filesystem side of the promise Glasspad makes: an
+agent-written page renders inside a null-origin sandboxed iframe and cannot escape it,
+reach another space, or exfiltrate data. The deterministic decisions (the CSP text,
+the shell markup, fragment wrapping, markdown rendering, title sanitization, the
+content-version hash) live in `crates/glasspad-core/src/artifact_host/`; the modules
+of the same name here (`headers.rs`, `shell.rs`, `wrap.rs`, `render.rs`) are one-line
+re-exports. The code that is actually here is the directory scanner (`space.rs`), the
+routes and the atomic snapshot (`mod.rs`), the control-plane guards (`guards.rs`), the
+deliberately hostile `demo` fixtures (`fixtures.rs`), and the base libraries served at
+`/_gp/v1/` from `assets/`.
 
-## Files
+The security model is written once, in `issues/html-artifact-host-rewrite/design.md`,
+and every module's doc comment explains its own piece well. This file adds what those
+do not: which decisions are settled and why, the traps that cost something to learn,
+and what a change here puts at stake. `AGENTS-DIAGRAMS.md` beside this file covers
+inline SVG in markdown spaces.
 
-Pure implementations of `headers`, `shell`, `wrap`, `render`, metadata sanitization,
-and content-version calculation live under `crates/glasspad-core/src/artifact_host/`;
-pure favicon validation/rendering lives in `crates/glasspad-core/src/favicon.rs`.
-Same-named CLI modules are thin compatibility/HTTP adapters. Core owns deterministic
-markup, security policy, and URL/path output; the filesystem scanner, route registration,
-request/response handling, storage, fixtures, and guards remain here at the I/O edge.
+## What is at stake
 
-- `headers.rs` — the HTTP adapter for the two pure header-policy sets. `artifact_csp()` = sandbox + egress CSP
-  that **names both explicit loopback origins** (`'self'` is meaningless under a
-  null origin; the shell is reachable at `127.0.0.1` *and* `localhost`);
-  `shell_csp()` = trusted-chrome CSP (nonce'd script + Trusted Types).
-  `hardening_headers()` = `nosniff` / `no-referrer` / `Permissions-Policy` deny.
-  Content + shell responses also carry `Cache-Control: no-store`.
-- `shell.rs` — thin adapter for the core trusted-parent document renderer. Runs the **parent side of the
-  postMessage bridge**, in this order: `event.source === iframe.contentWindow`
-  (NOT `event.origin`, which is `"null"` for every sandboxed frame) → rate cap →
-  reject transferred `ports` → exact `{type:"navigate", slug:<known>}` schema on
-  small typed fields (no `JSON.stringify` of the payload). Inserts artifact text
-  as `textContent` (never `innerHTML`). The shell's `frame-src 'self'` also
-  contains a framed artifact's own navigations (see design.md §4). It also emits
-  the **emoji SVG favicon** on the OUTER shell `<head>` only (a base64 `data:` SVG
-  `<link rel="icon">` built by the top-level `crate::favicon` module; per-space emoji
-  wins over the loopback host default, else a built-in default) — the sandboxed
-  artifact / content route is untouched. It also owns the **theme toggle** (Wave 3b): on toggle it `postMessage`s the framed artifact
-  `{type:"theme", theme}` and, on the next iframe swap, inlines the theme via
-  `?gp_theme=` so the wrap is FOUC-free. **Wave 4 — nav chrome:** renders a
-  `<nav>` listing the space's artifacts from the server-resolved `(slug, title)`
-  table, built **entirely client-side with `createElement` + `textContent`** (the
-  artifact-derived title never touches an HTML sink; `require-trusted-types-for
-  'script'` with no default policy makes any accidental `innerHTML` throw). A
-  single validated `navigateTo(slug)` path — grammar + `KNOWN_SET` allowlist, same
-  one the postMessage bridge uses — swaps the framed artifact in place (no full
-  reload, same-slug is a no-op so a hostile child can't loop it) and updates the
-  active entry + document/iframe title. (URL-sync / deep-linking for in-place swaps
-  is deferred — see the wave's terminal report.) A full-document artifact gets
-  **no** injected `bridge.js`; its author writes native same-space links with
-  `target="_top"` (the D1 top-nav path). The parent chrome never needs it because
-  the parent is not sandboxed. Shell `script-src` names only the nonce (not
-  `'self'`) — the shell loads no same-origin script file, so this shrinks the
-  injection blast radius.
-- `wrap.rs` (Wave 3b) — thin adapter for core **fragment detection + the bridge/theme injection point**.
-  `is_fragment` is BOM/whitespace/comment-tolerant (a full document opens with
-  `<!doctype>`/`<html …>`; anything else is a fragment). A fragment is wrapped
-  into a full document with `data-theme` inlined (no FOUC), `base.css` linked, and
-  `bridge.js` injected — **only here**, so a full document never gets a bridge
-  silently. Full documents are served verbatim. Wrapping runs under the same
-  frozen artifact CSP (`headers::artifact_csp`) and widens nothing; it is NOT
-  sanitization (the sandbox/CSP is the boundary, design.md §7).
-- `render.rs` (0.3.0) — thin adapter for the core **markdown + reusable-template renderer** (the
-  `glasspad render` path). Renders a markdown body to HTML (CommonMark + GFM via
-  `pulldown-cmark`) and splices it into a template's single `{{content}}` slot,
-  producing an artifact **body** string that flows through the ordinary serve
-  path (`one_artifact_snapshot` → `artifact_content` → `wrap::render_artifact`).
-  The template is **client-shipped and untrusted** but governs **only the body**:
-  the CSP / sandbox / Trusted-Types / hardening headers are set server-side on the
-  `_c` response regardless of body bytes (a `<meta http-equiv=CSP>` can only
-  *tighten* — fails closed), and the trusted shell is a different route built from
-  the resolved title via `textContent`, so a template can neither widen the
-  boundary nor inject the shell. Built-in templates (`prose` =
-  `<article class="gp-prose gp-read">…</article>` [default; inline reading styles and optional byline/TOC enhancement], `dashboard` = `.gp-dash` responsive card grid (ruled sections without JS)) are
-  **fragments**, so they inherit `base.css` (incl. the hardened `.gp-prose`
-  reading theme) + `bridge.js` for free. `wrap.rs`/`shell.rs` are unchanged.
-  **Per-page TOC rail (prose-page-toc):** the built-in `prose` path stamps a
-  **server-generated** anchor `id` on every heading (slugify heading text +
-  deterministic collision disambiguation — never an attacker-controlled raw id) and,
-  when the page has ≥2 H2/H3 headings, emits an "on this page" `<nav class="gp-toc">`
-  as a **sibling** of `.gp-prose` inside a `.gp-doc` grid (a native `<details>` —
-  collapsible, no JS; CSS hides it below a width breakpoint). This is **approach (a)**:
-  the rail lives inside the artifact's OWN fragment, so `#anchor` links resolve natively
-  inside the null-origin sandbox — **no shell involvement, no postMessage surface, CSP
-  unchanged**. Heading text is untrusted and reaches the rail only server-side
-  HTML-escaped. Fewer than 2 H2/H3 (or a non-prose / full-document artifact) degrades to
-  the plain prose fragment (no empty rail). `dashboard`, `report`, `board`, `index`, and `table` use the same plain splice; custom templates remain unchanged.
-  **Diagrams (markdown-diagrams):** authored **inline SVG** is the supported diagram
-  path — the producer owns SVG generation and embeds it; the `.md`/template renderer
-  passes raw HTML/SVG through verbatim (no strip, no rewrite, **no sanitization**), so a
-  diagram displays inside the null-origin sandbox with **no CSP change**. An authored SVG
-  is untrusted content like any markup (it *may* carry `<script>`/`<foreignObject>`/URL
-  refs — SVG is a scripting host); it is safe because of the **existing** boundary
-  (null-origin, no `allow-same-origin`, `connect-src 'none'`), NOT because SVG is inert.
-  This feature grants no new authority. `base.css` supplies the theming only — a `--gp-*`
-  status palette (done/next/blocked/future) + `.gp-diagram`/`.gp-node`/`.gp-edge`/
-  `.gp-status-*`/`.gp-legend` classes — so a colour-coded status DAG reads in both themes.
-  Full pattern + security/accessibility notes: [`AGENTS-DIAGRAMS.md`](AGENTS-DIAGRAMS.md);
-  runnable example: `examples/status-dag/`.
-- `guards.rs` — control-plane guards (design.md §5): `host_guard` (DNS-rebinding
-  defense, all routes, **fail-closed** on missing/foreign/malformed Host; only
-  `127.0.0.1`/`localhost` + our port) + `control_origin_guard` (reject
-  `Origin: null`/foreign on the `/api` control surface). Exercised end-to-end by
-  the `server::tests` integration tests against `build_app()`.
-- `fixtures.rs` — Wave-1 built-in `demo` space of **deliberately hostile**
-  artifacts (exfil / escape / eval / postMessage-abuse probes). These are the
-  security regression suite and stay forever. `mod.rs` resolves a request against
-  the **live snapshot first** (Wave 2a) and falls back to these fixtures only for
-  spaces the snapshot doesn't contain. The `demo` space also carries two benign
-  **fragment** artifacts (`nav-a`/`nav-b`) that link to each other — the Wave 3b
-  bridge nav demonstration the adversarial suite drives end-to-end — plus (Wave 4)
-  `nav-full` (a **full document** whose same-space link uses `target="_top"`, the
-  D1 top-nav path) and `inject` (an artifact whose `<title>` decodes to raw hostile
-  markup — the trusted-parent nav-injection probe target). Also serves
-  the `/_gp/v1/*` base libraries (Wave 2b/3b): the real `base.css` (the `--gp-*`
-  design system), `charts.js` (`gp.chart()` over Vega-Lite), `bridge.js` (the
-  fragment-only parent↔iframe channel), `manifest.json`, and the vendored Vega stack
-  (`vega`/`vega-lite`/`vega-embed`, SRI-pinned under `assets/`). The Vega bundles
-  are vendored, not CDN-loaded, because the artifact `script-src` names only the
-  loopback host — `charts.js` lazily loads them from `/_gp/v1/*`. `BASE_LIB_NAMES`
-  enumerates the served set (minus the `probe.js` test stub) that a self-contained
-  `glasspad build` (`crates/glasspad-cli/src/build.rs`) bundles under `_gp/v1/`, resolved through
-  `gp_asset` so the list never drifts from what the server serves.
-- `space.rs` (Wave 2a) — the **space model + directory scanner** (security-
-  sensitive). `scan_dir` reads a directory into an immutable `Space` (artifacts +
-  `assets/`), all-or-nothing: slug grammar, **reserved-name / collision** hard
-  errors, **symlink rejection** (`lstat` every content entry) + canonical-path
-  containment, per-file / per-space **size limits**, extension→**MIME** allowlist,
-  and **title resolution** (a small tag tokenizer, *not* a regex — entity-decoded,
-  length-bounded). Exact top-level entries named `AGENTS.md` or `CLAUDE.md` are
-  repository metadata and are skipped before file-type inspection (including the
-  common `CLAUDE.md -> AGENTS.md` symlink); every other name retains the ordinary
-  validation, and the exception does not apply under `assets/`. `Snapshot` is
-  swapped atomically by `ArtifactHost` so a half-written
-  file is never served. `asset_key_for_request` grammar-checks a request sub-path
-  into a key that must exact-match the pre-scanned asset map (traversal is
-  structurally impossible — you can only fetch a key that already exists).
-  **Markdown-native spaces (Gap 2):** a top-level `.md`/`.markdown` file is a page
-  too — `scan_dir` buffers it, then renders it through a built-in fragment template
-  (`render::render_to_body`; `prose` default, `dashboard`, `report`, `board`, `index`, or `table`, selected per-space via
-  `glasspad.yaml`'s `template:` key) into an artifact **body** (slug = stem), which
-  then flows through the identical serve path as an `.html` artifact — so the
-  security boundary is unchanged (the template governs only the body; the CSP /
-  sandbox / Trusted-Types headers are set server-side on the `_c` response, and
-  `wrap` injects `base.css` + `bridge.js`). `.md` and `.html` pages coexist; a
-  same-stem `.md`+`.html` (or `.md`+`.markdown`) pair is a `DuplicateSlug` hard
-  error. The rendered body is re-capped at `MAX_FILE_BYTES` (markup can amplify);
-  an unknown `template:` name is a hard error. A path-like `template:` value (for
-  example `templates/brand.html`) loads one regular UTF-8 **fragment** file relative
-  to the space root, rejects symlinks/traversal/full documents, and applies its
-  exactly-one `{{content}}` slot to every Markdown page during scanning; rendered
-  bodies are then uploaded, so hosted serving never reads the local template path.
-  Custom pages retain server-generated heading anchors and the TOC rail; the trusted
-  shell still owns grouped navigation and landing pages. All of `serve`/`build`/
-  `publish-space` inherit this for free (they consume the produced `Space`).
-  **Grouped nav + generated landing (space-docsite-nav):** the manifest gains an
-  optional `groups:` key (named groups → ordered `members`; a member is a bare slug
-  or a map with `title`/`desc`/one level of companion `children`). `finalize`
-  reconciles it against the artifact set into `Space.nav_groups` (drops dangling
-  slugs, dedups, discards grandchildren, drops empty groups, sanitizes labels/titles
-  like a resolved title). The flat `Space.nav` stays the **complete allowlist** — no
-  groups → empty `nav_groups` → today's flat nav is byte-compatible. **Companion
-  nesting is a manifest-level mapping** — glasspad never parses dotted
-  `x.arkkitehdille.md` stems (out of scope; the producer ships slug-safe pages +
-  declares `children:`). When a space has no `index`/`home` page AND (declares groups
-  OR has ≥2 pages), `finalize` **generates an `index` landing artifact** (a `gp-prose`
-  table of contents, grouped or flat, with per-doc descriptions from the manifest or
-  the doc's first paragraph) instead of the old redirect stub; it is a normal artifact
-  so serve/build/hosted inherit it and it is idempotent. The shell renders the grouped
-  vertical sidebar via `render_with_groups` (client `createElement`+`textContent`,
-  reusing the one validated `navigateTo` allowlist — the security model is unchanged);
-  wire/store carry `nav_groups` (`#[serde(default)]`, re-reconciled on the untrusted
-  ingest boundary).
-- `mod.rs` — routes (`/{space}/`, `/{space}/{slug}`, `/{space}/_c/{slug}`,
-  `/{space}/assets/{*path}`, `/{space}/_c/assets/{*path}`, `/_gp/reload`, `/_gp/v1/*`),
-  slug/space grammar + reserved-name rejection, header wiring, the live-snapshot +
-  fixtures resolution, and the `ArtifactHost` state (atomic snapshot swap + SSE
-  reload broadcast). The `_c/assets` alias uses the same scanned asset handler
-  as `assets` so full-document HTML's authored `assets/x` resolves against its
-  iframe URL without rewriting stored pages; neither route reads arbitrary files
-  or widens the content CSP.
-  Space **asset** responses carry `nosniff` + `Content-Security-Policy: sandbox`
-  so a hostile top-level SVG/HTML asset runs script-less in a null origin (the
-  `sandbox` directive is ignored for subresource loads, so JS/CSS/img still load
-  into an artifact). **No `Access-Control-Allow-Origin`** on user assets — a
-  wildcard would let any foreign page `fetch()`-read a space's assets (the request
-  carries a legit loopback `Host`). Classic subresources need no CORS.
-- The directory watch is a **dependency-free 500 ms poll** (`server.rs`
-  `spawn_watcher`/`fingerprint`) that rescans + atomically swaps + fires the SSE
-  reload on change; a rescan that fails (e.g. a fresh collision) keeps the
-  last-good snapshot serving.
+Every artifact is hostile until proven otherwise, because the agent that wrote it can
+have been prompt-injected. The viewer's browser is the same browser that talks to the
+loopback control API, so a hostile page in another tab is part of the threat model too
+(DNS rebinding, cross-origin requests to `127.0.0.1`). Hosted mode adds tenants whose
+pages are addressed by capability slugs that no other tenant may learn.
 
-## Frozen decisions (do not silently relax)
+The defence is layered, and each layer does one job (design.md §8). The sandbox without
+`allow-same-origin` isolates the DOM and the origin; it does not stop the artifact from
+sending requests. The CSP closes egress. The Host and Origin guards protect the control
+plane independently of both. Most reasoning about a change here comes down to knowing
+which layer is responsible for the property you are about to touch. "The sandbox blocks
+fetch" is a common and wrong belief; `connect-src 'none'` does that.
 
-- **`script-src` includes `'unsafe-eval'`** — Vega-Lite needs it; verified
-  empirically (design.md §4). Acceptable only *because* egress + null-origin
-  isolation are untouched. Do not add `allow-same-origin` to the artifact iframe.
-- **`connect-src 'none'` is the exfil boundary — keep it closed.** Live reload is
-  driven from the **trusted shell** (its `connect-src 'self'` permits the SSE
-  `EventSource`), so the *artifact* stays fully closed. Do not widen the artifact
-  `connect-src`. If Wave 3b's `bridge.js` needs in-frame reload, widen to the exact
-  `/_gp/reload` **path** (a CSP path-source) **plus a query-rejecting guard** —
-  never a bare origin (re-opens `/api/*`), never a foreign host.
-- The artifact iframe is `sandbox="allow-scripts allow-top-navigation-by-user-activation"`.
-  No `allow-same-origin`.
-- **Return channel = the shell is the airlock; the artifact stays frozen.** An
-  interactive artifact sends user input back via `gp.submit(data)` (bridge.js) →
-  `postMessage({type:"submit",…})` → the trusted shell (`connect-src 'self'`) POSTs
-  it to `/{space}/_gp/submit` (loopback) / `/api/v1/pages/{slug}/submit` (hosted).
-  The **artifact keeps `connect-src 'none'` and no `allow-forms`** — do **not** add
-  either. The server binds the submission's slug/space + owning tenant +
-  content-version from the *trusted request context* (URL path + stored page
-  meta/body), never the payload; the submit endpoint is `Origin`-allowlisted (CSRF),
-  size + rate capped. A hosted submit returns a one-submission random status token;
-  the shell pulls `…/submission-status/<id>/<token>` and reports `waiting` until any
-  existing owner-scoped poll/wait/drain/stream read durably marks that record
-  `collected`. The public status response contains only that state; unknown,
-  cross-page, and cross-tenant token combinations are the same opaque 404. Hosted
-  agent reads remain API-key + per-tenant scoped. See
-  `issues/artifact-return-channel/`. The store + long-poll + SSE stream are in
-  `crates/glasspad-cli/src/submissions.rs`; handlers in `hosted/submit.rs` (hosted) and `server.rs`
-  (loopback). The agent consumes submissions three ways over the **same** persisted-
-  cursor store (`since=<id>`, no re-deliver/skip): plain poll (A1 `…/submissions`),
-  long-poll (A3 `…/submissions/wait`, the default `await-submission`), and an **SSE
-  stream** (A2 `…/submissions/stream`, `await-submission --stream`) that pushes each
-  submission as a `submission` event. The stream reuses `wait`'s keyed broadcast but a
-  **separate** held-connection budget (`MAX_STREAM_WAITERS` + a per-key cap, so
-  indefinitely-held streams never starve the long-poll) and is agent-facing only
-  (API-key / loopback); the **artifact** never reaches it (`connect-src 'none'` unchanged
-  — the stream path is not named in the artifact CSP).
-- **Multi-round (B2) reuses the reload SSE carrier — no new push channel.** After a
-  submission the agent re-renders the *same live page* and the connected shell swaps
-  the framed artifact **in place**. The shell's one `EventSource("/_gp/reload")` now
-  multiplexes two signals ([`ArtifactHost::ReloadEvent`]): a full-shell `reload` (the
-  loopback dev file-watch, unchanged) and a keyed `round` event (space + new
-  content-version + monotonic round id) that swaps the current artifact in place — a
-  fresh content-route fetch under the **identical frozen CSP** (each round stays
-  null-origin, `connect-src 'none'`, no `allow-forms`; pushing a round widens
-  nothing). The event carries **no URL**, and round delivery is **scoped server-side**
-  by `?space=<slug>` on the reload stream — a connection receives a `round` event only
-  for the exact page slug it named, so the global broadcast can't fan one tenant's
-  capability slug out to another's shell (client-side `space === SPACE` is
-  defense-in-depth on top). Loopback
-  multi-round = rewrite the served file (the watcher fires the full reload). Hosted =
-  `POST /api/v1/pages/{slug}/rounds` (`hosted::rounds`, API-key + owner-scoped): the
-  re-render is a durable **live overlay** stored as an immutable generation under
-  `pages/<slug>/live/generations/<id>/` with an atomically-swapped `current` pointer
-  (so a crash during round N+1 keeps round N — see `hosted::store`'s generation-pointer
-  model; a pre-generation `live.html`/`live.json` overlay is still read on upgrade) over
-  the immutable baseline `artifact.html`, the served snapshot body is swapped, and
-  `notify_round` pushes the SSE swap. Cross-round binding is the existing content-version check — a
-  submission answering a stale round is rejected `409`. Client surface: `glasspad
-  push-round`.
+The decisions in the next section are Jari's product decisions, made with their
+trade-offs in view. Relaxing one, adding a sandbox token, or naming anything new in the
+artifact's `connect-src` changes the product promise. That is not something a unit does
+in passing because a feature needs it, however small the change looks; it is an issue
+with the case for it, and Jari decides. The reverse is also a fork: a tightening that
+breaks a shipped capability (Vega charts, full-document `target="_top"` navigation, raw
+HTML and SVG in markdown) is the same kind of decision. Inside the boundary you are
+free: add probes, tighten what breaks nothing, refactor behind the seams, and verify
+end to end before merging.
 
-## Testing
+Security code attracts speculative findings. `TODO.md`'s standing lessons record that a
+review finding justified by "another layer already validates this", or one that
+requires an attacker who already writes the server's own storage, is not work.
 
-- `cargo test artifact_host` — header-contract + grammar + guard unit/HTTP tests,
-  plus the Wave 2a scanner tests (`space::fs_tests`: reserved/collision/oversize/
-  non-UTF-8/**symlink**/manifest) and the `atomic_swap_never_serves_a_partial_snapshot`
-  concurrency test.
-- `./test-security.sh` (repo root) — the **adversarial suite**. Phase 1: the
-  headless-Chromium browser probes (`tests/security/run.mjs`) prove the browser
-  *enforces* the contract — per-channel exfil blocked at a network canary, sandbox
-  escape fails, direct-open is sandboxed by the response header, postMessage abuse
-  rejected, the Vega `'unsafe-eval'` dependency, the **Wave 3b bridge nav**
-  (a same-space relative-link click swaps the iframe via the validated bridge, an
-  unknown-slug / extra-property / transferred-port navigates are still rejected,
-  external + absolute-path links are not intercepted, and the theme toggle re-themes
-  the artifact — a wrong-source theme message is ignored), **plus the Wave 4 nav
-  chrome**: the trusted parent lists the space's artifacts and swaps the iframe in
-  place on click (no reload, active entry marked), the **nav-injection probe** (a
-  hostile artifact title renders as inert `textContent` — no execution, no element
-  nodes anywhere in the chrome, no layout break), and full-document `target="_top"`
-  cross-nav (**41 checks — keep green**).
-  Phase
-  2 (Wave 2a): live-directory **server-side** probes — path traversal (browsers
-  can't help here) and symlink escape are HTTP/exit-code checks against a real
-  served space, plus hostile-SVG-asset sandboxing, the SSE-scoped `connect-src`,
-  and (Wave 4) a **server-side nav-injection check** (a hostile artifact title is
-  emitted only `<`-encoded in the nav data literal, never as raw markup) +
-  the shell Trusted-Types header. Plus (loopback-lan-serve) **LAN-serve probes**:
-  with `loopback serve --bind <LAN-IP>`, the opted-in host + loopback are served but
-  a foreign `Host` to the LAN socket is STILL `421`-refused (DNS-rebinding held), the
-  sandbox/CSP/airlock are unchanged (the LAN origin is only *added* to the host set),
-  and a wildcard `--bind 0.0.0.0` is refused; the reachable-socket probe self-SKIPs
-  on a LAN-less host so the suite stays hermetic.
-  Keep it green and **extend it** when later waves add attack surface (injection
-  probes in Wave 4).
-- **Green means the WHOLE suite ran, not just Phase 1.** `./test-security.sh` is
-  `set -euo pipefail`, so the FIRST failing probe aborts the run mid-suite — you can
-  see Phase 1's `✅ ALL PASSED (48 checks)` and still have Wave 2a (the Gap/space
-  probes) never execute. Confirm the run reaches its final **`✅ Wave 2a space-model
-  probes PASSED`** line AND exits 0; the 48-check count alone is not "green." (0.10.0:
-  a stale Gap-2 `grep -q '<h1>Home</h1>'` broke on the new prose heading `id`s and
-  aborted Wave 2a — a worker's "48 green" claim missed it. Re-verify worker green
-  claims against the full suite.) Also kill stray `target/debug/glasspad`
-  serve/host-serve processes between runs — a leftover port bind causes a spurious
-  early death (a false red).
+## The frozen boundary and its reasons
+
+The artifact response, at `/{space}/_c/{slug}`, carries the policy built by
+`headers::artifact_csp_from_origins` in core. The exact text is in that function and
+in design.md §4; these are the reasons behind its shape.
+
+The CSP names explicit origins rather than `'self'`, because `'self'` matches nothing
+under a null origin. Loopback names both `127.0.0.1` and `localhost` since browsers
+treat them as distinct origins and the iframe `src` is relative, so it inherits
+whichever one the user opened. LAN mode adds exactly one opted-in origin, hosted mode
+names its single public origin. Only that host list is parameterized; every closure is
+identical across run modes.
+
+The sandbox tokens are `allow-scripts allow-top-navigation-by-user-activation`, and no
+`allow-same-origin`. The top-navigation token is decision D1 in design.md §10: a
+full-document artifact gets no `bridge.js`, so its author navigates between pages with
+`target="_top"`, and the click-gated residual was accepted for that.
+
+`script-src` includes `'unsafe-eval'` because Vega-Lite compiles its expression
+language with the `Function` constructor; without it `gp.chart()` cannot render. This
+was verified, not assumed: in debug builds the content route honours `?csp=noeval`,
+which serves the same policy minus that one token, and the adversarial suite proves the
+chart breaks under it. It is acceptable because the artifact already runs inline
+attacker script under `'unsafe-inline'`; containment was never "can it run JS" but
+egress plus origin isolation, and those are untouched.
+
+`connect-src 'none'` is the exfiltration boundary, and it closes requests to the
+artifact's own host too. Live reload works because the trusted shell holds the
+`EventSource` under its own `connect-src 'self'`. The trap here looks harmless: naming a
+single path such as `/_gp/reload` in the artifact's `connect-src`. A CSP path-source
+ignores the query string, so `fetch('/_gp/reload?leak=…')` becomes a local egress and
+log channel. An earlier iteration did exactly this and was reverted (design.md §4).
+
+`form-action 'none'` and the absence of `allow-forms` are what the return channel
+deliberately did not open; see below.
+
+The CSP is a response header, not only an iframe attribute, so a copied link opened in
+a new tab is sandboxed as well. A `<meta http-equiv="Content-Security-Policy">` inside
+a body can only tighten the effective policy, which is why templates and markdown may
+govern the body freely: the server header stays authoritative.
+
+Space assets (`/{space}/assets/*` and the `_c/assets` alias) carry `nosniff` and
+`Content-Security-Policy: sandbox`. The `sandbox` directive applies only when the
+asset is loaded as a document, so a hostile `logo.svg` opened top-level runs script-less
+in a null origin while `<img>`, `<script src>`, and `<link>` from an artifact still
+work. Assets carry no `Access-Control-Allow-Origin`: a wildcard would let any web page
+the user has open `fetch()` and read a space's assets, because such a request arrives
+with a legitimate loopback `Host` and passes the guard.
+
+Fragment wrapping and markdown rendering are not sanitization (design.md §7). Raw HTML
+and inline SVG pass through verbatim, and SVG is a scripting host (`<script>`,
+`onload`, `<foreignObject>`, URL references). That is safe because of the boundary
+above, not because of the format, and "it only contains SVG" is never a reason to
+relax anything.
+
+## The trusted shell
+
+The shell at `/{space}/{slug}` is first-party chrome, so `'self'` means something
+there. Its `script-src` names only the per-response nonce, not `'self'`: the shell
+loads no same-origin script file, and `'self'` would authorize a parser-created
+`<script src="/{space}/assets/attacker.js">`, which is agent-authored content on the
+same origin, if any markup injection into the shell ever appeared. Trusted Types is
+required with no default policy, so any string assigned to an HTML sink throws. That is
+the reason all chrome is built with `createElement` and `textContent`, and why
+artifact-derived titles reach the page only inside a JSON-for-script data literal with
+`<` encoded. The server-side probe in `test-security.sh` checks exactly that encoding.
+
+The parent side of the postMessage bridge checks `event.source === iframe.contentWindow`
+and not `event.origin`, which is the string `"null"` for every sandboxed frame and
+proves nothing. It accepts an exact small schema, rate-caps messages, and rejects
+transferred ports. Nav clicks and bridge messages share one validated `navigateTo`
+path against the space's slug allowlist; a same-slug navigate is a no-op so a hostile
+child cannot loop the parent. The structured-clone cost of a flood cannot be bounded
+inside the listener and is an accepted residual (shell.rs explains).
+
+## The scanner and the snapshot
+
+`scan_dir` reads a directory into an immutable `Space`, all or nothing: a symlink
+anywhere in content, a reserved or colliding slug, an oversize file, or an unknown
+template name is a hard error and the server refuses to start rather than serve part
+of a space. Assets are looked up in the pre-scanned map by exact key, so traversal is
+structurally impossible rather than filtered. Size limits are enforced on the bytes
+actually read, because a `stat` length can be grown by a concurrent write, and a
+rendered markdown body is capped again because markup amplifies. Top-level `AGENTS.md`
+and `CLAUDE.md` are skipped as repository metadata; the exception is exact-name and
+top-level only.
+
+The `_c/assets` alias exists because a browser resolves an authored `assets/x` against
+the iframe's `_c/{slug}` URL. It is the same asset handler over the same map; the point
+of the arrangement is that no `_c` path ever becomes a filesystem read.
+
+`ArtifactHost` swaps snapshots atomically, and each handler captures one `Arc` up front,
+so a mid-request rescan never mixes a title from one snapshot with nav from another. A
+space present in the snapshot is served only from it; a missing slug does not fall
+through to the `demo` fixtures. A rescan that fails keeps the last good snapshot
+serving. The watcher is a dependency-free 500 ms poll in `server.rs`.
+
+The flat `Space.nav` is the complete slug allowlist. Manifest `groups:` are reconciled
+against it at scan time and again on hosted ingest, because the wire format is
+untrusted. Companion nesting is declared in the manifest; Glasspad does not parse
+dotted file stems into hierarchy, by decision.
+
+## The return channel and rounds
+
+The artifact stays frozen and the shell is the airlock. `gp.submit(data)` in
+`bridge.js` posts a message to the shell, and the shell POSTs it to the server
+(`/{space}/_gp/submit` on loopback, `/api/v1/pages/{slug}/submit` hosted). The server
+binds the submission's space or slug, owning tenant, and content-version from the
+trusted request context, never from the payload; the endpoint is `Origin`-allowlisted
+and size and rate capped; a submission carrying a stale content-version is a `409`. A
+hosted submit hands back a one-submission random status token, and every wrong
+combination of token, page, and tenant is the same opaque `404`, so the public status
+route is not an existence oracle. Agents read submissions by poll, long-poll, or SSE
+stream over one persisted cursor; the stream has its own held-connection budget so
+open streams cannot starve the long-poll, and the artifact CSP names none of these
+paths.
+
+Multi-round reuses the one reload `EventSource` rather than a new push channel. A
+`round` event carries no URL, only the space, content-version, and round id, so the
+most it can do is make a shell re-fetch its own content route. Delivery is scoped
+server-side by `?space=` on the stream, because an unscoped global broadcast would hand
+every connected viewer other tenants' capability slugs; the client-side space check is
+defence in depth. Hosted rounds are stored as immutable generations behind an
+atomically swapped pointer so a crash mid-push keeps the previous round. The store is
+`crates/glasspad-cli/src/submissions.rs`, the handlers are `hosted/submit.rs`,
+`hosted/rounds.rs`, and `server.rs`, and the design record is
+`issues/artifact-return-channel/`.
+
+## Verifying a change
+
+`cargo test artifact_host` covers the header contract, grammar, guards, the scanner
+(`space::fs_tests`), and the atomic-swap concurrency test. `./test-security.sh` is the
+executable form of the contract: browser probes in `tests/security/run.mjs` prove that
+Chromium enforces the policy, and the shell script's own probes cover what a browser
+cannot help with (traversal, symlinks, CSRF, rate limits, tenant scope, LAN Host
+handling). The root `AGENTS.md` explains how to read its result and why a partial run
+once passed for green.
+
+Two things about the suite are specific to this directory. The `demo` fixtures are the
+targets the browser probes drive, so they stay and grow rather than getting cleaned up.
+And when you add attack surface, add the probe on the side that enforces the property:
+the browser for anything the CSP or sandbox does, the server for anything the scanner,
+guards, or handlers do. Check counts written in documents drift; the script's summary is
+the truth.
+
+The base libraries under `assets/` are compiled into the binary, and `glasspad build`
+bundles the same set through `fixtures::BASE_LIB_NAMES`, so there is one list of what
+is served; do not introduce a second.
