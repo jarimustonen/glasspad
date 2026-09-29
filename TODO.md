@@ -44,13 +44,13 @@ Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; th
 orientation only.
 
 The six built-ins, Markdown asset fix and revised viewer chrome shipped in 0.18.2;
-subsequent fixes shipped through 0.18.5. **The DAG has no open scheduled or unscheduled
-issues.** The local CLI and running public service now use 0.18.5; the service was
-verified against the installed binary's inode after restart, with both health checks
-green. Jari has authorised building and deploying when needed; the host update policy
-and checks are now in root `AGENTS.md`. Next inspect light/dark/phone examples on the
-public test URL and ask Jari for visual feedback. Designer `space-nav/` was only a
-proposal, not accepted work.
+subsequent fixes shipped through 0.18.5. There is no prepared implementation work in
+this handoff; consult the live DAG for scheduling. The local CLI and running public
+service now use 0.18.5; the service was verified against the installed binary's inode
+after restart, with both health checks green. Jari has authorised building and
+deploying when needed; the host update policy and checks are in root `AGENTS.md`.
+Next inspect light/dark/phone examples on the public test URL and ask Jari for visual
+feedback. Designer `space-nav/` was only a proposal, not accepted work.
 
 One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
