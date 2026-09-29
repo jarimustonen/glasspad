@@ -1,9 +1,9 @@
-```markdown
 # Agents policy (`.issuectl/AGENTS.md`)
 
 How AI agents work this repository's issue tracker. The block between the
 `issuectl-managed` sentinels at the bottom is regenerated from
-`issues/.schema.yaml` and `.issuectl/transitions.yaml` by `issuectl doctor --fix`;
+`issues/.schema.yaml`, issuectl's built-in field defaults, and
+`.issuectl/transitions.yaml` by `issuectl doctor --fix`;
 the prose above it is hand-written and yours to improve. Project-wide guidance
 (what an issue is for here, where plans live, how work is scheduled and handed off)
 is in the top-level `AGENTS.md`; this file covers the tracker itself.
@@ -12,7 +12,7 @@ is in the top-level `AGENTS.md`; this file covers the tracker itself.
 
 `issues/<slug>/item.md` is the durable record of a piece of work: why it was opened,
 what was decided, what landed, and how it ended. Closed issues stay in place, and
-`ARCHITECTURE.md` and the changelog point back to them for the reasons behind
+`ARCHITECTURE.md` points back to them for the reasons behind
 decisions, so an issue is written for a reader a year from now, not just for the
 agent picking it up next. Plans, analyses, and review findings that serve an issue
 live beside its `item.md` as ordinary files (`plan.md`, `analysis.md`, `design.md`,
@@ -39,9 +39,10 @@ heading `## Notes` is legacy; comments go under `## Comments`.
 
 The `/issue` skill is the worked reference for the CLI and its JSON shapes.
 `issuectl skill install` writes the repo-local copies, so they are only as current
-as the last install. If the installed copy talks about numbered `issues/open/NN-…`
-directories, it predates the flat slug layout this repo uses and should be
-reinstalled rather than followed.
+as the last install. If an installed copy talks about `issues/open/` directories,
+numbered or not, it predates the flat slug layout this repo uses and should be
+reinstalled with `issuectl skill install --force` (a plain install leaves existing
+copies in place) rather than followed.
 
 ## What is particular about this repository
 
@@ -53,7 +54,8 @@ not, with the reason recorded (`close --comment`, or `intake reject` with its
 disposition fields) so the next reader does not have to reconstruct it.
 
 Incoming bug reports and feature requests arrive as `untriaged` and move through
-`issuectl intake` (accept, defer, need-info, reject, duplicate, obsolete). Whether a
+`issuectl intake` (accept, defer, need-info, reject, cannot-reproduce, duplicate,
+obsolete). Whether a
 reported bug is fixed, deferred, or not a bug is Jari's call, as the top-level
 `AGENTS.md` says; the tracker's job is to hold the report faithfully until that
 call is made. `TODO.md` keeps the standing triage lessons, including the one about
@@ -90,11 +92,7 @@ what the schema can: missing `closed:` dates, dangling slug references after a
 rename, and a managed block in this file that has drifted from the schema. Its
 `--fix` regenerates that block and migrates legacy values; review the diff it makes
 before committing it, since it rewrites files you did not touch.
-```
 
-The managed block follows, unchanged from the current file:
-
-```markdown
 <!-- issuectl-managed:start -->
 
 <!-- issuectl-managed:format=1 -->
@@ -142,6 +140,3 @@ _No per-type body-section requirements declared._
 _No transition rules declared (lenient default)._
 
 <!-- issuectl-managed:end -->
-```
-
-The complete file is the first block, a blank line, then the second block, so that the sentinel block is byte for byte what the current file has (one blank line before `<!-- issuectl-managed:start -->`, trailing newline after `<!-- issuectl-managed:end -->`).
