@@ -6,11 +6,9 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 
 ## Where we are
 
-**0.18.2 is released** (2026-09-24), verified on crates.io, GitHub Release (12 assets),
-and the Homebrew formula. Both tag-triggered CI workflows passed. `main` is pushed and clean.
-The locally installed `glasspad` CLI currently reports 0.18.1; release verification is not
-proof that the public hosted server has been deployed. Check live version before claiming the
-new viewer chrome appears at an existing hosted URL.
+**0.18.5 is tagged** (2026-09-28); `main` is pushed and clean. The locally installed
+`glasspad` CLI reports 0.18.5. The public hosted server's deployed binary version is
+unverified: release and local installation do not prove production deployment.
 
 The 2026-09-24 round delivered the six-template gallery in 0.18.0 and patches in 0.18.1/0.18.2:
 
@@ -45,13 +43,15 @@ Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; th
 orientation only. `relative-markdown-assets` is currently unscheduled context awaiting a human
 lane-or-close decision; it is not accepted, scheduled, or executable work.
 
-The six built-ins, Markdown asset fix and revised viewer chrome are in 0.18.2. **The DAG has
-no open scheduled or unscheduled issues.** Next, converge the installed CLI and public hosted
-service through the owning Homebase deployment interface after confirming its policy/target;
-the old public test URL still serves the running server's shell until that service is updated.
-Then inspect light/dark/phone examples on that URL and ask Jari for visual feedback. Do not
-mistake a published crate for a completed production deployment. Designer `space-nav/` was
-only a proposal, not accepted work.
+The six built-ins, Markdown asset fix and revised viewer chrome shipped in 0.18.2;
+subsequent fixes shipped through 0.18.5. **The DAG has no open scheduled or unscheduled
+issues.** The local CLI is already 0.18.5. The public test URL responds HTTP 200 and its
+HTML contains the sidebar, but its running binary version has not been verified. Before
+changing that production service, establish its owning deployment command, target, autonomy
+and live-version check; root `AGENTS.md` does not grant production deploy autonomy.
+Then inspect light/dark/phone examples on the public test URL and ask Jari for visual
+feedback. Do not mistake a published crate for a completed production deployment. Designer
+`space-nav/` was only a proposal, not accepted work.
 
 One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).
