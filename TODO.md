@@ -40,8 +40,7 @@ branches remain historical cleanup context only; no session-owned run is unsettl
 ## ▶ Start here
 
 Run `issuectl dag --json --reservations '[]'` for the authoritative schedule; this file records
-orientation only. `relative-markdown-assets` is currently unscheduled context awaiting a human
-lane-or-close decision; it is not accepted, scheduled, or executable work.
+orientation only.
 
 The six built-ins, Markdown asset fix and revised viewer chrome shipped in 0.18.2;
 subsequent fixes shipped through 0.18.5. **The DAG has no open scheduled or unscheduled
