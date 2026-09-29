@@ -7,8 +7,9 @@ Release history lives in `CHANGELOG.md` and git; closed issues keep their own de
 ## Where we are
 
 **0.18.5 is tagged** (2026-09-28); `main` is pushed and clean. The locally installed
-`glasspad` CLI reports 0.18.5. The public hosted server's deployed binary version is
-unverified: release and local installation do not prove production deployment.
+`glasspad` CLI reports 0.18.5. On 2026-09-29 the public hosted server was restarted
+from its old 0.18.4 process into the installed 0.18.5 binary; loopback and public
+`/healthz` returned `ok`, and the visual-acceptance URL returned HTTP 200.
 
 The 2026-09-24 round delivered the six-template gallery in 0.18.0 and patches in 0.18.1/0.18.2:
 
@@ -44,13 +45,12 @@ orientation only.
 
 The six built-ins, Markdown asset fix and revised viewer chrome shipped in 0.18.2;
 subsequent fixes shipped through 0.18.5. **The DAG has no open scheduled or unscheduled
-issues.** The local CLI is already 0.18.5. The public test URL responds HTTP 200 and its
-HTML contains the sidebar, but its running binary version has not been verified. Before
-changing that production service, establish its owning deployment command, target, autonomy
-and live-version check; root `AGENTS.md` does not grant production deploy autonomy.
-Then inspect light/dark/phone examples on the public test URL and ask Jari for visual
-feedback. Do not mistake a published crate for a completed production deployment. Designer
-`space-nav/` was only a proposal, not accepted work.
+issues.** The local CLI and running public service now use 0.18.5; the service was
+verified against the installed binary's inode after restart, with both health checks
+green. Jari has authorised building and deploying when needed; the host update policy
+and checks are now in root `AGENTS.md`. Next inspect light/dark/phone examples on the
+public test URL and ask Jari for visual feedback. Designer `space-nav/` was only a
+proposal, not accepted work.
 
 One unrelated manual task remains: set the GitHub social-preview image in the web UI
 (`brand/logo.png` or the README screenshot are suitable sources).

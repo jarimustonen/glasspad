@@ -167,6 +167,20 @@ template output, CSP policy) already live in core.
 
 ## Working on the host
 
+The public hosted service runs on haapa as the `glasspad-host.service` user unit.
+Jari has authorised build and deploy when there is something to build or deploy;
+do not restart it merely as a ritual. Follow the owning Homebase policy in
+`~/Sources/homebase/infra/glasspad/AGENTS.md`: release binaries, never install a
+local source build over the shared CLI. When the installed release is newer than
+the running process, `systemctl --user restart glasspad-host.service` on haapa
+activates it; when the installed release is old, the owning local update command
+is `cd ~/Sources/homebase && ./infra/glasspad/refresh-server.sh` (checksum-verified,
+health-checked, with rollback). Check the running process, not only `glasspad
+version --json`: the fleet installer may replace its executable while the old
+process remains alive. Verify `http://127.0.0.1:18795/healthz` and
+`https://glasspad.maalla.dev/healthz` after a restart. Do not touch the page
+store, API keys, or shared Cloudflare tunnel as part of a version update.
+
 After changing host code or a base library under `/_gp/v1/` (`base.css`, `charts.js`,
 `bridge.js`, `manifest.json`), the assets are compiled into the binary: rebuild,
 restart the loopback server, reload the space.
