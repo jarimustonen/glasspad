@@ -571,7 +571,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.18.5...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/jarimustonen/glasspad/compare/v0.18.5...v0.19.0
 [0.18.5]: https://github.com/jarimustonen/glasspad/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/jarimustonen/glasspad/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/jarimustonen/glasspad/compare/v0.18.2...v0.18.3
