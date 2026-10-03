@@ -106,6 +106,24 @@ cat > "$WORK/myspace/visual.md" <<'MD'
 
 <img src="./assets/sub/photo.avif" id="raw-html-url">
 MD
+cat > "$WORK/myspace/mermaid.md" <<'MD'
+# Diagrams
+
+```mermaid
+flowchart LR
+  A[Start] --> B[Done]
+```
+
+```mermaid
+sequenceDiagram
+  Alice->>Bob: Hello
+  Bob-->>Alice: Hi
+```
+
+```mermaid
+not a diagram
+```
+MD
 
 pkill -f "target/debug/glasspad loopback serve" 2>/dev/null || true
 sleep 0.5
@@ -117,6 +135,7 @@ for _ in $(seq 1 40); do
 done
 SB="http://127.0.0.1:$SPACE_PORT"
 GLASSPAD_PORT="$SPACE_PORT" node "$SUITE_DIR/markdown-assets.mjs" "$SB/myspace/visual" "$SB/myspace"
+node "$SUITE_DIR/mermaid.mjs" "$SB/myspace/mermaid"
 node "$SUITE_DIR/html-relative-assets.mjs" "$SB/myspace"
 
 code() { curl -s -o /dev/null -w "%{http_code}" "$1"; }

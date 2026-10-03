@@ -12,6 +12,12 @@
  * the bridge only handles later toggles.
  */
 
+/* Mermaid fences retain their escaped source as a readable fallback when scripts
+   are disabled or a diagram cannot be parsed. Generated SVGs stay in the column. */
+.gp-mermaid { overflow-x: auto; max-width: 100%; white-space: pre; }
+.gp-mermaid.gp-mermaid-ready { background: transparent; border: 0; padding: 0; white-space: normal; }
+.gp-mermaid svg { display: block; max-width: 100%; height: auto; margin-inline: auto; }
+
 /* === Theme tokens === */
 
 /* Light theme (default) */

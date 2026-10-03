@@ -1,7 +1,7 @@
 ---
 name: glasspad
 description: Show rich visual HTML views (dashboards, charts, interactive UIs) to the user in their browser. Use when asked to visualize, plot, chart, dashboard, or "show me" something.
-cli_version: "0.18.5"
+cli_version: "0.19.0"
 schema_version: 1
 ---
 
@@ -117,7 +117,16 @@ for reading), `dashboard` (cards), `report`, `board`, `index` (a linked director
 into the uploaded bodies, so hosted spaces stay self-contained. Raw HTML in Markdown
 passes through unsanitized, so a chart or a form can live in a `.md` page. Glasspad
 does not infer document semantics; glossary links and cross-references belong in the
-producer's build step (`docs/markdown-preprocessing.md` in the repository).
+producer's build step (`docs/markdown-preprocessing.md` in the repository). Fenced
+`mermaid` code blocks render as diagrams using a bundled local library (no CDN),
+follow the light/dark theme, and retain readable source if rendering fails:
+
+````markdown
+```mermaid
+flowchart LR
+  Draft --> Review --> Publish
+```
+````
 
 **HTML fragments** are wrapped in a themed skeleton with `base.css` (the `--gp-*`
 design tokens, which follow the user's light or dark theme) and `bridge.js`

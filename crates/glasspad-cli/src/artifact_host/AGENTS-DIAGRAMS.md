@@ -1,12 +1,12 @@
 # Diagrams in markdown/prose spaces (markdown-diagrams)
 
 **The supported pattern is inline SVG, themed from the `--gp-*` design system.**
-glasspad does not ship a diagram DSL or a server-side diagram renderer — the
-*producing agent* owns diagram generation (e.g. a data-driven SVG generator like
-producer-example's `diagrams.py`) and embeds the result as inline `<svg>` in a markdown
-body or an HTML artifact. glasspad's only contribution is a small set of
-theme-aware CSS classes so an authored diagram reads correctly in both Glass Light
-and Glass Dark.
+For hand-authored SVG, the *producing agent* owns diagram generation (e.g. a
+SVG generator) and embeds the result as inline `<svg>` in a markdown body or
+HTML artifact. Glasspad supplies theme-aware CSS classes for it. Separately,
+Markdown `mermaid` fenced blocks are rendered client-side using a pinned, locally
+bundled Mermaid script (no CDN). They retain escaped source as a fallback and
+rerender on theme changes. Neither path requires a new CSP allowance.
 
 ## Security — the sandbox is the boundary, not the format
 
@@ -117,9 +117,11 @@ Drop that straight into a `.md` page (or an HTML artifact). A runnable example i
 
 ## Security note (implementation)
 
-This feature is **CSS + docs only**. It adds no route, no header, no script, and
-does not change `render.rs`'s output for any existing input — a diagram renders
-through the pre-existing raw-HTML passthrough. The artifact CSP/sandbox is
+The original inline-SVG feature was **CSS + docs only**: an inline SVG renders
+through the pre-existing raw-HTML passthrough. Mermaid support adds a separate
+fence transformation in core's `render.rs`, plus same-host assets wired through
+`fixtures::gp_asset` and included in static builds; it does not change the
+artifact CSP or sandbox. The artifact CSP/sandbox is
 unchanged. Regression coverage: `render.rs`'s
 `inline_svg_status_dag_passes_through_prose_render` (the SVG, incl. a `<script>`,
 survives the render path un-sanitized) and `mod.rs`'s

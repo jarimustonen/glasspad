@@ -33,7 +33,60 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html};
+use pulldown_cmark::{
+    CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, html,
+};
+
+const MERMAID_SCRIPT: &str = "<script src=\"/_gp/v1/mermaid.js\" defer></script>\n";
+const MERMAID_BUILD_SCRIPT: &str = "<script src=\"_gp/v1/mermaid.js\" defer></script>\n";
+
+/// Replace only fenced `mermaid` blocks (not inline code, indented blocks or
+/// lookalike languages). The source stays escaped and visible until the client
+/// renders it. Raw HTML events are safe here because the author already controls
+/// the sandboxed artifact body; escaping prevents accidental markup in the fallback.
+fn mermaid_events<'a>(events: impl IntoIterator<Item = Event<'a>>) -> (Vec<Event<'a>>, bool) {
+    let mut result = Vec::new();
+    let mut source: Option<String> = None;
+    let mut found = false;
+    for event in events {
+        if let Some(code) = &mut source {
+            match event {
+                Event::End(TagEnd::CodeBlock) => {
+                    let mut markup = String::from("<pre class=\"gp-mermaid\" data-gp-mermaid>");
+                    escape_into(&mut markup, code);
+                    markup.push_str("</pre>\n");
+                    result.push(Event::Html(CowStr::from(markup)));
+                    source = None;
+                    found = true;
+                }
+                Event::Text(text) | Event::Code(text) => code.push_str(&text),
+                _ => {}
+            }
+        } else if matches!(&event, Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) if info.trim() == "mermaid")
+        {
+            source = Some(String::new());
+        } else {
+            result.push(event);
+        }
+    }
+    (result, found)
+}
+
+fn push_rendered_html(
+    out: &mut String,
+    events: Vec<Event<'_>>,
+    has_mermaid: bool,
+    content_route: bool,
+) {
+    html::push_html(out, events.into_iter());
+    if has_mermaid {
+        out.push_str(if content_route {
+            MERMAID_SCRIPT
+        } else {
+            MERMAID_BUILD_SCRIPT
+        });
+    }
+}
 
 /// The insertion point a template must carry, exactly once. Whitespace inside the
 /// braces is tolerated (`{{ content }}` == `{{content}}`); see [`apply_template`].
@@ -95,15 +148,15 @@ pub fn render_markdown(md: &str) -> String {
 fn render_markdown_with_asset_base(md: &str, content_route: bool) -> String {
     // A static build places pages at its root; unlike /_c/slug it needs the
     // original assets/ URL. The parser and all other output remain identical.
-    let parser = Parser::new_ext(md, gfm_options()).map(|event| {
+    let (events, has_mermaid) = mermaid_events(Parser::new_ext(md, gfm_options()).map(|event| {
         if content_route {
             rewrite_asset_event(event)
         } else {
             event
         }
-    });
+    }));
     let mut out = String::with_capacity(md.len() + md.len() / 2 + 64);
-    html::push_html(&mut out, parser);
+    push_rendered_html(&mut out, events, has_mermaid, content_route);
     out
 }
 
@@ -195,15 +248,14 @@ fn render_markdown_with_headings(md: &str, content_route: bool) -> (String, Vec<
     // state exactly as `render_markdown` produces it. The input is bounded upstream
     // (`space::MAX_FILE_BYTES` caps the `.md` source, and the rendered body is re-capped
     // after render), so this O(n) buffer is over a bounded n — not an unbounded artifact.
-    let mut events: Vec<Event> = Parser::new_ext(md, gfm_options())
-        .map(|event| {
+    let (mut events, has_mermaid) =
+        mermaid_events(Parser::new_ext(md, gfm_options()).map(|event| {
             if content_route {
                 rewrite_asset_event(event)
             } else {
                 event
             }
-        })
-        .collect();
+        }));
     let mut toc: Vec<TocEntry> = Vec::new();
     let mut used_ids: SlugSet = SlugSet::default();
     // Headings inside a footnote *definition* are page content, not part of the
@@ -266,7 +318,7 @@ fn render_markdown_with_headings(md: &str, content_route: bool) -> (String, Vec<
     }
 
     let mut out = String::with_capacity(md.len() + md.len() / 2 + 64);
-    html::push_html(&mut out, events.into_iter());
+    push_rendered_html(&mut out, events, has_mermaid, content_route);
     (out, toc)
 }
 
@@ -629,6 +681,26 @@ mod tests {
         let tasks = render_markdown("- [x] done\n- [ ] todo\n");
         assert!(tasks.contains("type=\"checkbox\""));
         assert!(tasks.contains("checked"));
+    }
+
+    #[test]
+    fn mermaid_fences_render_in_every_markdown_path() {
+        let md = "# Diagram\n\n```mermaid\nflowchart LR\n  A[<unsafe> & \"quote\"] --> B\n```\n\n```mermaid-js\nno\n```\n";
+        for body in [
+            render_markdown(md),
+            render_to_body(md, builtin_template("prose").unwrap()).unwrap(),
+            render_to_body_for_build(md, builtin_template("report").unwrap()).unwrap(),
+            render_space_template_to_body(md, "<main>{{content}}</main>").unwrap(),
+        ] {
+            assert!(body.contains("data-gp-mermaid"), "{body}");
+            assert!(
+                body.contains("A[&lt;unsafe&gt; &amp; &quot;quote&quot;]"),
+                "{body}"
+            );
+            assert_eq!(body.matches("mermaid.js\" defer").count(), 1);
+            assert!(body.contains("language-mermaid-js"));
+        }
+        assert!(!render_markdown("`mermaid`\n\n    mermaid\n").contains(MERMAID_SCRIPT));
     }
 
     #[test]

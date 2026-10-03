@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.19.0] - 2026-10-03
+
+### Added
+- Render fenced `mermaid` diagrams in Markdown artifacts, using a local bundled library with light/dark theme updates and a readable source fallback.
+
 ## [0.18.5] - 2026-09-28
 
 ### Changed

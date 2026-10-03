@@ -93,6 +93,13 @@ pub fn wrapped_page(artifact_html: &str, mode: LibMode, favicon: Option<&str>) -
         let out = inject_favicon(out, favicon);
         if mode == LibMode::SelfContained {
             localize_base_libs(out)
+        } else if artifact_html.contains("data-gp-mermaid") {
+            // Markdown's build renderer uses a relative local library path.
+            // Shared-libs mode instead references the server's canonical root.
+            out.replace(
+                "src=\"_gp/v1/mermaid.js\" defer",
+                "src=\"/_gp/v1/mermaid.js\" defer",
+            )
         } else {
             out
         }

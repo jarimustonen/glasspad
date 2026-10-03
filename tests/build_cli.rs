@@ -73,6 +73,46 @@ fn markdown_asset_links_in_flat_static_build_stay_next_to_assets() {
 }
 
 #[test]
+fn mermaid_build_bundles_local_scripts_or_uses_shared_host() {
+    let root = temp_dir("mermaid");
+    let space = root.join("sales");
+    write(
+        &space,
+        "index.md",
+        b"# Map\n\n```mermaid\nflowchart LR\n A-->B\n```\n",
+    );
+    let out = root.join("out");
+    let result = bin().arg("build").arg(&space).arg(&out).output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let html = std::fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(html.contains("src=\"_gp/v1/mermaid.js\""));
+    assert!(out.join("_gp/v1/mermaid.js").is_file());
+    assert!(out.join("_gp/v1/mermaid.min.js").is_file());
+
+    let shared = root.join("shared");
+    let result = bin()
+        .arg("build")
+        .arg(&space)
+        .arg(&shared)
+        .arg("--shared-libs")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let html = std::fs::read_to_string(shared.join("index.html")).unwrap();
+    assert!(html.contains("src=\"/_gp/v1/mermaid.js\""));
+    assert!(!shared.join("_gp/v1/mermaid.min.js").exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn self_contained_build_json_envelope_and_offline_libs() {
     let root = temp_dir("self-contained");
     let space = root.join("sales");

@@ -12,6 +12,14 @@
       "type": "text/javascript",
       "description": "Defines window.gp; lazily loads the Vega stack from this host and exposes gp.chart()."
     },
+    "mermaid.js": {
+      "type": "text/javascript",
+      "description": "Loaded only by Markdown mermaid fences; renders with the locally bundled Mermaid library and follows the artifact theme."
+    },
+    "mermaid.min.js": {
+      "type": "text/javascript",
+      "description": "Locally bundled Mermaid 11.12.3; no CDN or fetch required."
+    },
     "bridge.js": {
       "type": "text/javascript",
       "description": "Auto-injected into fragment-wrapped artifacts. Intercepts same-space relative-link clicks and asks the trusted parent to swap the iframe (validated postMessage bridge), and applies the theme the parent hands down on a toggle. Not needed by full-document artifacts, which opt in themselves and fall back to target=_top."
@@ -20,7 +28,8 @@
   "vendor": {
     "vega": "5.30.0",
     "vega-lite": "5.21.0",
-    "vega-embed": "6.26.0"
+    "vega-embed": "6.26.0",
+    "mermaid": "11.12.3"
   },
   "api": {
     "gp.chart": {
