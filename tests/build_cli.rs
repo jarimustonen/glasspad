@@ -92,6 +92,7 @@ fn mermaid_build_bundles_local_scripts_or_uses_shared_host() {
     assert!(html.contains("src=\"_gp/v1/mermaid.js\""));
     assert!(out.join("_gp/v1/mermaid.js").is_file());
     assert!(out.join("_gp/v1/mermaid.min.js").is_file());
+    assert!(out.join("_gp/v1/mermaid.notices.txt").is_file());
 
     let shared = root.join("shared");
     let result = bin()

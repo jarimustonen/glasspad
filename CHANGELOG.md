@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
+## [0.19.1] - 2026-10-03
+
+### Fixed
+- Serve Mermaid's bundled third-party notices at a lowercase URL accepted by the base-asset path guard.
+
 ## [0.19.0] - 2026-10-03
 
 ### Added
@@ -571,7 +576,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/jarimustonen/glasspad/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/jarimustonen/glasspad/compare/v0.18.5...v0.19.0
 [0.18.5]: https://github.com/jarimustonen/glasspad/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/jarimustonen/glasspad/compare/v0.18.3...v0.18.4

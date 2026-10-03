@@ -392,7 +392,7 @@ pub const BASE_LIB_NAMES: &[&str] = &[
     "charts.js",
     "mermaid.js",
     "mermaid.min.js",
-    "mermaid.NOTICES.txt",
+    "mermaid.notices.txt",
     "manifest.json",
     "vega.min.js",
     "vega-lite.min.js",
@@ -407,7 +407,7 @@ pub fn gp_asset(path: &str) -> Option<(&'static str, &'static str)> {
         "charts.js" => Some((JS, GP_CHARTS_JS)),
         "mermaid.js" => Some((JS, GP_MERMAID_JS)),
         "mermaid.min.js" => Some((JS, GP_MERMAID)),
-        "mermaid.NOTICES.txt" => Some(("text/plain; charset=utf-8", GP_MERMAID_NOTICES)),
+        "mermaid.notices.txt" => Some(("text/plain; charset=utf-8", GP_MERMAID_NOTICES)),
         "bridge.js" => Some((JS, GP_BRIDGE_JS)),
         "manifest.json" => Some(("application/json; charset=utf-8", GP_MANIFEST)),
         "vega.min.js" => Some((JS, GP_VEGA)),
@@ -422,7 +422,7 @@ const GP_BASE_CSS: &str = include_str!("assets/base.css");
 const GP_CHARTS_JS: &str = include_str!("assets/charts.js");
 const GP_MERMAID_JS: &str = include_str!("assets/mermaid.js");
 const GP_MERMAID: &str = include_str!("assets/vendor/mermaid.min.js");
-const GP_MERMAID_NOTICES: &str = include_str!("assets/vendor/mermaid.NOTICES.txt");
+const GP_MERMAID_NOTICES: &str = include_str!("assets/vendor/mermaid.notices.txt");
 const GP_BRIDGE_JS: &str = include_str!("assets/bridge.js");
 const GP_MANIFEST: &str = include_str!("assets/manifest.json");
 const GP_VEGA: &str = include_str!("assets/vendor/vega.min.js");

@@ -12,3 +12,9 @@ priority: normal
 ## Description
 
 The public /_gp/v1/mermaid.NOTICES.txt URL is 404 because the base asset route accepts only lowercase filenames. The bundled JavaScript works, but the notices need to be accessible on hosted and static builds.
+
+## Acceptance Criteria
+
+- [x] Lowercase notices URL returns 200 through the real base-asset route.
+- [x] A static build includes the renamed notices file.
+- [ ] The published version is verified on the public host.

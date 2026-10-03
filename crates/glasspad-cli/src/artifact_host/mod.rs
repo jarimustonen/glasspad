@@ -1014,6 +1014,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mermaid_notices_are_reachable_under_the_asset_path_guard() {
+        let resp = get("/_gp/v1/mermaid.notices.txt").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(header(&resp, "content-type").contains("text/plain"));
+        assert!(body_string(resp).await.contains("Third-party licenses"));
+    }
+
+    #[tokio::test]
     async fn bridge_js_served_with_cors_and_nosniff() {
         let resp = get("/_gp/v1/bridge.js").await;
         assert_eq!(resp.status(), StatusCode::OK);
