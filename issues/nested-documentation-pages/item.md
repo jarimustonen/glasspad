@@ -3,8 +3,10 @@ created: 2026-10-04
 updated: 2026-10-04
 type: feature
 reporter: jari
-status: in-progress
+status: done
 priority: normal
+closed: 2026-10-04
+closed_by: agent
 ---
 
 # Support nested documentation page paths
