@@ -9,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Publish nested documentation page paths with manifest navigation, relative Markdown links, persisted hosted spaces, and matching static output.
 ### Changed
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
+
+## [0.20.0] - 2026-10-04
+
+### Added
+- Publish nested documentation page paths with manifest navigation, relative Markdown links, persisted hosted spaces, and matching static output.
 
 ## [0.19.1] - 2026-10-03
 
@@ -577,7 +581,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/jarimustonen/glasspad/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/jarimustonen/glasspad/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/jarimustonen/glasspad/compare/v0.18.5...v0.19.0
 [0.18.5]: https://github.com/jarimustonen/glasspad/compare/v0.18.4...v0.18.5
