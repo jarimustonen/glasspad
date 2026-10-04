@@ -289,14 +289,14 @@ pub fn router(host: Arc<ArtifactHost>) -> Router {
 pub fn spaces_router(host: Arc<ArtifactHost>) -> Router {
     Router::new()
         .route("/{space}/", get(space_entry))
-        .route("/{space}/_c/{slug}", get(artifact_content))
+        .route("/{space}/_c/{*slug}", get(artifact_content))
         // A browser resolves authored `assets/x` against the iframe's `_c/slug`
         // URL. Alias ONLY the scanned assets subtree; never turn arbitrary `_c`
         // paths into file reads or relax the asset key validator. This also fixes
         // already-published spaces without rewriting stored HTML.
         .route("/{space}/_c/assets/{*path}", get(space_asset))
         .route("/{space}/assets/{*path}", get(space_asset))
-        .route("/{space}/{slug}", get(shell_page))
+        .route("/{space}/{*slug}", get(shell_page))
         .with_state(host)
 }
 
@@ -328,6 +328,14 @@ pub fn valid_name(s: &str) -> bool {
     bytes
         .iter()
         .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Page paths are bounded independently of capability and space names.
+pub fn valid_page_slug(s: &str) -> bool {
+    s.len() <= 256
+        && s.split('/').count() <= 4
+        && s.split('/').all(valid_name)
+        && !s.split('/').any(|part| RESERVED.contains(&part))
 }
 
 pub const RESERVED: &[&str] = &["_gp", "_c", "assets", "api"];
@@ -469,8 +477,9 @@ async fn artifact_content(
     State(host): State<Arc<ArtifactHost>>,
     Path((space, slug)): Path<(String, String)>,
     Query(q): Query<ContentQuery>,
+    uri: axum::extract::OriginalUri,
 ) -> Response {
-    if !valid_space(&space) || !valid_name(&slug) {
+    if uri.0.path().contains('%') || !valid_space(&space) || !valid_page_slug(&slug) {
         return not_found();
     }
     let Some(hit) = find_artifact(&host.snapshot(), &space, &slug) else {
@@ -501,8 +510,9 @@ async fn artifact_content(
 async fn shell_page(
     State(host): State<Arc<ArtifactHost>>,
     Path((space, slug)): Path<(String, String)>,
+    uri: axum::extract::OriginalUri,
 ) -> Response {
-    if !valid_space(&space) || !valid_name(&slug) {
+    if uri.0.path().contains('%') || !valid_space(&space) || !valid_page_slug(&slug) {
         return not_found();
     }
     let snap = host.snapshot();
@@ -1129,6 +1139,58 @@ mod tests {
         s.nav = vec!["index".into(), "sales".into()];
         s.home = Some("index".into());
         s
+    }
+
+    #[tokio::test]
+    async fn nested_shell_content_and_asset_precedence() {
+        let mut s = demo_like_space();
+        s.artifacts.insert(
+            "architecture/index".into(),
+            Artifact {
+                html: "<h1>Architecture</h1><a href=\"components.md\">Next</a>".into(),
+                title: "Architecture".into(),
+            },
+        );
+        s.artifacts.insert(
+            "architecture/components".into(),
+            Artifact {
+                html: "<h1>Components</h1>".into(),
+                title: "Components".into(),
+            },
+        );
+        s.nav.extend([
+            "architecture/index".into(),
+            "architecture/components".into(),
+        ]);
+        let host = host_with_space("myspace", s);
+        let shell = get_on(host.clone(), "/myspace/architecture/index").await;
+        assert_eq!(shell.status(), StatusCode::OK);
+        let html = body_string(shell).await;
+        assert!(html.contains("/myspace/_c/architecture/index"));
+        assert!(html.contains("architecture/components"));
+        assert_eq!(
+            get_on(host.clone(), "/myspace/_c/architecture/components")
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_on(host.clone(), "/myspace/_c/assets/data.json")
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        for path in [
+            "/myspace/architecture/%2e%2e/index",
+            "/myspace/_c/architecture%2findex",
+            "/myspace/_c/architecture/%252findex",
+        ] {
+            assert_ne!(
+                get_on(host.clone(), path).await.status(),
+                StatusCode::OK,
+                "{path}"
+            );
+        }
     }
 
     #[tokio::test]

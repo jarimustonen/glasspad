@@ -35,7 +35,7 @@
 
   var loc = window.location;
   // A servable slug/space matches the server-side grammar exactly.
-  var NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+  var NAME = /^[a-z0-9][a-z0-9-]{0,63}(?:\/[a-z0-9][a-z0-9-]{0,63}){0,3}$/;
 
   // Only meaningful when actually FRAMED by the shell. A direct-opened content
   // route has `window.parent === window`, so intercepting a click would
@@ -45,8 +45,9 @@
 
   // Our own space, parsed from the content path `/{space}/_c/{slug}`. Absent (the
   // artifact was not served on the content route) -> link interception is inert.
-  var pathMatch = loc.pathname.match(/^\/([a-z0-9][a-z0-9-]{0,63})\/_c\/([a-z0-9][a-z0-9-]{0,63})$/);
-  var SPACE = pathMatch ? pathMatch[1] : null;
+  var pathMatch = loc.pathname.match(/^(\/p)?\/([a-z0-9][a-z0-9-]{0,63})\/_c\/([a-z0-9][a-z0-9-]{0,63}(?:\/[a-z0-9][a-z0-9-]{0,63}){0,3})$/);
+  var MOUNT = pathMatch ? (pathMatch[1] || "") : null;
+  var SPACE = pathMatch ? pathMatch[2] : null;
 
   // The real serving origin. The artifact document itself has an opaque (null)
   // origin, so `loc.origin` is the string "null" and useless for comparison —
@@ -95,12 +96,12 @@
       // SVGAElement has no `.origin` → left to the browser) and a same-space
       // content URL `/{SPACE}/_c/{something}`.
       if (a.origin !== ORIGIN) return;
-      var m = a.pathname.match(/^\/([a-z0-9][a-z0-9-]{0,63})\/_c\/([^\/?#]+)$/);
-      if (!m || m[1] !== SPACE) return;
+      var m = a.pathname.match(/^(\/p)?\/([a-z0-9][a-z0-9-]{0,63})\/_c\/(.+)$/);
+      if (!m || (m[1] || "") !== MOUNT || m[2] !== SPACE) return;
 
       // Tolerate an explicit `.html`/`.htm` (agents link files); the slug is the
       // stem. Anything the server grammar would reject is left to the browser.
-      var slug = m[2].replace(/\.html?$/i, "");
+      var slug = m[3].replace(/\.(?:html?|md|markdown)$/i, "");
       if (!NAME.test(slug)) return;
 
       event.preventDefault();

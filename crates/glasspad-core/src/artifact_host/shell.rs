@@ -283,7 +283,7 @@ pub fn render_with_groups(
   var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat sidebar navigation
   var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
   var STATUS_PATH = {status_json};   // hosted exact-submission status base; null on loopback
-  var MAX_SLUG = 64;       // matches the server-side slug grammar
+  var MAX_SLUG = 256;       // matches the server-side slug grammar
   var MAX_SUBMIT_BYTES = 80 * 1024;  // reject an oversize submission before POSTing
   var RATE_MAX = 20;       // messages...
   var RATE_WINDOW = 1000;  // ...per this many ms
@@ -429,7 +429,7 @@ pub fn render_with_groups(
   // iframe navigation adds its own session-history entry that entangles with a
   // pushState in browser-dependent ways. Deep-linking / URL-sync is deferred (see
   // the terminal report) rather than shipped fragile in trusted parent code.
-  var validSlug = /^[a-z0-9][a-z0-9-]{{0,63}}$/;
+  var validSlug = /^[a-z0-9][a-z0-9-]{{0,63}}(?:\/[a-z0-9][a-z0-9-]{{0,63}}){{0,3}}$/;
   function navigateTo(slug) {{
     if (typeof slug !== "string" || slug.length > MAX_SLUG) return false;
     if (!validSlug.test(slug) || !KNOWN_SET.has(slug)) return false;

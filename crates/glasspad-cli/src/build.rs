@@ -87,12 +87,35 @@ pub struct OutFile {
 /// first-party `<head>` of a **fragment-wrapped** page (the head glasspad emits). A
 /// full document is emitted verbatim — its author owns the whole page, including its
 /// `<head>`, so it is never rewritten (mirrors the base-lib localization policy).
+#[allow(dead_code)]
 pub fn wrapped_page(artifact_html: &str, mode: LibMode, favicon: Option<&str>) -> String {
+    wrapped_page_at_depth(artifact_html, mode, favicon, 0)
+}
+
+fn wrapped_page_at_depth(
+    artifact_html: &str,
+    mode: LibMode,
+    favicon: Option<&str>,
+    depth: usize,
+) -> String {
     let out = wrap::render_artifact(artifact_html, Theme::Auto);
+    // Mermaid's generated script is local in static mode; nested pages need
+    // the same relative depth as the pinned base libraries.
+    let out =
+        if mode == LibMode::SelfContained && depth > 0 && artifact_html.contains("data-gp-mermaid")
+        {
+            out.replacen(
+                "src=\"_gp/v1/mermaid.js\" defer",
+                &format!("src=\"{}_gp/v1/mermaid.js\" defer", "../".repeat(depth)),
+                1,
+            )
+        } else {
+            out
+        };
     if wrap::is_fragment(artifact_html) {
         let out = inject_favicon(out, favicon);
         if mode == LibMode::SelfContained {
-            localize_base_libs(out)
+            localize_base_libs(out, depth)
         } else if artifact_html.contains("data-gp-mermaid") {
             // Markdown's build renderer uses a relative local library path.
             // Shared-libs mode instead references the server's canonical root.
@@ -151,7 +174,7 @@ fn inject_favicon(wrapped: String, favicon: Option<&str>) -> String {
 /// silently leaving an unresolvable path. (An ideal seam would parameterize the
 /// base path in `wrap` itself — flagged as a follow-up; `wrap` is the frozen
 /// security seam, so this head-scoped post-process avoids touching it.)
-fn localize_base_libs(wrapped: String) -> String {
+fn localize_base_libs(wrapped: String, depth: usize) -> String {
     // Split at the end of the injected head so only first-party scaffold bytes are
     // rewritten; the fragment body after `</head>` is passed through verbatim.
     let split = wrapped
@@ -160,8 +183,14 @@ fn localize_base_libs(wrapped: String) -> String {
         .unwrap_or(wrapped.len());
     let (head, body) = wrapped.split_at(split);
     let head = head
-        .replace("href=\"/_gp/v1/base.css\"", "href=\"_gp/v1/base.css\"")
-        .replace("src=\"/_gp/v1/bridge.js\"", "src=\"_gp/v1/bridge.js\"");
+        .replace(
+            "href=\"/_gp/v1/base.css\"",
+            &format!("href=\"{}_gp/v1/base.css\"", "../".repeat(depth)),
+        )
+        .replace(
+            "src=\"/_gp/v1/bridge.js\"",
+            &format!("src=\"{}_gp/v1/bridge.js\"", "../".repeat(depth)),
+        );
     head + body
 }
 
@@ -207,7 +236,8 @@ pub fn plan(
     for (slug, artifact) in &space.artifacts {
         files.push(OutFile {
             rel_path: format!("{slug}.html"),
-            bytes: wrapped_page(&artifact.html, mode, favicon).into_bytes(),
+            bytes: wrapped_page_at_depth(&artifact.html, mode, favicon, slug.matches('/').count())
+                .into_bytes(),
         });
     }
 
@@ -267,19 +297,33 @@ pub fn plan(
 /// the relative path maps to the right nested location on any platform.
 pub fn write_files(out: &Path, files: &[OutFile]) -> std::io::Result<()> {
     std::fs::create_dir_all(out)?;
+    if std::fs::symlink_metadata(out)?.file_type().is_symlink() {
+        return Err(std::io::Error::other(
+            "refusing symlinked build output directory",
+        ));
+    }
     for f in files {
         let mut path = out.to_path_buf();
-        for seg in f.rel_path.split('/') {
-            if seg.is_empty() || seg == "." || seg == ".." || seg.contains('\\') {
+        let segments: Vec<_> = f.rel_path.split('/').collect();
+        for (i, seg) in segments.iter().enumerate() {
+            if seg.is_empty() || *seg == "." || *seg == ".." || seg.contains('\\') {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("refusing unsafe output path segment in {:?}", f.rel_path),
                 ));
             }
             path.push(seg);
-        }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            if let Ok(meta) = std::fs::symlink_metadata(&path)
+                && meta.file_type().is_symlink()
+            {
+                return Err(std::io::Error::other(format!(
+                    "refusing symlinked output path {}",
+                    path.display()
+                )));
+            }
+            if i + 1 != segments.len() {
+                std::fs::create_dir_all(&path)?;
+            }
         }
         std::fs::write(&path, &f.bytes)?;
     }
@@ -420,6 +464,29 @@ mod tests {
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         }
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_files_refuses_symlinked_nested_output() {
+        use std::os::unix::fs::symlink;
+        let root =
+            std::env::temp_dir().join(format!("glasspad-symlink-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        symlink(root.join("elsewhere"), root.join("out/architecture")).unwrap();
+        let err = write_files(
+            &root.join("out"),
+            &[OutFile {
+                rel_path: "architecture/index.html".into(),
+                bytes: b"no".to_vec(),
+            }],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("symlinked"));
+        assert!(!root.join("elsewhere/index.html").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

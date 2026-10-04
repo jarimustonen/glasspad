@@ -92,6 +92,16 @@ scrollable, and provides an ink-light print layout; wide-table PDF fit is best-e
 The `board` layout groups H2 sections into read-only status lanes with text, glyph and colour; without JavaScript the headings and lists remain in source order. It infers statuses from English, Finnish, Swedish and German headings; put `gp-status-done|next|blocked|future` or `data-status="done|next|blocked|future"` on an authored section or its H2 for language-neutral status (including wide diagram/table lanes). Unknown headings remain neutral; owner metadata requires `owner: Name:` after a bold task title (at the start of its description).
 The `index` layout presents grouped Markdown link lists as cards: the first group is featured, each first link is a native full-card destination, and any subsequent links remain separate. A small optional script tidies description separators; navigation works without JavaScript. Use `index.md` for an authored landing page; this template does not change the automatically generated landing page. As with every `glasspad.yaml` template, `template: index` styles **all** Markdown pages in that space, not only `index.md`. To style only the front page, render it separately with `glasspad render index.md --template index` and publish the resulting HTML instead of the source `index.md` alongside the other pages.
 The `table` layout preserves GFM table semantics while adding a labelled, keyboard-focusable local scroll region, sticky header and first column when JavaScript is on. Without JavaScript, cells wrap within the viewport instead of creating an unfocusable scroll region. Print requests landscape pages and repeats headers where supported; fitting unusually wide tables on paper remains best-effort. A `glasspad.yaml` template applies to every Markdown page in that space.
+Page directories declared in `glasspad.yaml` (`nav:` or `groups:`) containing
+`.md`, `.markdown`, or `.html` files become path slugs
+(e.g. `architecture/index.md` → `architecture/index`), up to four path segments
+and 256 bytes total; each segment follows the flat slug grammar. Only named
+nested trees are scanned; without a manifest, spaces remain flat. A missing
+nested member is an error. Other project trees and agent instruction
+files are not pages. Relative Markdown page links (including `.md` links) work
+in the live shell; static builds emit `architecture/index.html` and rewrite
+Markdown `.md` links to `.html`. Raw HTML links remain authored verbatim.
+
 Markdown images and links to `assets/...` or `./assets/...` resolve within the same published space (including nested assets) in loopback and hosted mode. Place files under the space's `assets/` directory; only scanner-approved asset paths are rewritten. Raw HTML URLs, external/data URLs, and Markdown links to other pages are unchanged.
 Markdown also renders fenced `mermaid` diagrams (flowcharts, sequence diagrams and
 other types supported by the bundled Mermaid 11.12.3) in every template:

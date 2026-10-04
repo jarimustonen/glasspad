@@ -142,19 +142,16 @@ pub fn builtin_template(name: &str) -> Option<&'static str> {
 /// reason `.gp-prose` was hardened against arbitrary markdown-generated markup.
 /// Infallible: `pulldown-cmark` never errors, it lossily parses any input.
 pub fn render_markdown(md: &str) -> String {
-    render_markdown_with_asset_base(md, true)
+    render_markdown_at_depth(md, true, 0)
 }
 
-fn render_markdown_with_asset_base(md: &str, content_route: bool) -> String {
+fn render_markdown_at_depth(md: &str, content_route: bool, depth: usize) -> String {
     // A static build places pages at its root; unlike /_c/slug it needs the
     // original assets/ URL. The parser and all other output remain identical.
-    let (events, has_mermaid) = mermaid_events(Parser::new_ext(md, gfm_options()).map(|event| {
-        if content_route {
-            rewrite_asset_event(event)
-        } else {
-            event
-        }
-    }));
+    let (events, has_mermaid) = mermaid_events(
+        Parser::new_ext(md, gfm_options())
+            .map(|event| rewrite_link_event(event, content_route, depth)),
+    );
     let mut out = String::with_capacity(md.len() + md.len() / 2 + 64);
     push_rendered_html(&mut out, events, has_mermaid, content_route);
     out
@@ -165,11 +162,39 @@ fn render_markdown_with_asset_base(md: &str, content_route: bool) -> String {
 /// so `../assets/…` resolves to `…/assets/…` without embedding a capability slug
 /// or mount prefix. Never use `<base>`: it changes anchor and navigation semantics.
 /// Raw HTML, page links, external/data URLs and malformed paths are untouched.
-fn rewrite_asset_event(mut event: Event<'_>) -> Event<'_> {
-    if let Event::Start(Tag::Image { dest_url, .. } | Tag::Link { dest_url, .. }) = &mut event
-        && let Some(url) = space_asset_destination(dest_url)
-    {
-        *dest_url = CowStr::from(url);
+/// Only parsed Markdown destinations are adjusted: raw HTML is deliberately
+/// untouched. The parent shell still checks every navigation against its allowlist.
+fn rewrite_link_event(mut event: Event<'_>, content_route: bool, depth: usize) -> Event<'_> {
+    let is_link = matches!(event, Event::Start(Tag::Link { .. }));
+    if let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = &mut event {
+        let url = dest_url.as_ref();
+        if let Some(asset) = space_asset_destination(url) {
+            let base = depth + usize::from(content_route);
+            let path = if content_route {
+                asset.trim_start_matches("../")
+            } else {
+                url.trim_start_matches("./")
+            };
+            if content_route || depth > 0 {
+                *dest_url = CowStr::from(format!("{}{path}", "../".repeat(base)));
+            }
+        } else if !content_route
+            && is_link
+            && !url.starts_with('/')
+            && !url.starts_with('#')
+            && !url.starts_with('?')
+            && !url.contains([':', '%', '\\'])
+        {
+            let (path, suffix) = url
+                .split_once(['#', '?'])
+                .map_or((url, ""), |(p, _)| (p, &url[p.len()..]));
+            if let Some(stem) = path
+                .strip_suffix(".md")
+                .or_else(|| path.strip_suffix(".markdown"))
+            {
+                *dest_url = CowStr::from(format!("{stem}.html{suffix}"));
+            }
+        }
     }
     event
 }
@@ -240,7 +265,11 @@ struct TocEntry {
 /// natively inside the artifact iframe with no shell involvement. (Uniqueness is
 /// "unique among generated ids": an id an artifact author hand-writes in raw HTML can
 /// still coincide — raw HTML passthrough predates this feature and is a sandboxed sink.)
-fn render_markdown_with_headings(md: &str, content_route: bool) -> (String, Vec<TocEntry>) {
+fn render_markdown_with_headings(
+    md: &str,
+    content_route: bool,
+    depth: usize,
+) -> (String, Vec<TocEntry>) {
     // Materialize the event stream so a heading's id can be rewritten *before* it is
     // serialized: the slug is derived from the heading's inner text, which only arrives
     // in the events *after* the `Start(Heading)`. Buffering the whole stream also lets
@@ -248,14 +277,10 @@ fn render_markdown_with_headings(md: &str, content_route: bool) -> (String, Vec<
     // state exactly as `render_markdown` produces it. The input is bounded upstream
     // (`space::MAX_FILE_BYTES` caps the `.md` source, and the rendered body is re-capped
     // after render), so this O(n) buffer is over a bounded n — not an unbounded artifact.
-    let (mut events, has_mermaid) =
-        mermaid_events(Parser::new_ext(md, gfm_options()).map(|event| {
-            if content_route {
-                rewrite_asset_event(event)
-            } else {
-                event
-            }
-        }));
+    let (mut events, has_mermaid) = mermaid_events(
+        Parser::new_ext(md, gfm_options())
+            .map(|event| rewrite_link_event(event, content_route, depth)),
+    );
     let mut toc: Vec<TocEntry> = Vec::new();
     let mut used_ids: SlugSet = SlugSet::default();
     // Headings inside a footnote *definition* are page content, not part of the
@@ -407,8 +432,8 @@ fn render_toc(entries: &[TocEntry]) -> String {
 
 /// Render through the canonical prose fragment. Only the built-in prose path
 /// gets this rail; the insertion marker remains directly inside `.gp-prose`.
-fn render_prose_body(markdown: &str, content_route: bool) -> String {
-    let (rendered, toc) = render_markdown_with_headings(markdown, content_route);
+fn render_prose_body(markdown: &str, content_route: bool, depth: usize) -> String {
+    let (rendered, toc) = render_markdown_with_headings(markdown, content_route, depth);
     // PROSE_TEMPLATE is checked by the built-in fragment test. It is a constant
     // containing exactly one placeholder, so applying it cannot fail.
     let article = apply_template(PROSE_TEMPLATE, &rendered)
@@ -527,31 +552,32 @@ pub fn apply_template(template: &str, rendered: &str) -> Result<String, Template
 /// rejected before the potentially-expensive markdown render), then renders the
 /// markdown and splices it in.
 pub fn render_to_body(markdown: &str, template: &str) -> Result<String, TemplateError> {
-    render_to_body_at_base(markdown, template, true)
+    render_to_body_at_base(markdown, template, true, 0)
 }
 
 /// Render a flat static-build page: its assets/ directory is adjacent to the
 /// generated HTML, not one level above it as with a private content route.
 pub fn render_to_body_for_build(markdown: &str, template: &str) -> Result<String, TemplateError> {
-    render_to_body_at_base(markdown, template, false)
+    render_to_body_at_base(markdown, template, false, 0)
 }
 
-fn render_to_body_at_base(
+pub fn render_to_body_at_base(
     markdown: &str,
     template: &str,
     content_route: bool,
+    depth: usize,
 ) -> Result<String, TemplateError> {
     // The built-in `prose` reading theme gets the heading-anchored, TOC-aware layout
     // (approach (a): the rail lives inside the artifact's own prose fragment). Every
     // other template — `dashboard`, or a client-supplied custom template — is the
     // unchanged plain splice, so its output is byte-for-byte what it was pre-TOC.
     if template == PROSE_TEMPLATE {
-        return Ok(render_prose_body(markdown, content_route));
+        return Ok(render_prose_body(markdown, content_route, depth));
     }
     split_at_placeholder(template)?;
     apply_template(
         template,
-        &render_markdown_with_asset_base(markdown, content_route),
+        &render_markdown_at_depth(markdown, content_route, depth),
     )
 }
 
@@ -565,7 +591,7 @@ pub fn render_space_template_to_body(
     markdown: &str,
     template: &str,
 ) -> Result<String, TemplateError> {
-    render_space_template_at_base(markdown, template, true)
+    render_space_template_at_base(markdown, template, true, 0)
 }
 
 /// The custom-template counterpart for static flat build output.
@@ -573,16 +599,17 @@ pub fn render_space_template_to_body_for_build(
     markdown: &str,
     template: &str,
 ) -> Result<String, TemplateError> {
-    render_space_template_at_base(markdown, template, false)
+    render_space_template_at_base(markdown, template, false, 0)
 }
 
-fn render_space_template_at_base(
+pub fn render_space_template_at_base(
     markdown: &str,
     template: &str,
     content_route: bool,
+    depth: usize,
 ) -> Result<String, TemplateError> {
     split_at_placeholder(template)?;
-    let (rendered, toc) = render_markdown_with_headings(markdown, content_route);
+    let (rendered, toc) = render_markdown_with_headings(markdown, content_route, depth);
     if toc.len() < MIN_TOC_ENTRIES {
         return apply_template(template, &rendered);
     }

@@ -364,3 +364,55 @@ fn dry_run_plans_without_writing() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn nested_docs_build_preserves_relative_links_in_both_modes() {
+    let root = temp_dir("nested-docs");
+    let space = root.join("docs");
+    write(
+        &space,
+        "index.md",
+        b"# Home\n\n[Architecture](architecture/index.md)",
+    );
+    write(&space, "architecture/index.md", b"# Architecture\n\n[Components](components.md) [Decisions](../decisions/index.md) [External](https://example.org/guide.md)\n\n![Image](assets/icon.png)");
+    write(&space, "architecture/components.md", b"# Components");
+    write(
+        &space,
+        "decisions/index.md",
+        b"# Decisions\n\n[ADR](adr-0001-unix-native-agent-host.md)",
+    );
+    write(
+        &space,
+        "decisions/adr-0001-unix-native-agent-host.md",
+        b"# ADR",
+    );
+    write(&space, "assets/icon.png", b"PNG");
+    write(&space, "glasspad.yaml", b"nav:\n - index\n - architecture/index\n - architecture/components\n - decisions/index\n - decisions/adr-0001-unix-native-agent-host\n");
+    for (mode, flag) in [("self", None), ("shared", Some("--shared-libs"))] {
+        let out = root.join(mode);
+        let mut cmd = bin();
+        cmd.arg("build").arg(&space).arg(&out);
+        if let Some(flag) = flag {
+            cmd.arg(flag);
+        }
+        let result = cmd.output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let arch = std::fs::read_to_string(out.join("architecture/index.html")).unwrap();
+        assert!(arch.contains("href=\"components.html\""));
+        assert!(arch.contains("href=\"../decisions/index.html\""));
+        assert!(arch.contains("href=\"https://example.org/guide.md\""));
+        assert!(arch.contains("src=\"../assets/icon.png\""));
+        if flag.is_none() {
+            assert!(arch.contains("href=\"../_gp/v1/base.css\""));
+        }
+        assert!(
+            out.join("decisions/adr-0001-unix-native-agent-host.html")
+                .is_file()
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

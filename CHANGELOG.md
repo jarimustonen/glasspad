@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Publish nested documentation page paths with manifest navigation, relative Markdown links, persisted hosted spaces, and matching static output.
 ### Changed
 ### Fixed
 <!-- oss-changelog:unreleased-end -->

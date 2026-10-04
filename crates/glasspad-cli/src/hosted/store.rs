@@ -1853,35 +1853,65 @@ impl Store {
             Err(e) => return Err(e),
         }
         let mut pages = Vec::new();
-        for entry in std::fs::read_dir(&art_dir)?.flatten() {
-            let path = entry.path();
-            let ft = std::fs::symlink_metadata(&path)?.file_type();
-            if ft.is_symlink() {
-                eprintln!(
-                    "glasspad host: space artifact {} is a symlink; skipping space",
-                    path.display()
-                );
-                return Ok(None);
+        let mut stack = vec![(art_dir, String::new())];
+        while let Some((dir, prefix)) = stack.pop() {
+            for entry in std::fs::read_dir(&dir)? {
+                let path = entry?.path();
+                let ft = std::fs::symlink_metadata(&path)?.file_type();
+                if ft.is_symlink() {
+                    eprintln!(
+                        "glasspad host: symlinked space artifact {}; skipping space",
+                        path.display()
+                    );
+                    return Ok(None);
+                }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    eprintln!(
+                        "glasspad host: non-UTF-8 artifact name {}; skipping space",
+                        path.display()
+                    );
+                    return Ok(None);
+                };
+                if ft.is_dir() {
+                    let next = format!("{prefix}{name}/");
+                    if !crate::artifact_host::valid_page_slug(next.trim_end_matches('/')) {
+                        eprintln!(
+                            "glasspad host: invalid nested artifact directory {}; skipping space",
+                            path.display()
+                        );
+                        return Ok(None);
+                    }
+                    stack.push((path, next));
+                    continue;
+                }
+                if !ft.is_file() {
+                    eprintln!(
+                        "glasspad host: non-regular artifact {}; skipping space",
+                        path.display()
+                    );
+                    return Ok(None);
+                }
+                let Some(stem) = name.strip_suffix(".html") else {
+                    continue; // metadata/editor files were never artifacts
+                };
+                let slug = format!("{prefix}{stem}");
+                if !crate::artifact_host::valid_page_slug(&slug) || !budget.reserve_entry() {
+                    eprintln!(
+                        "glasspad host: invalid or over-budget artifact {}; skipping space",
+                        path.display()
+                    );
+                    return Ok(None);
+                }
+                let html = read_capped_utf8(&path)?;
+                if !budget.add_bytes(html.len() as u64) {
+                    eprintln!(
+                        "glasspad host: artifact budget exceeded at {}; skipping space",
+                        path.display()
+                    );
+                    return Ok(None);
+                }
+                pages.push(BundlePage { slug, html });
             }
-            if !ft.is_file() {
-                continue;
-            }
-            let name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n,
-                None => continue,
-            };
-            let slug = match name.strip_suffix(".html") {
-                Some(s) => s.to_string(),
-                None => continue,
-            };
-            if !budget.reserve_entry() {
-                return Ok(None);
-            }
-            let html = read_capped_utf8(&path)?;
-            if !budget.add_bytes(html.len() as u64) {
-                return Ok(None);
-            }
-            pages.push(BundlePage { slug, html });
         }
         Ok(Some(pages))
     }
@@ -2015,10 +2045,11 @@ impl Store {
             let art_dir = gen_tmp.join(SPACE_ARTIFACTS_DIR);
             std::fs::create_dir_all(&art_dir)?;
             for (page_slug, artifact) in &space.artifacts {
-                write_file_synced(
-                    &art_dir.join(format!("{page_slug}.html")),
-                    artifact.html.as_bytes(),
-                )?;
+                let dest = art_dir.join(format!("{page_slug}.html"));
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                write_file_synced(&dest, artifact.html.as_bytes())?;
             }
             // assets/<rel...> — the key already begins with `assets/`, so joining it
             // onto the generation dir reproduces the `assets/<rel>` layout.
@@ -3462,6 +3493,137 @@ mod tests {
             Some("Docs".into()),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn nested_space_persists_and_updates() {
+        let root = tmp_root("nested-pages");
+        let h = host();
+        let store = Store::open(&root, h.clone()).unwrap();
+        let make = |body: &str| {
+            build_space_bundle(
+                vec![
+                    BundlePage {
+                        slug: "index".into(),
+                        html: "<h1>Home</h1>".into(),
+                    },
+                    BundlePage {
+                        slug: "architecture/index".into(),
+                        html: body.into(),
+                    },
+                ],
+                vec![],
+                vec!["index".into(), "architecture/index".into()],
+                vec![],
+                None,
+            )
+            .unwrap()
+        };
+        let published = store
+            .publish_space("acme", make("<h1>First</h1>"), None)
+            .unwrap();
+        assert!(
+            space_content_dir(&root, &published.slug)
+                .join("artifacts/architecture/index.html")
+                .is_file()
+        );
+        let h2 = host();
+        let reopened = Store::open(&root, h2.clone()).unwrap();
+        assert_eq!(
+            h2.snapshot()
+                .space(&published.slug)
+                .unwrap()
+                .artifact("architecture/index")
+                .unwrap()
+                .html,
+            "<h1>First</h1>"
+        );
+        reopened
+            .update_space("acme", &published.slug, make("<h1>Second</h1>"), None)
+            .unwrap();
+        let h3 = host();
+        let _again = Store::open(&root, h3.clone()).unwrap();
+        assert_eq!(
+            h3.snapshot()
+                .space(&published.slug)
+                .unwrap()
+                .artifact("architecture/index")
+                .unwrap()
+                .html,
+            "<h1>Second</h1>"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn non_html_artifact_store_file_does_not_hide_space() {
+        let root = tmp_root("nested-stray-file");
+        let h = host();
+        let store = Store::open(&root, h).unwrap();
+        let space = build_space_bundle(
+            vec![
+                BundlePage {
+                    slug: "index".into(),
+                    html: "home".into(),
+                },
+                BundlePage {
+                    slug: "architecture/index".into(),
+                    html: "nested".into(),
+                },
+            ],
+            vec![],
+            vec![],
+            vec![],
+            None,
+        )
+        .unwrap();
+        let published = store.publish_space("acme", space, None).unwrap();
+        let art = space_content_dir(&root, &published.slug).join("artifacts");
+        std::fs::write(art.join(".DS_Store"), b"metadata").unwrap();
+        let h2 = host();
+        let _reopened = Store::open(&root, h2.clone()).unwrap();
+        assert!(
+            h2.snapshot()
+                .space(&published.slug)
+                .unwrap()
+                .artifact("architecture/index")
+                .is_some()
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_store_directory_symlink_is_not_loaded() {
+        use std::os::unix::fs::symlink;
+        let root = tmp_root("nested-symlink");
+        let h = host();
+        let store = Store::open(&root, h).unwrap();
+        let space = build_space_bundle(
+            vec![
+                BundlePage {
+                    slug: "index".into(),
+                    html: "home".into(),
+                },
+                BundlePage {
+                    slug: "architecture/index".into(),
+                    html: "nested".into(),
+                },
+            ],
+            vec![],
+            vec![],
+            vec![],
+            None,
+        )
+        .unwrap();
+        let published = store.publish_space("acme", space, None).unwrap();
+        let art_dir = space_content_dir(&root, &published.slug).join("artifacts");
+        std::fs::rename(art_dir.join("architecture"), art_dir.join("held")).unwrap();
+        symlink("held", art_dir.join("architecture")).unwrap();
+        let h2 = host();
+        let _reopened = Store::open(&root, h2.clone()).unwrap();
+        assert!(h2.snapshot().space(&published.slug).is_none());
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

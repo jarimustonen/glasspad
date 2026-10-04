@@ -30,7 +30,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::render::{self, BUILTIN_NAMES};
-use super::{RESERVED, valid_name};
+use super::{RESERVED, valid_name, valid_page_slug};
 pub use glasspad::artifact_host::sanitize::{
     MAX_DESC_CHARS, MAX_TITLE_CHARS, extract_description, resolve_title, sanitize_html_label,
     sanitize_label,
@@ -238,8 +238,8 @@ impl fmt::Display for ScanError {
             ),
             ScanError::BadSlug(s, p) => write!(
                 f,
-                "invalid slug {s:?} ({}): a slug (filename stem) must be lowercase [a-z0-9-], \
-                 start alphanumeric, and be ≤64 chars",
+                "invalid slug {s:?} ({}): each page path segment must be lowercase [a-z0-9-], \
+                 start alphanumeric, and be ≤64 chars (at most 4 segments / 256 bytes total)",
                 p.display()
             ),
             ScanError::DuplicateSlug(s, p) => write!(
@@ -369,8 +369,8 @@ impl fmt::Display for BundleError {
             ),
             BundleError::BadSlug(s) => write!(
                 f,
-                "invalid slug {s:?}: a page slug must be lowercase [a-z0-9-], start alphanumeric, \
-                 and be ≤64 chars"
+                "invalid slug {s:?}: each page path segment must be lowercase [a-z0-9-], start alphanumeric, \
+                 and be ≤64 chars (at most 4 segments / 256 bytes total)"
             ),
             BundleError::DuplicateSlug(s) => write!(
                 f,
@@ -437,7 +437,7 @@ pub fn build_space_bundle(
         if RESERVED.contains(&slug.as_str()) {
             return Err(BundleError::ReservedSlug(slug));
         }
-        if !valid_name(&slug) {
+        if !valid_page_slug(&slug) {
             return Err(BundleError::BadSlug(slug));
         }
         if space.artifacts.contains_key(&slug) {
@@ -578,6 +578,7 @@ fn scan_dir_at_base(root: &Path, content_route: bool) -> Result<Space, ScanError
     // Deterministic order so slug-collision / "first wins" decisions are stable.
     entries.sort_by_key(|e| e.file_name());
 
+    let mut page_dirs = Vec::new();
     for entry in &entries {
         let name = entry.file_name();
         // Ignore repository-management files by exact entry name before inspecting
@@ -605,7 +606,11 @@ fn scan_dir_at_base(root: &Path, content_route: bool) -> Result<Space, ScanError
             if name == ASSETS_DIR {
                 scan_assets(&path, &canon_root, &mut space, &mut total)?;
             }
-            // Any other subdirectory is ignored (only assets/ is served).
+            // Only page-bearing directories join the space; other trees (brand,
+            // contracts, build output) remain outside the snapshot.
+            if name != ASSETS_DIR && valid_name(name) && !RESERVED.contains(&name) {
+                page_dirs.push((path.clone(), name.to_string()));
+            }
             continue;
         }
 
@@ -674,6 +679,47 @@ fn scan_dir_at_base(root: &Path, content_route: bool) -> Result<Space, ScanError
         // Non-.html/.md, non-manifest top-level files are ignored (assets live in assets/).
     }
 
+    // Nested pages are an explicit manifest opt-in. Without a named nested
+    // member, directory scanning remains flat (project roots often contain
+    // unrelated README.md files, source trees and build output).
+    let declared: Vec<String> = space
+        .nav
+        .iter()
+        .cloned()
+        .chain(space.nav_groups.iter().flat_map(|g| {
+            g.members.iter().flat_map(|m| {
+                std::iter::once(m.slug.clone()).chain(m.children.iter().map(|c| c.slug.clone()))
+            })
+        }))
+        .collect();
+    for (path, name) in page_dirs {
+        if !declared.iter().any(|s| s.starts_with(&format!("{name}/"))) {
+            continue;
+        }
+        scan_page_dir(
+            &path,
+            &name,
+            &canon_root,
+            &mut space,
+            &mut pending_md,
+            &mut total,
+            &declared,
+        )?;
+    }
+    if !declared.is_empty() {
+        for slug in &declared {
+            if slug.contains('/')
+                && !space.artifacts.contains_key(slug)
+                && !pending_md.iter().any(|(s, _, _)| s == slug)
+            {
+                return Err(ScanError::BadSlug(
+                    format!("manifest references missing page {slug}"),
+                    root.join(MANIFEST_FILE),
+                ));
+            }
+        }
+    }
+
     // Resolve + validate the template selection **unconditionally** — a mistyped
     // `template:` in `glasspad.yaml` is a config error that must fail fast, not lie
     // dormant until the first `.md` page is added to an otherwise `.html`-only space.
@@ -690,11 +736,11 @@ fn scan_dir_at_base(root: &Path, content_route: bool) -> Result<Space, ScanError
         if space.artifacts.contains_key(&stem) {
             return Err(ScanError::DuplicateSlug(stem, path));
         }
-        let body = match (template.is_custom, content_route) {
-            (true, true) => render::render_space_template_to_body(&md, &template.source),
-            (true, false) => render::render_space_template_to_body_for_build(&md, &template.source),
-            (false, true) => render::render_to_body(&md, &template.source),
-            (false, false) => render::render_to_body_for_build(&md, &template.source),
+        let depth = stem.matches('/').count();
+        let body = if template.is_custom {
+            render::render_space_template_at_base(&md, &template.source, content_route, depth)
+        } else {
+            render::render_to_body_at_base(&md, &template.source, content_route, depth)
         }
         .map_err(|e| ScanError::TemplateRender(path.clone(), e.to_string()))?;
         let len = body.len() as u64;
@@ -728,6 +774,113 @@ fn scan_dir_at_base(root: &Path, content_route: bool) -> Result<Space, ScanError
 
     finalize(&mut space, total);
     Ok(space)
+}
+
+/// Walk page directories only. A branch with no pages is ignored; once it has
+/// pages, every entry on that branch is checked (including symlinks).
+fn scan_page_dir(
+    dir: &Path,
+    prefix: &str,
+    canon_root: &Path,
+    space: &mut Space,
+    pending: &mut Vec<(String, String, PathBuf)>,
+    total: &mut u64,
+    declared: &[String],
+) -> Result<bool, ScanError> {
+    if !valid_page_slug(prefix) {
+        return Err(ScanError::BadSlug(prefix.into(), dir.into()));
+    }
+    let mut entries = std::fs::read_dir(dir)
+        .map_err(|e| ScanError::Io(dir.into(), e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ScanError::Io(dir.into(), e))?;
+    entries.sort_by_key(|e| e.file_name());
+    // Probe for pages before following a branch: irrelevant directories are not
+    // content, and may contain instruction symlinks or unrelated project files.
+    let mut has_pages = false;
+    for entry in &entries {
+        let name = entry.file_name();
+        if AGENT_INSTRUCTION_FILES
+            .iter()
+            .any(|ignored| name == *ignored)
+        {
+            continue;
+        }
+        let Some(name) = name.to_str() else { continue };
+        let ty = entry
+            .file_type()
+            .map_err(|e| ScanError::Io(entry.path(), e))?;
+        if md_stem(name).is_some() || html_stem(name).is_some() {
+            has_pages = true;
+        }
+        if ty.is_dir()
+            && valid_name(name)
+            && !RESERVED.contains(&name)
+            && declared
+                .iter()
+                .any(|s| s.starts_with(&format!("{prefix}/{name}/")))
+            && scan_page_dir(
+                &entry.path(),
+                &format!("{prefix}/{name}"),
+                canon_root,
+                space,
+                pending,
+                total,
+                declared,
+            )?
+        {
+            has_pages = true;
+        }
+    }
+    if !has_pages {
+        return Ok(false);
+    }
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name();
+        if AGENT_INSTRUCTION_FILES
+            .iter()
+            .any(|ignored| name == *ignored)
+        {
+            continue;
+        }
+        let ty = entry
+            .file_type()
+            .map_err(|e| ScanError::Io(path.clone(), e))?;
+        if ty.is_symlink() {
+            return Err(ScanError::Symlink(path));
+        }
+        if ty.is_dir() {
+            continue;
+        }
+        let name = name
+            .to_str()
+            .ok_or_else(|| ScanError::BadAssetName(path.clone()))?;
+        let stem = md_stem(name).or_else(|| html_stem(name));
+        let Some(stem) = stem else { continue };
+        let slug = format!("{prefix}/{stem}");
+        if !valid_page_slug(&slug) {
+            return Err(ScanError::BadSlug(slug, path));
+        }
+        if space.artifacts.contains_key(&slug) || pending.iter().any(|(s, _, _)| s == &slug) {
+            return Err(ScanError::DuplicateSlug(slug, path));
+        }
+        if space.artifacts.len() + space.assets.len() + pending.len() >= MAX_ENTRIES {
+            return Err(ScanError::TooManyEntries(
+                space.artifacts.len() + space.assets.len() + pending.len() + 1,
+            ));
+        }
+        ensure_within(canon_root, &path)?;
+        let text = String::from_utf8(read_file_capped(&path, total)?)
+            .map_err(|_| ScanError::NotUtf8(path.clone()))?;
+        if md_stem(name).is_some() {
+            pending.push((slug, text, path));
+        } else {
+            let title = resolve_title(&text).unwrap_or_else(|| slug.clone());
+            space.artifacts.insert(slug, Artifact { html: text, title });
+        }
+    }
+    Ok(true)
 }
 
 /// A resolved space template. Custom template bytes are read during scanning, so a
@@ -1765,6 +1918,41 @@ mod tests {
     }
 
     #[test]
+    fn page_slug_segments_and_bundle_bounds() {
+        for bad in [
+            "a//b",
+            "a/../b",
+            "a/%2fb",
+            "a/\\b",
+            "a/assets/b",
+            "a/b/c/d/e",
+            "a/Upper",
+            "a/",
+            "/a",
+        ] {
+            assert!(!valid_page_slug(bad), "{bad}");
+            assert!(matches!(
+                build_space_bundle(vec![page(bad, "x")], vec![], vec![], vec![], None),
+                Err(BundleError::BadSlug(_))
+            ));
+        }
+        assert!(valid_page_slug("architecture/components"));
+        assert!(matches!(
+            build_space_bundle(
+                vec![
+                    page("architecture/components", "x"),
+                    page("architecture/components", "y")
+                ],
+                vec![],
+                vec![],
+                vec![],
+                None
+            ),
+            Err(BundleError::DuplicateSlug(_))
+        ));
+    }
+
+    #[test]
     fn bundle_rejects_empty_and_bad_asset_paths() {
         assert!(matches!(
             build_space_bundle(vec![], vec![], vec![], vec![], None),
@@ -1838,6 +2026,92 @@ mod fs_tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn nested_docs_manifest_links_and_isolation() {
+        let d = TempDir::new();
+        d.write(
+            "index.md",
+            b"# Home\n\n[Architecture](architecture/index.md) [Decisions](decisions/index.md)",
+        );
+        d.write(
+            "architecture/index.md",
+            b"# Architecture\n\n[Components](components.md) [ADR](../decisions/index.md)",
+        );
+        d.write("architecture/components.md", b"# Components");
+        d.write(
+            "decisions/index.md",
+            b"# Decisions\n\n[ADR](adr-0001-unix-native-agent-host.md)",
+        );
+        d.write("decisions/adr-0001-unix-native-agent-host.md", b"# ADR");
+        d.write("brand/brief.md", b"# Not a page");
+        d.write("glasspad.yaml", b"groups:\n - label: Architecture\n   members:\n    - slug: architecture/index\n    - slug: architecture/components\n - label: Decisions\n   members:\n    - slug: decisions/index\n    - slug: decisions/adr-0001-unix-native-agent-host\n");
+        let served = scan_dir(d.path()).unwrap();
+        assert_eq!(served.artifacts.len(), 5);
+        assert!(!served.artifacts.contains_key("brand/brief"));
+        assert!(
+            served
+                .artifact("architecture/index")
+                .unwrap()
+                .html
+                .contains("href=\"components.md\"")
+        );
+        assert!(
+            served
+                .artifact("decisions/index")
+                .unwrap()
+                .html
+                .contains("adr-0001-unix-native-agent-host.md")
+        );
+        assert_eq!(served.nav_groups.len(), 2);
+        let built = scan_dir_for_build(d.path()).unwrap();
+        assert!(
+            built
+                .artifact("architecture/index")
+                .unwrap()
+                .html
+                .contains("href=\"components.html\"")
+        );
+        assert!(
+            built
+                .artifact("decisions/index")
+                .unwrap()
+                .html
+                .contains("adr-0001-unix-native-agent-host.html")
+        );
+        d.write("architecture/components.html", b"collision");
+        assert!(matches!(
+            scan_dir(d.path()),
+            Err(ScanError::DuplicateSlug(_, _))
+        ));
+        std::fs::remove_file(d.path().join("architecture/components.html")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("index.md", d.path().join("architecture/other.md")).unwrap();
+            assert!(matches!(scan_dir(d.path()), Err(ScanError::Symlink(_))));
+        }
+    }
+
+    #[test]
+    fn real_native_agent_docs_when_available() {
+        let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../native-agent-host/docs");
+        if !docs.is_dir() {
+            return;
+        }
+        let space = scan_dir(&docs).unwrap();
+        for group in &space.nav_groups {
+            for member in &group.members {
+                assert!(space.artifact(&member.slug).is_some(), "{}", member.slug);
+            }
+        }
+        assert!(space.artifact("architecture/index").is_some());
+        assert!(
+            space
+                .artifact("decisions/adr-0001-unix-native-agent-host")
+                .is_some()
+        );
+        assert!(space.artifact("brand/omega-habitat-brief").is_none());
     }
 
     #[test]

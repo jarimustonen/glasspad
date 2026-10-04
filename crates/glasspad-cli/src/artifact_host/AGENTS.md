@@ -150,7 +150,13 @@ space present in the snapshot is served only from it; a missing slug does not fa
 through to the `demo` fixtures. A rescan that fails keeps the last good snapshot
 serving. The watcher is a dependency-free 500 ms poll in `server.rs`.
 
-The flat `Space.nav` is the complete slug allowlist. Manifest `groups:` are reconciled
+Page slugs may contain up to four individually validated segments (256 bytes
+in all); space names and hosted capability slugs remain flat. Only manifest-named
+nested trees are scanned, and missing nested members fail explicitly; without a
+manifest the old flat-only scan remains. A scanned page directory rejects symlinks,
+except exact `AGENTS.md` and `CLAUDE.md` instruction entries. Hosted generations
+store nested pages under `artifacts/` and revalidate all paths on reload. The flat
+`Space.nav` is the complete slug allowlist. Manifest `groups:` are reconciled
 against it at scan time and again on hosted ingest, because the wire format is
 untrusted. Companion nesting is declared in the manifest; Glasspad does not parse
 dotted file stems into hierarchy, by decision.

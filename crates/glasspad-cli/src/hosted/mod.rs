@@ -881,6 +881,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hosted_nested_page_routes_and_update() {
+        let root = tmp_root("nested-hosted-api");
+        let (app, _, _) = app_with(&root);
+        let payload = |text: &str| {
+            serde_json::json!({
+                "pages": [
+                    { "slug": "index", "html": "<h1>Home</h1>" },
+                    { "slug": "architecture/index", "html": text },
+                    { "slug": "decisions/adr-0001-unix-native-agent-host", "html": "<h1>ADR</h1>" }
+                ],
+                "nav": ["index", "architecture/index", "decisions/adr-0001-unix-native-agent-host"]
+            })
+        };
+        let r = send(&app, space_req(Some(KEY), payload("<h1>First</h1>"))).await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let slug = body_json(r).await["slug"].as_str().unwrap().to_string();
+        for page in [
+            "architecture/index",
+            "decisions/adr-0001-unix-native-agent-host",
+        ] {
+            let r = send(&app, get_req(format!("/p/{slug}/_c/{page}"))).await;
+            assert_eq!(r.status(), StatusCode::OK);
+            assert!(
+                r.headers()["content-security-policy"]
+                    .to_str()
+                    .unwrap()
+                    .contains("connect-src 'none'")
+            );
+            assert_eq!(
+                send(&app, get_req(format!("/p/{slug}/{page}")))
+                    .await
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        for bad in [
+            format!("/p/{slug}/_c/architecture%2findex"),
+            format!("/p/{slug}/_c/architecture/%252findex"),
+        ] {
+            assert_ne!(send(&app, get_req(bad)).await.status(), StatusCode::OK);
+        }
+        let update = send(
+            &app,
+            put_space_req(&slug, Some(KEY), payload("<h1>Second</h1>")),
+        )
+        .await;
+        assert_eq!(update.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(
+            send(&app, get_req(format!("/p/{slug}/_c/architecture/index")))
+                .await
+                .into_body(),
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Second"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
     async fn space_publish_serves_multipage_with_nav_assets_and_frozen_csp() {
         let root = tmp_root("space-serve");
         let (app, _, _) = app_with(&root);

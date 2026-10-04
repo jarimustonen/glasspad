@@ -885,21 +885,103 @@ async fn fp_blocking(dir: PathBuf) -> u64 {
         .unwrap_or(0)
 }
 
-/// A cheap change-detection fingerprint over **exactly the scan surface**: the
-/// top-level directory listing (so any added/removed/edited top-level file or the
-/// manifest is caught) plus the `assets/` subtree recursively. It deliberately
-/// does **not** descend into other subdirectories (`.git`, `node_modules`, build
-/// output) — the scanner ignores them, so walking them every tick would be wasted
-/// CPU. Never follows symlinks (a symlink's own metadata is hashed, so swapping a
-/// file for a symlink is detected).
+/// Fingerprint the scanner's inputs: top-level pages, manifest, assets and
+/// manifest-named page directories. Unlisted project trees are not watched.
 fn fingerprint(dir: &Path) -> u64 {
     let mut entries: Vec<(PathBuf, bool, u64, i128)> = Vec::new();
-    collect_level(dir, false, &mut entries); // top level only
-    collect_level(&dir.join(space::ASSETS_DIR), true, &mut entries); // assets subtree
+    collect_level(dir, false, &mut entries);
+    collect_level(&dir.join(space::ASSETS_DIR), true, &mut entries);
+    let declared = declared_nested_slugs(dir);
+    let tops: std::collections::BTreeSet<_> = declared
+        .iter()
+        .filter_map(|s| s.split('/').next())
+        .collect();
+    for top in tops {
+        if !crate::artifact_host::valid_name(top) {
+            continue;
+        }
+        collect_page_level(&dir.join(top), top, &declared, &mut entries);
+    }
     entries.sort();
+    entries.dedup();
     let mut hasher = DefaultHasher::new();
     entries.hash(&mut hasher);
     hasher.finish()
+}
+
+fn declared_nested_slugs(dir: &Path) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(dir.join(space::MANIFEST_FILE)) else {
+        return Vec::new();
+    };
+    if bytes.len() as u64 > space::MAX_MANIFEST_BYTES {
+        return Vec::new();
+    }
+    let Ok(yaml) = serde_yaml::from_slice::<serde_yaml::Value>(&bytes) else {
+        return Vec::new();
+    };
+    fn visit(value: &serde_yaml::Value, slugs: &mut Vec<String>) {
+        if let Some(s) = value.as_str()
+            && s.contains('/')
+        {
+            slugs.push(s.into());
+        }
+        if let Some(map) = value.as_mapping() {
+            if let Some(slug) = map.get("slug").and_then(|s| s.as_str())
+                && slug.contains('/')
+            {
+                slugs.push(slug.into());
+            }
+            if let Some(children) = map.get("children").and_then(|c| c.as_sequence()) {
+                for child in children {
+                    visit(child, slugs);
+                }
+            }
+        }
+    }
+    let mut slugs = Vec::new();
+    if let Some(nav) = yaml.get("nav").and_then(|v| v.as_sequence()) {
+        for member in nav {
+            visit(member, &mut slugs);
+        }
+    }
+    if let Some(groups) = yaml.get("groups").and_then(|v| v.as_sequence()) {
+        for group in groups {
+            if let Some(members) = group.get("members").and_then(|v| v.as_sequence()) {
+                for member in members {
+                    visit(member, &mut slugs);
+                }
+            }
+        }
+    }
+    slugs.sort();
+    slugs.dedup();
+    slugs
+}
+
+fn collect_page_level(
+    dir: &Path,
+    prefix: &str,
+    declared: &[String],
+    out: &mut Vec<(PathBuf, bool, u64, i128)>,
+) {
+    collect_level(dir, false, out);
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let next = format!("{prefix}/{name}");
+        if declared.iter().any(|s| s.starts_with(&format!("{next}/")))
+            && crate::artifact_host::valid_page_slug(&next)
+            && std::fs::symlink_metadata(&path)
+                .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        {
+            collect_page_level(&path, &next, declared, out);
+        }
+    }
 }
 
 /// Collect `(path, is_symlink, len, mtime_nanos)` for one directory. When
@@ -938,6 +1020,31 @@ mod tests {
 
     fn app() -> Router {
         build_app(3000)
+    }
+
+    #[test]
+    fn fingerprint_tracks_declared_nested_edits_not_unrelated_trees() {
+        let root = tmp_root("nested-watch");
+        std::fs::write(
+            root.join("glasspad.yaml"),
+            "groups:\n - label: Architecture\n   members:\n    - slug: architecture/index\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("architecture")).unwrap();
+        std::fs::create_dir_all(root.join("target/deep")).unwrap();
+        let page = root.join("architecture/index.md");
+        std::fs::write(&page, "# First").unwrap();
+        let before = fingerprint(&root);
+        std::fs::write(&page, "# Second and longer").unwrap();
+        let changed = fingerprint(&root);
+        assert_ne!(before, changed, "body edits must trigger a rescan");
+        std::fs::write(root.join("target/deep/output.md"), "ignored").unwrap();
+        assert_eq!(
+            fingerprint(&root),
+            changed,
+            "unrelated build trees are not watched"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // --- loopback return channel -------------------------------------------
