@@ -11,9 +11,9 @@ try {
   await page.goto(`http://127.0.0.1:${port}/docs/`);
   async function clickAndExpect(from, linkText, to) {
     await page.waitForFunction((slug) => document.querySelector("iframe")?.getAttribute("src")?.includes(`/_c/${slug}`), from);
-    const frame = page.frame({ url: new RegExp(`/_c/${from.replaceAll("/", "\\/")}$`) });
-    if (!frame) throw new Error(`missing artifact frame for ${from}`);
-    await frame.getByRole("link", { name: linkText, exact: true }).first().click();
+    // The iframe src changes before the new document finishes loading. A
+    // frameLocator waits for the new link instead of racing page.frame(url).
+    await page.frameLocator("iframe").getByRole("link", { name: linkText, exact: true }).first().click();
     await page.waitForFunction((slug) => document.querySelector("iframe")?.getAttribute("src")?.includes(`/_c/${slug}`), to);
     if (page.url() !== `http://127.0.0.1:${port}/docs/`) throw new Error("trusted shell navigated away");
   }
