@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- On Linux without a graphical session (neither `DISPLAY` nor `WAYLAND_DISPLAY` set), `publish`, `open`, `serve` and `author` no longer run `xdg-open`; they print the URL and report `browser_launched: false`, instead of printing opener failures.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.20.0] - 2026-10-04

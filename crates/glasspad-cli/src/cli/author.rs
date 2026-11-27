@@ -983,7 +983,7 @@ pub fn open(space: String, port: u16, json: bool, no_browser: bool) {
     let mut warnings: Vec<String> = Vec::new();
     if !no_browser && !launched {
         warnings.push(
-            "browser launch failed (no opener available or spawn failed); \
+            "browser launch failed (no graphical session, no opener available, or spawn failed); \
              the URL is still valid — open it manually"
                 .to_string(),
         );
@@ -1012,9 +1012,30 @@ pub fn open(space: String, port: u16, json: bool, no_browser: bool) {
     }
 }
 
+/// Whether a Linux graphical session is reachable, judged from the values of
+/// `DISPLAY` and `WAYLAND_DISPLAY`. An unset or empty variable does not count:
+/// `xdg-open` on a host with neither falls back to text browsers and prints
+/// opener failures, so the caller skips it and only prints the URL.
+pub(super) fn has_graphical_session(
+    display: Option<&std::ffi::OsStr>,
+    wayland_display: Option<&std::ffi::OsStr>,
+) -> bool {
+    [display, wayland_display]
+        .into_iter()
+        .any(|v| v.is_some_and(|v| !v.is_empty()))
+}
+
 /// Launch the OS browser opener. Returns whether the opener was spawned (not
-/// whether a browser actually appeared — the child is fire-and-forget).
+/// whether a browser actually appeared — the child is fire-and-forget). On
+/// Linux without a graphical session nothing is spawned and this returns false.
 pub(super) fn launch_browser(url: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    if !has_graphical_session(
+        std::env::var_os("DISPLAY").as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+    ) {
+        return false;
+    }
     #[cfg(target_os = "macos")]
     let cmd = "open";
     #[cfg(target_os = "linux")]
@@ -1027,5 +1048,34 @@ pub(super) fn launch_browser(url: &str) -> bool {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         std::process::Command::new(cmd).arg(url).spawn().is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_graphical_session;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn headless_when_neither_display_variable_is_set() {
+        assert!(!has_graphical_session(None, None));
+    }
+
+    #[test]
+    fn empty_display_variables_count_as_headless() {
+        assert!(!has_graphical_session(
+            Some(OsStr::new("")),
+            Some(OsStr::new(""))
+        ));
+    }
+
+    #[test]
+    fn x11_or_wayland_display_counts_as_graphical() {
+        assert!(has_graphical_session(Some(OsStr::new(":0")), None));
+        assert!(has_graphical_session(None, Some(OsStr::new("wayland-0"))));
+        assert!(has_graphical_session(
+            Some(OsStr::new("")),
+            Some(OsStr::new("wayland-0"))
+        ));
     }
 }
