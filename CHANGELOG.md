@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
+- On phone-width screens (600 px and narrower) a single-page space now shows its System / Light / Dark theme control in a slim strip above the page instead of floating it over the page's first heading. Wider screens keep the corner control, and multi-page spaces are unchanged.
 <!-- oss-changelog:unreleased-end -->
 
 ## [0.21.0] - 2026-11-27

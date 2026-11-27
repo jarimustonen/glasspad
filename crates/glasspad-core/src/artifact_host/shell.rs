@@ -75,7 +75,8 @@ pub fn render(
 /// table `(slug, title)` — the complete low-authority allowlist the bridge resolves
 /// navigation against (its titles are inserted as **text**). The trusted chrome is
 /// a top bar with a page switcher, previous / next links and a theme control;
-/// a single-page space gets only the theme control, in a corner. `groups`, when
+/// a single-page space gets only the theme control, in a corner (on phone widths in
+/// a slim strip above the frame, so it never covers content). `groups`, when
 /// non-empty, groups the switcher's page menu (named groups with ordered members
 /// and one level of nested companions); every group member's slug is still in
 /// `nav` (the allowlist), and its label/title are inserted client-side via
@@ -341,6 +342,11 @@ pub fn render_with_groups(
     .gp-menu-theme button {{ flex:1; height:40px; border:1px solid var(--gp-shell-border); border-radius:8px; color:var(--gp-shell-muted); }}
     .gp-menu-theme button[aria-pressed="true"] {{ color:var(--gp-shell-text); border-color:var(--gp-shell-strong);
       background:var(--gp-shell-hover); font-weight:600; }}
+    /* Single page on a phone: a floating corner control would sit on the artifact's
+       first heading, so it gets a slim strip of its own above the frame instead. */
+    body.gp-single .gp-bar {{ position:relative; top:auto; right:auto; flex:0 0 36px; justify-content:flex-end;
+      padding:0 6px; border-bottom:1px solid var(--gp-shell-border); background:var(--gp-shell-bg); }}
+    body.gp-single .gp-theme {{ opacity:1; box-shadow:none; background:transparent; }}
   }}
   @media print {{ .gp-bar, .gp-menu, .gp-scrim, #gp-delivery {{ display:none; }} }}
 </style>
@@ -1256,6 +1262,13 @@ mod tests {
         assert!(html.contains(r#"aria-controls="gp-menu" hidden>"#));
         assert!(html.contains(r#"<div class="gp-pn" id="gp-pn" hidden>"#));
         assert!(html.contains("body.gp-single .gp-bar { position:fixed; top:8px; right:8px;"));
+        // On phone widths the control moves into its own strip above the frame, so it
+        // never floats over the artifact's content.
+        let phone = html.split("@media (max-width: 600px) {").nth(1).unwrap();
+        let phone = &phone[..phone.find("@media print").unwrap()];
+        assert!(phone.contains(
+            "body.gp-single .gp-bar { position:relative; top:auto; right:auto; flex:0 0 36px;"
+        ));
         // An empty nav table is a single-page layout too.
         let empty = render("", "demo", "index", "", &[], "n", None);
         assert!(empty.contains(r#"</head><body class="gp-single">"#));
