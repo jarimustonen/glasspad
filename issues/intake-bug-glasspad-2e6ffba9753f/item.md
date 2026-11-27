@@ -3,11 +3,15 @@ created: 2026-10-15
 updated: 2026-11-27
 type: bug
 reporter: jari
-status: open
+status: fixed
 priority: normal
 provenance: agent:homebase-wrapup
 source_ref: agent:homebase-wrapup/reporter:jari/id:open-habitat-wrapup-2026-10-15-glasspad-xdg
 lane: unlaned
+closed: 2026-11-27
+commits:
+- hash: 9fb35ec
+  summary: skip xdg-open without a graphical session
 ---
 
 # glasspad publish --target hosted tries xdg-open on a headless server
