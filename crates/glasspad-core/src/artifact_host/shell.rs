@@ -699,8 +699,12 @@ pub fn render_with_groups(
     if (!a || (a !== prevEl && a !== nextEl)) return;
     if (navigateTo(a.getAttribute("data-slug"))) {{
       event.preventDefault();
-      // At either end the clicked link becomes inert; keep focus in the bar.
-      if (!a.hasAttribute("href")) (a === prevEl ? nextEl : prevEl).focus();
+      // At either end the clicked link becomes inert; keep focus in the bar (on the
+      // switcher when the space lists a single page and both links are inert).
+      if (!a.hasAttribute("href")) {{
+        var other = a === prevEl ? nextEl : prevEl;
+        (other.hasAttribute("href") ? other : switchEl).focus();
+      }}
     }}
   }}
   navEl.addEventListener("click", onNavClick, false);

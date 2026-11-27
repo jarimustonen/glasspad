@@ -561,7 +561,9 @@ async function main() {
       stepTarget.expected, { timeout: 4000 }).catch(() => {});
     check("nav-chrome: the next link swaps to the following page in place and moves aria-current",
       !!stepTarget.expected && stepTarget.next === stepTarget.expected &&
+        frameHas(stepTarget.expected) &&
         (await page.evaluate((slug) =>
+          new RegExp(`/demo/_c/${slug}(\\?|$)`).test(document.getElementById("gp-artifact").getAttribute("src") || "") &&
           document.querySelector(`#gp-nav a[data-slug="${slug}"]`).getAttribute("aria-current") === "page" &&
           window.__shellNotReloaded === true, stepTarget.expected)),
       JSON.stringify(stepTarget));
