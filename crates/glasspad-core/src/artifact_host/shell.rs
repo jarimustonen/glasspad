@@ -16,8 +16,8 @@
 //!   message work; they do not claim to bound clone cost.)
 //! * inserts artifact-derived text as **text, never innerHTML** (Trusted Types on).
 //!
-//! **Wave 4 — nav chrome.** The trusted parent now renders a **navigation list**
-//! of the space's artifacts (`nav`, an ordered `(slug, title)` table the server
+//! **Nav chrome.** The trusted parent renders a top bar whose page switcher opens
+//! a **navigation list** of the space's artifacts (`nav`, an ordered `(slug, title)` table the server
 //! resolves and hands down). Every list item is built **client-side with
 //! `createElement` + `textContent`** — the artifact-derived title never touches an
 //! HTML sink, so it can never break out of text context (Trusted Types would throw
@@ -35,7 +35,7 @@
 
 use serde_json::json;
 
-/// One member of the grouped-nav sidebar: an artifact slug + its display title +
+/// One member of the grouped page menu: an artifact slug + its display title +
 /// up to one level of nested companion children. The `slug` is validated against
 /// `nav`'s allowlist upstream; the `title` is artifact/producer-derived and is
 /// inserted client-side via `textContent` (never an HTML sink), exactly like the
@@ -46,16 +46,15 @@ pub struct NavItemView<'a> {
     pub children: Vec<NavItemView<'a>>,
 }
 
-/// A named, ordered group of the grouped-nav sidebar (e.g. "ADR:t"). `label` is
+/// A named, ordered group of the grouped page menu (e.g. "ADR:t"). `label` is
 /// producer text, inserted as `textContent`.
 pub struct NavGroupView<'a> {
     pub label: &'a str,
     pub members: Vec<NavItemView<'a>>,
 }
 
-/// Render the shell document for `space`/`slug` with the **flat** nav bar only
-/// (the trusted sidebar chrome). Thin shim over [`render_with_groups`] with no
-/// groups — the grouped sidebar is inactive and the vertical navigation renders. Test-only: the production CLI adapter's `render_shell`
+/// Render the shell document for `space`/`slug` with a **flat** page menu and no
+/// space title. Thin shim over [`render_with_groups`] with no groups. Test-only: the production CLI adapter's `render_shell`
 /// calls [`render_with_groups`] (passing the space's reconciled groups, which
 /// may be empty), so this shim exists purely to keep the many flat-nav unit tests
 /// concise and to document/exercise the flat fallback in the CLI adapter.
@@ -69,18 +68,22 @@ pub fn render(
     nonce: &str,
     favicon: Option<&str>,
 ) -> String {
-    render_with_groups(mount, space, slug, title, nav, &[], nonce, favicon)
+    render_with_groups(mount, space, slug, title, nav, &[], "", nonce, favicon)
 }
 
 /// Render the shell document for `space`/`slug`. `nav` is the ordered artifact
 /// table `(slug, title)` — the complete low-authority allowlist the bridge resolves
-/// navigation against (its titles are inserted as **text**). `groups`, when
-/// non-empty, drives a **grouped vertical sidebar** (named groups with ordered
-/// members and one level of nested companions) instead of the flat sidebar;
-/// every group member's slug is still in `nav` (the allowlist), and its label/title
-/// are inserted client-side via `textContent` only. Empty `groups` → the flat bar
-/// (flat fallback). `title` is the current artifact's resolved display
-/// title (empty → `space / slug`); `nonce` matches the CSP.
+/// navigation against (its titles are inserted as **text**). The trusted chrome is
+/// a top bar with a page switcher, previous / next links and a theme control;
+/// a single-page space gets only the theme control, in a corner. `groups`, when
+/// non-empty, groups the switcher's page menu (named groups with ordered members
+/// and one level of nested companions); every group member's slug is still in
+/// `nav` (the allowlist), and its label/title are inserted client-side via
+/// `textContent` only. Empty `groups` → a flat menu in `nav` order. `space_title`
+/// is the manifest's space title, shown before the page name (empty → the
+/// loopback space name, or nothing when hosted). `title` is the current
+/// artifact's resolved display title (empty → `space / slug`); `nonce` matches
+/// the CSP.
 #[allow(clippy::too_many_arguments)]
 pub fn render_with_groups(
     mount: &str,
@@ -89,6 +92,7 @@ pub fn render_with_groups(
     title: &str,
     nav: &[(&str, &str)],
     groups: &[NavGroupView<'_>],
+    space_title: &str,
     nonce: &str,
     favicon: Option<&str>,
 ) -> String {
@@ -115,7 +119,7 @@ pub fn render_with_groups(
     // Labels + titles are producer/artifact-derived; the json_for_script encoding
     // below neutralizes any markup (so a hostile label can't close the <script>),
     // and the client inserts each one via textContent (never innerHTML). Empty →
-    // the flat sidebar navigation renders instead (flat fallback).
+    // the page menu is a flat list in nav order.
     fn item_json(item: &NavItemView<'_>) -> serde_json::Value {
         json!({
             "slug": item.slug,
@@ -143,6 +147,28 @@ pub fn render_with_groups(
     // at root in both run modes). It is a fixed server constant, never client
     // input; emitted as a JSON string literal so it lands as data in the script.
     let mount_json = json_for_script(&json!(mount));
+
+    // The space name the top bar shows before the page switcher: the manifest's
+    // space title when there is one, else the loopback directory name. A hosted
+    // space name is a random capability slug, which reads as noise, so without a
+    // title the hosted bar shows only the page. Producer text, so it reaches the
+    // client as a data literal and is inserted with `textContent`.
+    let space_label = if !space_title.is_empty() {
+        space_title
+    } else if mount.is_empty() {
+        space
+    } else {
+        ""
+    };
+    let space_label_json = json_for_script(&json!(space_label));
+    // A space with one page has nothing to switch between: the bar collapses to a
+    // corner theme control. Decided here as well as in the script so the first
+    // paint already has the right layout.
+    let body_class = if nav.len() > 1 {
+        ""
+    } else {
+        r#" class="gp-single""#
+    };
 
     // The return-channel submit endpoint the shell POSTs a submission to. It differs
     // structurally by run mode, discriminated by the (server-constant) mount: the
@@ -207,67 +233,133 @@ pub fn render_with_groups(
 <style>
   :root, [data-theme="light"] {{
     color-scheme:light;
-    --gp-shell-bg:#fff; --gp-shell-text:#1a1b25; --gp-shell-border:#e5e7eb;
+    --gp-shell-bg:#fafbfc; --gp-shell-surface:#fff; --gp-shell-hover:rgba(15,23,42,.05);
+    --gp-shell-text:#1a1b25; --gp-shell-muted:#6b7280; --gp-shell-border:#e5e7eb; --gp-shell-strong:#d1d5db;
+    --gp-shell-accent:#2563eb; --gp-shell-accent-soft:#eff6ff; --gp-shell-accent-text:#1e40af; --gp-shell-focus:#3b82f6;
+    --gp-shell-shadow:0 12px 32px rgba(15,23,42,.14),0 2px 6px rgba(15,23,42,.06); --gp-shell-scrim:rgba(250,251,252,.6);
   }}
   [data-theme="dark"] {{
     color-scheme:dark;
-    --gp-shell-bg:#1a1b26; --gp-shell-text:#e5e7eb; --gp-shell-border:rgba(255,255,255,0.12);
+    --gp-shell-bg:#0f1117; --gp-shell-surface:#1a1b26; --gp-shell-hover:rgba(255,255,255,.06);
+    --gp-shell-text:#e5e7eb; --gp-shell-muted:#8b93a1; --gp-shell-border:rgba(255,255,255,.08); --gp-shell-strong:rgba(255,255,255,.14);
+    --gp-shell-accent:#6366f1; --gp-shell-accent-soft:rgba(99,102,241,.14); --gp-shell-accent-text:#a5b4fc; --gp-shell-focus:#6366f1;
+    --gp-shell-shadow:0 12px 32px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.3); --gp-shell-scrim:rgba(15,17,23,.6);
   }}
   @media (prefers-color-scheme:dark) {{
     [data-theme="auto"] {{
       color-scheme:dark;
-      --gp-shell-bg:#1a1b26; --gp-shell-text:#e5e7eb; --gp-shell-border:rgba(255,255,255,0.12);
+      --gp-shell-bg:#0f1117; --gp-shell-surface:#1a1b26; --gp-shell-hover:rgba(255,255,255,.06);
+      --gp-shell-text:#e5e7eb; --gp-shell-muted:#8b93a1; --gp-shell-border:rgba(255,255,255,.08); --gp-shell-strong:rgba(255,255,255,.14);
+      --gp-shell-accent:#6366f1; --gp-shell-accent-soft:rgba(99,102,241,.14); --gp-shell-accent-text:#a5b4fc; --gp-shell-focus:#6366f1;
+      --gp-shell-shadow:0 12px 32px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.3); --gp-shell-scrim:rgba(15,17,23,.6);
     }}
   }}
   html,body {{ margin:0; height:100%; }}
-  body {{ background:var(--gp-shell-bg); color:var(--gp-shell-text); }}
-  .gp-body {{ height:100dvh; display:flex; min-height:0; }}
-  aside.gp-sidebar {{ flex:0 0 176px; width:176px; overflow-y:auto; box-sizing:border-box;
-    font:13px system-ui,sans-serif; background:var(--gp-shell-bg); color:var(--gp-shell-text);
-    border-right:1px solid var(--gp-shell-border); padding:18px 10px;
-    display:flex; flex-direction:column; gap:18px; }}
-  .gp-controls {{ padding:0 8px; display:flex; flex-direction:column; gap:8px; }}
-  .gp-controls label {{ font-size:11px; font-weight:650; letter-spacing:.06em; text-transform:uppercase; opacity:.7; }}
-  #gp-theme-toggle {{ font:inherit; text-align:left; padding:8px 10px; cursor:pointer;
-    border:1px solid var(--gp-shell-border); border-radius:8px;
-    background:transparent; color:inherit; min-height:40px; }}
-  #gp-theme-toggle:hover, aside.gp-sidebar a:hover {{ background:rgba(127,127,127,0.14); }}
-  #gp-theme-toggle:focus-visible, aside.gp-sidebar a:focus-visible {{ outline:2px solid currentColor; outline-offset:2px; }}
-  #gp-delivery {{ font-size:12px; line-height:1.4; overflow-wrap:anywhere; }}
-  #gp-delivery[hidden] {{ display:none; }}
-  nav.gp-nav {{ display:flex; flex-direction:column; gap:2px; }}
-  nav.gp-nav:empty {{ display:none; }}
-  aside.gp-sidebar .sb-group {{ margin-bottom:16px; }}
-  aside.gp-sidebar .sb-group-h {{ font-weight:600; opacity:0.72; padding:2px 8px;
-    text-transform:uppercase; letter-spacing:0.03em; font-size:11px; }}
-  aside.gp-sidebar ul {{ list-style:none; margin:2px 0; padding:0; }}
-  aside.gp-sidebar li {{ margin:0; }}
-  aside.gp-sidebar a {{ display:block; font:inherit; color:inherit; text-decoration:none;
-    padding:7px 8px; border-radius:6px; cursor:pointer;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
-  aside.gp-sidebar a[aria-current="page"] {{ background:rgba(127,127,127,0.22); font-weight:600; }}
-  aside.gp-sidebar ul ul {{ margin-left:12px; border-left:1px solid rgba(127,127,127,0.25); }}
-  @media (max-width: 600px) {{
-    .gp-body {{ flex-direction:column-reverse; }}
-    aside.gp-sidebar {{ width:100%; flex:0 0 auto; max-height:35dvh; overflow:hidden;
-      border-right:0; border-top:1px solid var(--gp-shell-border);
-      padding:6px 12px; gap:4px; }}
-    nav.gp-nav {{ min-height:0; overflow-y:auto; }}
-    .gp-controls {{ flex:0 0 auto; flex-direction:row; align-items:center; gap:8px; padding:0; flex-wrap:wrap; }}
-    #gp-theme-toggle {{ min-height:44px; text-align:center; }}
-    #gp-delivery {{ flex-basis:100%; }}
-    nav.gp-nav {{ flex-direction:row; overflow-x:auto; white-space:nowrap; }}
-    nav.gp-nav a {{ flex:0 0 auto; max-width:22ch; }}
-  }}
-  @media print {{ aside.gp-sidebar {{ display:none; }} }}
+  body {{ background:var(--gp-shell-bg); color:var(--gp-shell-text);
+    font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }}
+  .gp-body {{ height:100dvh; display:flex; flex-direction:column; min-height:0; }}
+  .gp-bar {{ flex:0 0 44px; box-sizing:border-box; display:flex; align-items:center; gap:8px; min-width:0;
+    padding:0 8px 0 10px; border-bottom:1px solid var(--gp-shell-border); background:var(--gp-shell-bg);
+    color:var(--gp-shell-text); position:relative; z-index:3; }}
+  .gp-bar button, .gp-menu button {{ font:inherit; color:inherit; background:none; border:0; cursor:pointer; margin:0; }}
+  .gp-bar button:focus-visible, .gp-bar a:focus-visible, .gp-menu button:focus-visible, .gp-menu a:focus-visible {{
+    outline:2px solid var(--gp-shell-focus); outline-offset:-2px; }}
+  .gp-switch {{ display:flex; align-items:center; gap:8px; min-width:0; height:32px; padding:0 8px; border-radius:7px;
+    transition:background-color 120ms ease-out; }}
+  .gp-switch:hover, .gp-switch[aria-expanded="true"] {{ background:var(--gp-shell-hover); }}
+  .gp-space {{ color:var(--gp-shell-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:22ch; flex:0 1 auto; }}
+  .gp-sep {{ color:var(--gp-shell-strong); }}
+  .gp-space:empty, .gp-space:empty + .gp-sep {{ display:none; }}
+  .gp-page {{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }}
+  .gp-pos {{ color:var(--gp-shell-muted); font-variant-numeric:tabular-nums; font-size:12px; white-space:nowrap; }}
+  .gp-pos:empty {{ display:none; }}
+  .gp-chev {{ flex:0 0 auto; width:10px; height:10px; color:var(--gp-shell-muted); transition:transform 160ms cubic-bezier(.23,1,.32,1); }}
+  .gp-switch[aria-expanded="true"] .gp-chev {{ transform:rotate(180deg); }}
+  .gp-grow {{ flex:1 1 auto; }}
+  .gp-pn {{ display:flex; gap:2px; flex:0 0 auto; }}
+  .gp-icon {{ display:grid; place-items:center; width:32px; height:32px; border-radius:7px; color:var(--gp-shell-muted);
+    transition:background-color 120ms ease-out,color 120ms ease-out; }}
+  .gp-icon[href]:hover {{ background:var(--gp-shell-hover); color:var(--gp-shell-text); }}
+  .gp-icon:not([href]) {{ opacity:.35; cursor:default; }}
+  .gp-icon svg {{ width:16px; height:16px; }}
+  .gp-div {{ flex:0 0 auto; width:1px; height:18px; background:var(--gp-shell-border); margin:0 4px; }}
+  .gp-theme {{ display:flex; flex:0 0 auto; gap:2px; padding:2px; border:1px solid var(--gp-shell-border); border-radius:9px; }}
+  .gp-theme button {{ display:grid; place-items:center; width:28px; height:26px; border-radius:6px; color:var(--gp-shell-muted); }}
+  .gp-theme button:hover {{ color:var(--gp-shell-text); }}
+  .gp-theme button[aria-checked="true"] {{ background:var(--gp-shell-surface); color:var(--gp-shell-text); box-shadow:0 0 0 1px var(--gp-shell-strong); }}
+  .gp-theme svg {{ width:15px; height:15px; }}
   iframe#gp-artifact {{ display:block; border:0; flex:1 1 auto; width:100%; min-height:0; }}
+  .gp-scrim {{ position:fixed; inset:44px 0 0; background:var(--gp-shell-scrim); z-index:2; opacity:0; transition:opacity 150ms ease-out; }}
+  .gp-menu {{ position:absolute; top:40px; left:10px; z-index:4; box-sizing:border-box; width:340px; max-width:calc(100vw - 20px);
+    max-height:calc(100dvh - 64px); overflow-y:auto; overscroll-behavior:contain; padding:8px;
+    background:var(--gp-shell-surface); color:var(--gp-shell-text); border:1px solid var(--gp-shell-border); border-radius:12px;
+    box-shadow:var(--gp-shell-shadow); transform-origin:top left; opacity:0; transform:translateY(-4px) scale(.98);
+    transition:opacity 150ms ease-out,transform 180ms cubic-bezier(.23,1,.32,1); }}
+  .gp-open .gp-menu {{ opacity:1; transform:none; }}
+  .gp-open .gp-scrim {{ opacity:1; }}
+  .gp-menu[hidden], .gp-scrim[hidden], .gp-menu-space[hidden], .gp-switch[hidden], .gp-pn[hidden] {{ display:none; }}
+  .gp-menu-space {{ padding:8px 10px 10px; margin-bottom:4px; border-bottom:1px solid var(--gp-shell-border); overflow-wrap:anywhere; }}
+  .gp-menu-space small {{ display:block; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--gp-shell-muted); }}
+  .gp-menu-space b {{ font-size:15px; }}
+  nav.gp-nav {{ counter-reset:gp-page; }}
+  .gp-nav .gp-g {{ margin:12px 10px 4px; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--gp-shell-muted); overflow-wrap:anywhere; }}
+  .gp-nav ul {{ list-style:none; margin:0; padding:0; }}
+  .gp-nav ul ul {{ margin-left:18px; border-left:1px solid var(--gp-shell-border); }}
+  .gp-nav a {{ display:flex; align-items:baseline; gap:10px; padding:8px 10px; border-radius:7px; color:inherit;
+    text-decoration:none; overflow-wrap:anywhere; counter-increment:gp-page; }}
+  .gp-nav a::before {{ content:counter(gp-page); flex:0 0 auto; width:1.4em; color:var(--gp-shell-muted); font-size:12px;
+    font-variant-numeric:tabular-nums; }}
+  .gp-nav a:hover {{ background:var(--gp-shell-hover); }}
+  .gp-nav a[aria-current="page"] {{ background:var(--gp-shell-accent-soft); color:var(--gp-shell-accent-text); font-weight:600;
+    box-shadow:inset 2px 0 0 var(--gp-shell-accent); }}
+  .gp-nav a[aria-current="page"]::before {{ color:inherit; }}
+  .gp-menu-theme {{ display:none; }}
+  #gp-delivery {{ position:fixed; left:50%; bottom:12px; transform:translateX(-50%); z-index:5; box-sizing:border-box;
+    max-width:min(560px, calc(100vw - 24px)); padding:8px 14px; font-size:13px; line-height:1.4; overflow-wrap:anywhere;
+    background:var(--gp-shell-surface); color:var(--gp-shell-text); border:1px solid var(--gp-shell-border);
+    border-radius:10px; box-shadow:var(--gp-shell-shadow); }}
+  #gp-delivery[hidden] {{ display:none; }}
+  body.gp-single .gp-bar {{ position:fixed; top:8px; right:8px; flex:none; height:auto; padding:0; border:0;
+    background:transparent; }}
+  body.gp-single .gp-switch, body.gp-single .gp-grow, body.gp-single .gp-pn, body.gp-single .gp-div {{ display:none; }}
+  body.gp-single .gp-theme {{ background:var(--gp-shell-surface); box-shadow:var(--gp-shell-shadow); opacity:.72;
+    transition:opacity 120ms ease-out; }}
+  body.gp-single .gp-theme:hover, body.gp-single .gp-theme:focus-within {{ opacity:1; }}
+  @media (prefers-reduced-motion:reduce) {{ .gp-menu, .gp-scrim, .gp-chev {{ transition:none; }} }}
+  @media (max-width: 600px) {{
+    .gp-bar {{ flex-basis:48px; padding:0 4px 0 6px; gap:4px; }}
+    body:not(.gp-single) .gp-space, body:not(.gp-single) .gp-sep,
+    body:not(.gp-single) .gp-theme, body:not(.gp-single) .gp-div {{ display:none; }}
+    .gp-switch {{ height:40px; flex:1 1 auto; }}
+    .gp-icon {{ width:40px; height:40px; }}
+    .gp-scrim {{ inset:48px 0 0; }}
+    .gp-menu {{ position:fixed; top:48px; left:0; right:0; width:auto; max-width:none;
+      max-height:min(75dvh, calc(100dvh - 48px)); border-radius:0 0 14px 14px; border-width:0 0 1px; transform-origin:top center; }}
+    .gp-nav a {{ padding:11px 10px; }}
+    .gp-menu-theme {{ display:flex; gap:4px; margin:12px 4px 4px; padding-top:12px; border-top:1px solid var(--gp-shell-border); }}
+    .gp-menu-theme button {{ flex:1; height:40px; border:1px solid var(--gp-shell-border); border-radius:8px; color:var(--gp-shell-muted); }}
+    .gp-menu-theme button[aria-pressed="true"] {{ color:var(--gp-shell-text); border-color:var(--gp-shell-strong);
+      background:var(--gp-shell-hover); font-weight:600; }}
+  }}
+  @media print {{ .gp-bar, .gp-menu, .gp-scrim, #gp-delivery {{ display:none; }} }}
 </style>
-</head><body>
+</head><body{body_class}>
 <div class="gp-body">
-<aside class="gp-sidebar" id="gp-sidebar" aria-label="Space controls and documents">
-  <nav class="gp-nav" id="gp-nav" aria-label="Artifacts in this space"></nav>
-  <div class="gp-controls"><label for="gp-theme-toggle">Appearance</label><button id="gp-theme-toggle" type="button" aria-label="Theme: Auto. Activate to select the next theme.">Theme: Auto</button><span id="gp-delivery" role="status" aria-live="polite" hidden></span></div>
-</aside>
+<header class="gp-bar" id="gp-bar" aria-label="Space navigation">
+  <button class="gp-switch" id="gp-switch" type="button" aria-expanded="false" aria-controls="gp-menu" hidden><span class="gp-space" id="gp-space"></span><span class="gp-sep" aria-hidden="true">/</span><span class="gp-page" id="gp-page"></span><span class="gp-pos" id="gp-pos"></span><svg class="gp-chev" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 3.5 5 7l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  <span class="gp-grow"></span>
+  <div class="gp-pn" id="gp-pn" hidden><a class="gp-icon" id="gp-prev" rel="noopener" aria-disabled="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a><a class="gp-icon" id="gp-next" rel="noopener" aria-disabled="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
+  <span class="gp-div" aria-hidden="true"></span>
+  <div class="gp-theme" id="gp-theme" role="radiogroup" aria-label="Theme"><button type="button" role="radio" data-theme-choice="auto" aria-checked="true" aria-label="System" title="System theme"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg></button><button type="button" role="radio" data-theme-choice="light" aria-checked="false" aria-label="Light" title="Light theme" tabindex="-1"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button><button type="button" role="radio" data-theme-choice="dark" aria-checked="false" aria-label="Dark" title="Dark theme" tabindex="-1"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 10.1A5.6 5.6 0 0 1 5.9 2.8a5.6 5.6 0 1 0 7.3 7.3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></button></div>
+</header>
+<div class="gp-scrim" id="gp-scrim" hidden></div>
+<div class="gp-menu" id="gp-menu" hidden>
+  <div class="gp-menu-space" id="gp-menu-space" hidden><small>Space</small><b id="gp-menu-space-name"></b></div>
+  <nav class="gp-nav" id="gp-nav" aria-label="Pages in this space"></nav>
+  <div class="gp-menu-theme" role="group" aria-label="Theme"><button type="button" data-theme-choice="auto" aria-pressed="true">System</button><button type="button" data-theme-choice="light" aria-pressed="false">Light</button><button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button></div>
+</div>
+<span id="gp-delivery" role="status" aria-live="polite" hidden></span>
 <iframe id="gp-artifact" title="{esc_title_attr}"
         sandbox="allow-scripts allow-top-navigation-by-user-activation"
         data-src="{esc_src}"></iframe>
@@ -280,7 +372,7 @@ pub fn render_with_groups(
   var SLUG = {slug_json};
   var KNOWN = {slugs_json};
   var NAV = {nav_json};   // [{{slug, title}}] — artifact-derived text, inserted via textContent only
-  var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped sidebar; empty → flat sidebar navigation
+  var GROUPS = {groups_json};   // [{{label, members:[{{slug, title, children}}]}}] — grouped page menu; empty → flat menu
   var SUBMIT_PATH = {submit_json};   // return-channel POST target (same-origin)
   var STATUS_PATH = {status_json};   // hosted exact-submission status base; null on loopback
   var MAX_SLUG = 256;       // matches the server-side slug grammar
@@ -301,56 +393,69 @@ pub fn render_with_groups(
     if (NAV[n] && typeof NAV[n].slug === "string") TITLE_BY_SLUG[NAV[n].slug] = NAV[n].title;
   }}
   var current = SLUG;
+  var SPACE_LABEL = {space_label_json};   // producer text, inserted via textContent only; "" → no space name
+  var MULTI = NAV.length > 1;             // one page → corner theme control only (matches the server's body class)
 
   // The current title remains in the document title and iframe's accessible title.
-  // It is deliberately not repeated as visible header text: prose artifacts already
-  // render their own H1, while the navigation provides page context.
+  // The top bar shows it once more inside the page switcher, where it names the
+  // control rather than heading the page; prose artifacts keep their own H1.
 
-  // --- Nav list: built entirely with createElement + textContent, so an
-  // artifact-derived title can NEVER become live markup (no innerHTML sink; the
-  // shell CSP's Trusted Types would throw on one anyway). Each entry is an <a>
-  // whose href is the real shell URL — a meaningful open-in-new-tab / modified-
-  // click target (the shell needs JS to run, so this is NOT a no-JS fallback); a
-  // primary click is intercepted and swaps the iframe in place. Built into a
-  // DocumentFragment and attached once (a single layout pass, not one per entry).
+  // --- Top bar and page menu: built entirely with createElement + textContent, so
+  // an artifact-derived title can NEVER become live markup (no innerHTML sink; the
+  // shell CSP's Trusted Types would throw on one anyway). Each menu entry and the
+  // previous / next links are <a> elements whose href is the real shell URL — a
+  // meaningful open-in-new-tab / modified-click target (the shell needs JS to run,
+  // so this is NOT a no-JS fallback); a primary click is intercepted and swaps the
+  // iframe in place. The menu is built into a DocumentFragment and attached once.
+  var barEl = document.getElementById("gp-bar");
+  var switchEl = document.getElementById("gp-switch");
+  var pageEl = document.getElementById("gp-page");
+  var posEl = document.getElementById("gp-pos");
+  var pnEl = document.getElementById("gp-pn");
+  var prevEl = document.getElementById("gp-prev");
+  var nextEl = document.getElementById("gp-next");
+  var menuEl = document.getElementById("gp-menu");
+  var scrimEl = document.getElementById("gp-scrim");
   var navEl = document.getElementById("gp-nav");
-  var sidebarEl = document.getElementById("gp-sidebar");
   var linkBySlug = Object.create(null);
+  var order = [];   // menu order of the listed slugs; drives previous / next and "i / n"
 
-  // One anchor for a slug, built with createElement + textContent so an artifact-
-  // derived title can NEVER become live markup (no innerHTML sink; the shell CSP's
-  // Trusted Types would throw on one anyway). The href is the real shell URL — a
-  // meaningful open-in-new-tab / modified-click target; a primary click is
-  // intercepted (below) and swaps the iframe in place. Registered in `linkBySlug`
-  // so paintActive() can mark the active entry across both nav surfaces.
+  function shellHref(slug) {{ return MOUNT + "/" + SPACE + "/" + slug; }}
+  function titleOf(slug) {{
+    var t = TITLE_BY_SLUG[slug];
+    return (typeof t === "string" && t !== "") ? t : slug;
+  }}
+
+  // One menu anchor for a slug. The visible position number is a CSS counter, so
+  // the anchor holds nothing but the title text node.
   function makeNavLink(slug, title) {{
     var a = document.createElement("a");
-    a.setAttribute("href", MOUNT + "/" + SPACE + "/" + slug);
+    a.setAttribute("href", shellHref(slug));
     a.setAttribute("data-slug", slug);
     a.setAttribute("rel", "noopener");
     a.textContent = (typeof title === "string" && title !== "") ? title : slug;
+    if (!linkBySlug[slug]) order.push(slug);
     linkBySlug[slug] = a;   // last wins if the server ever sent a dup slug
     return a;
   }}
 
-  // --- Grouped sidebar takes precedence when the space declares groups; otherwise
-  // the flat sidebar navigation renders (flat fallback). Exactly one of
-  // the two surfaces is populated; the other stays :empty and is hidden by CSS.
-  if (GROUPS.length) {{
+  // --- Grouped menu when the space declares groups; otherwise a flat list in nav
+  // order. A single-page space builds neither.
+  if (MULTI && GROUPS.length) {{
     document.body.classList.add("gp-grouped");
-    var sbFrag = document.createDocumentFragment();
+    var menuFrag = document.createDocumentFragment();
     for (var gi = 0; gi < GROUPS.length; gi++) {{
       var group = GROUPS[gi];
       if (!group || !group.members || !group.members.length) continue;
-      var section = document.createElement("div");
-      section.className = "sb-group";
+      var ul = document.createElement("ul");
       if (typeof group.label === "string" && group.label !== "") {{
         var h = document.createElement("div");
-        h.className = "sb-group-h";
+        h.className = "gp-g";
+        h.id = "gp-g" + gi;
         h.textContent = group.label;   // textContent — never innerHTML
-        section.appendChild(h);
+        menuFrag.appendChild(h);
+        ul.setAttribute("aria-labelledby", h.id);
       }}
-      var ul = document.createElement("ul");
       for (var mi = 0; mi < group.members.length; mi++) {{
         var m = group.members[mi];
         if (!m || typeof m.slug !== "string") continue;
@@ -369,53 +474,174 @@ pub fn render_with_groups(
         }}
         ul.appendChild(li);
       }}
-      section.appendChild(ul);
-      sbFrag.appendChild(section);
+      menuFrag.appendChild(ul);
     }}
-    navEl.appendChild(sbFrag);
-  }} else {{
-    var navFrag = document.createDocumentFragment();
-    for (var k = 0; k < NAV.length && NAV.length > 1; k++) {{
+    navEl.appendChild(menuFrag);
+  }} else if (MULTI) {{
+    var flatUl = document.createElement("ul");
+    for (var k = 0; k < NAV.length; k++) {{
       var item = NAV[k];
       if (!item || typeof item.slug !== "string") continue;
-      navFrag.appendChild(makeNavLink(item.slug, item.title));
+      var flatLi = document.createElement("li");
+      flatLi.appendChild(makeNavLink(item.slug, item.title));
+      flatUl.appendChild(flatLi);
     }}
-    navEl.appendChild(navFrag);
+    navEl.appendChild(flatUl);
   }}
+  if (MULTI) {{
+    document.getElementById("gp-space").textContent = SPACE_LABEL;
+    if (SPACE_LABEL !== "") {{
+      document.getElementById("gp-menu-space-name").textContent = SPACE_LABEL;
+      document.getElementById("gp-menu-space").hidden = false;
+    }}
+    switchEl.hidden = false;
+    pnEl.hidden = false;
+  }}
+
+  function setStep(a, slug, label) {{
+    if (slug) {{
+      a.setAttribute("href", shellHref(slug));
+      a.setAttribute("data-slug", slug);
+      a.removeAttribute("aria-disabled");
+      a.setAttribute("aria-label", label + ": " + titleOf(slug));
+      a.setAttribute("title", titleOf(slug));
+    }} else {{
+      a.removeAttribute("href");
+      a.removeAttribute("data-slug");
+      a.setAttribute("aria-disabled", "true");
+      a.setAttribute("aria-label", "No " + label.toLowerCase());
+      a.removeAttribute("title");
+    }}
+  }}
+
+  // Paint everything that depends on the current page: the switcher label, the
+  // position, previous / next, and the single aria-current entry.
   function paintActive() {{
     for (var s in linkBySlug) {{
       if (s === current) linkBySlug[s].setAttribute("aria-current", "page");
       else linkBySlug[s].removeAttribute("aria-current");
     }}
+    if (!MULTI) return;
+    var i = order.indexOf(current);
+    var shown = titleOf(current);
+    pageEl.textContent = shown;
+    posEl.textContent = i >= 0 ? (i + 1) + " / " + order.length : "";
+    switchEl.setAttribute("aria-label", (i >= 0 ? "Page " + (i + 1) + " of " + order.length + ": " : "") + shown + ". Show all pages.");
+    // A current page outside the listed order (an ungrouped landing) steps into the list.
+    setStep(prevEl, i > 0 ? order[i - 1] : null, "Previous page");
+    setStep(nextEl, i < 0 ? (order[0] || null) : (i < order.length - 1 ? order[i + 1] : null), "Next page");
   }}
   paintActive();
 
-  // --- Theme: the trusted shell owns the toggle; a fragment artifact applies it
+  // --- Page menu: a disclosure (button + aria-expanded), not an ARIA menu, so the
+  // entries stay ordinary links. Arrow keys, Home and End move between them;
+  // Escape, the scrim, or focus leaving the menu closes it.
+  function isOpen() {{ return switchEl.getAttribute("aria-expanded") === "true"; }}
+  function openMenu() {{
+    if (!MULTI || isOpen()) return;
+    menuEl.hidden = false;
+    scrimEl.hidden = false;
+    switchEl.setAttribute("aria-expanded", "true");
+    var cur = linkBySlug[current] || navEl.querySelector("a[data-slug]");
+    if (cur) cur.focus();
+    window.requestAnimationFrame(function () {{ document.body.classList.add("gp-open"); }});
+  }}
+  function closeMenu(refocus) {{
+    if (!isOpen()) return;
+    switchEl.setAttribute("aria-expanded", "false");
+    document.body.classList.remove("gp-open");
+    menuEl.hidden = true;
+    scrimEl.hidden = true;
+    if (refocus) switchEl.focus();
+  }}
+  switchEl.addEventListener("click", function () {{ if (isOpen()) closeMenu(true); else openMenu(); }});
+  switchEl.addEventListener("keydown", function (event) {{
+    if (event.key === "ArrowDown" && !isOpen()) {{ event.preventDefault(); openMenu(); }}
+  }});
+  scrimEl.addEventListener("click", function () {{ closeMenu(false); }});
+  menuEl.addEventListener("keydown", function (event) {{
+    if (event.key === "Escape") {{ event.preventDefault(); closeMenu(true); return; }}
+    var links = Array.prototype.slice.call(navEl.querySelectorAll("a[data-slug]"));
+    if (!links.length) return;
+    var at = links.indexOf(document.activeElement);
+    var to = -1;
+    if (event.key === "ArrowDown") to = at < 0 ? 0 : Math.min(links.length - 1, at + 1);
+    else if (event.key === "ArrowUp") to = at < 0 ? links.length - 1 : Math.max(0, at - 1);
+    else if (event.key === "Home") to = 0;
+    else if (event.key === "End") to = links.length - 1;
+    if (to >= 0) {{ event.preventDefault(); links[to].focus(); }}
+  }});
+  document.addEventListener("keydown", function (event) {{
+    if (event.key === "Escape" && isOpen()) {{ event.preventDefault(); closeMenu(true); }}
+  }});
+  // Tabbing (or clicking into the artifact) out of the open menu closes it.
+  menuEl.addEventListener("focusout", function (event) {{
+    var to = event.relatedTarget;
+    if (to && (menuEl.contains(to) || to === switchEl)) return;
+    window.setTimeout(function () {{
+      var active = document.activeElement;
+      if (active && (menuEl.contains(active) || active === switchEl)) return;
+      closeMenu(false);
+    }}, 0);
+  }});
+
+  // --- Theme: the trusted shell owns the control; a fragment artifact applies it
   // via bridge.js. The correct theme is ALSO inlined at wrap time (the `?gp_theme=`
   // on the swapped iframe src below), so an iframe SWAP is FOUC-free; this path
-  // handles live toggles and re-applying the persisted choice after each load.
+  // handles live changes and re-applying the persisted choice after each load.
+  // Desktop shows a three-way radio group in the bar; phones show the same choice
+  // as buttons at the bottom of the page menu (CSS picks which one is visible).
   var THEMES = ["auto", "light", "dark"];
-  var THEME_LABEL = {{ auto: "Theme: Auto", light: "Theme: Light", dark: "Theme: Dark" }};
   // The nonce-gated head bootstrap already restored and allowlisted this value
   // before paint; validate once more rather than reading storage along two paths.
   var theme = document.documentElement.getAttribute("data-theme");
   if (THEMES.indexOf(theme) === -1) theme = "auto";
 
-  var toggle = document.getElementById("gp-theme-toggle");
+  var themeGroup = document.getElementById("gp-theme");
+  var themeRadios = Array.prototype.slice.call(themeGroup.querySelectorAll("[data-theme-choice]"));
+  var themeButtons = Array.prototype.slice.call(menuEl.querySelectorAll(".gp-menu-theme [data-theme-choice]"));
   function paintTheme() {{
     document.documentElement.setAttribute("data-theme", theme);
-    if (toggle) {{
-      toggle.textContent = THEME_LABEL[theme];
-      toggle.setAttribute("aria-label", THEME_LABEL[theme] + ". Activate to select the next theme.");
-    }}
+    themeRadios.forEach(function (b) {{
+      var on = b.getAttribute("data-theme-choice") === theme;
+      b.setAttribute("aria-checked", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;   // roving tabindex: one tab stop for the group
+    }});
+    themeButtons.forEach(function (b) {{
+      b.setAttribute("aria-pressed", b.getAttribute("data-theme-choice") === theme ? "true" : "false");
+    }});
   }}
   function sendTheme() {{
     // Post to the framed artifact; bridge.js validates source + schema on receipt.
     try {{ frame.contentWindow.postMessage({{ type: "theme", theme: theme }}, "*"); }} catch (e) {{}}
   }}
+  function setTheme(next) {{
+    if (THEMES.indexOf(next) === -1 || next === theme) return;
+    theme = next;
+    try {{ window.localStorage.setItem("gp-theme", theme); }} catch (e) {{}}
+    paintTheme();
+    sendTheme();
+  }}
   // Query string that inlines the theme at wrap time (auto is the default → omit).
   function themeQuery() {{ return theme === "auto" ? "" : ("?gp_theme=" + theme); }}
   paintTheme();
+  function onThemeClick(event) {{
+    var b = event.target && event.target.closest ? event.target.closest("[data-theme-choice]") : null;
+    if (b) setTheme(b.getAttribute("data-theme-choice"));
+  }}
+  themeGroup.addEventListener("click", onThemeClick);
+  menuEl.querySelector(".gp-menu-theme").addEventListener("click", onThemeClick);
+  // Radio-group keyboard model: arrows move and select within the group.
+  themeGroup.addEventListener("keydown", function (event) {{
+    var step = (event.key === "ArrowRight" || event.key === "ArrowDown") ? 1
+      : (event.key === "ArrowLeft" || event.key === "ArrowUp") ? THEMES.length - 1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    var nextTheme = THEMES[(THEMES.indexOf(theme) + step) % THEMES.length];
+    setTheme(nextTheme);
+    var target = themeGroup.querySelector('[data-theme-choice="' + nextTheme + '"]');
+    if (target) target.focus();
+  }});
 
   // --- The single validated navigation path. Used by BOTH the nav-chrome clicks
   // and the postMessage bridge, so every swap goes through the same allowlist +
@@ -453,18 +679,32 @@ pub fn render_with_groups(
   // Nav-chrome clicks: a primary, unmodified click on a known entry swaps the
   // iframe in place. Modified / non-primary clicks keep native behavior (the href
   // opens the shell for that artifact in a new tab), and any unknown slug is left
-  // to the browser too. Attached to BOTH the flat sidebar navigation and the grouped sidebar,
-  // so every swap goes through the same validated navigateTo path.
+  // to the browser too. Attached to BOTH the page menu and the bar's previous /
+  // next links, so every swap goes through the same validated navigateTo path.
+  function primaryNavAnchor(event) {{
+    if (event.defaultPrevented) return null;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null;
+    return event.target && event.target.closest ? event.target.closest("a[data-slug]") : null;
+  }}
   function onNavClick(event) {{
-    if (event.defaultPrevented) return;
-    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    var a = event.target && event.target.closest ? event.target.closest("a[data-slug]") : null;
+    var a = primaryNavAnchor(event);
     if (!a) return;
-    var slug = a.getAttribute("data-slug");
-    if (navigateTo(slug)) event.preventDefault();
+    if (navigateTo(a.getAttribute("data-slug"))) {{
+      event.preventDefault();
+      closeMenu(true);
+    }}
+  }}
+  function onStepClick(event) {{
+    var a = primaryNavAnchor(event);
+    if (!a || (a !== prevEl && a !== nextEl)) return;
+    if (navigateTo(a.getAttribute("data-slug"))) {{
+      event.preventDefault();
+      // At either end the clicked link becomes inert; keep focus in the bar.
+      if (!a.hasAttribute("href")) (a === prevEl ? nextEl : prevEl).focus();
+    }}
   }}
   navEl.addEventListener("click", onNavClick, false);
-  sidebarEl.addEventListener("click", onNavClick, false);
+  barEl.addEventListener("click", onStepClick, false);
 
   // Re-apply the theme once the (possibly just-swapped) artifact has loaded — a
   // belt-and-braces follow-up to the inlined `?gp_theme` below.
@@ -475,14 +715,6 @@ pub fn render_with_groups(
   // brief auto→persisted flash a post-load message would cause).
   if (!frame.getAttribute("src")) {{
     frame.src = frame.getAttribute("data-src") + themeQuery();
-  }}
-  if (toggle) {{
-    toggle.addEventListener("click", function () {{
-      theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
-      try {{ window.localStorage.setItem("gp-theme", theme); }} catch (e) {{}}
-      paintTheme();
-      sendTheme();
-    }});
   }}
 
   // Re-fetch the CURRENT slug's content in place (theme inlined so the swap is
@@ -923,23 +1155,32 @@ mod tests {
     }
 
     #[test]
-    fn shell_has_theme_toggle_and_messages_and_themes_its_own_chrome() {
+    fn shell_has_three_way_theme_control_and_themes_its_own_chrome() {
         let html = render("", "demo", "index", "", &nav_of(&["index"]), "n", None);
-        // A toggle control exists in the trusted chrome…
-        assert!(html.contains(r#"id="gp-theme-toggle""#));
+        // A three-way radio group in the bar, plus the phone copy in the page menu.
+        assert!(html.contains(r#"id="gp-theme" role="radiogroup" aria-label="Theme""#));
+        for choice in ["auto", "light", "dark"] {
+            assert!(html.contains(&format!(r#"role="radio" data-theme-choice="{choice}""#)));
+            assert!(html.contains(&format!(
+                r#"<button type="button" data-theme-choice="{choice}" aria-pressed="#
+            )));
+        }
+        assert!(html.contains(r#"aria-label="System""#));
         // …and the shell sends a low-authority theme message to the framed artifact.
         assert!(html.contains(r#"type: "theme""#));
         // Persisted choice is restored by an allowlisted, nonce-gated head bootstrap
         // before theme CSS/body paint, with auto inlined as the no-script fallback.
         assert!(html.contains(r#"<html lang="en" data-theme="auto">"#));
         assert!(html.contains(r#"getItem("gp-theme")"#));
+        assert!(html.contains(r#"setItem("gp-theme", theme)"#));
         let bootstrap = html.find(r#"<script nonce="n">"#).unwrap();
         assert!(bootstrap < html.find("<style>").unwrap());
-        assert!(bootstrap < html.find("<body>").unwrap());
-        // The same choice is applied to the trusted shell itself, whose sidebar uses
+        assert!(bootstrap < html.find("<body").unwrap());
+        // A theme choice outside the allowlist is ignored.
+        assert!(html.contains("if (THEMES.indexOf(next) === -1 || next === theme) return;"));
+        // The same choice is applied to the trusted shell itself, whose bar uses
         // explicit light/dark variables rather than fixed browser-default colours.
         assert!(html.contains(r#"document.documentElement.setAttribute("data-theme", theme)"#));
-        assert!(html.contains("Activate to select the next theme."));
         assert!(html.contains(r#"[data-theme="dark"]"#));
         assert!(html.contains("background:var(--gp-shell-bg)"));
     }
@@ -963,7 +1204,39 @@ mod tests {
     }
 
     #[test]
-    fn shell_chrome_is_sidebar_only_and_keeps_status() {
+    fn shell_chrome_is_a_top_bar_and_keeps_status() {
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "Article",
+            &nav_of(&["index", "sales"]),
+            "n",
+            None,
+        );
+        assert!(
+            html.contains(r#"<header class="gp-bar" id="gp-bar" aria-label="Space navigation">"#)
+        );
+        assert!(!html.contains("gp-sidebar"));
+        // The switcher is a disclosure button controlling the page menu.
+        assert!(html.contains(
+            r#"id="gp-switch" type="button" aria-expanded="false" aria-controls="gp-menu""#
+        ));
+        assert!(html.contains(r#"<div class="gp-menu" id="gp-menu" hidden>"#));
+        assert!(html.contains(r#"id="gp-prev""#) && html.contains(r#"id="gp-next""#));
+        // The submission status survives, outside the bar so single pages keep it.
+        assert!(html.contains("id=\"gp-delivery\" role=\"status\" aria-live=\"polite\""));
+        assert!(html.contains("function showDelivery(state, text)"));
+        // Both chrome surfaces go through the shared validated navigate path.
+        assert!(html.contains("navEl.addEventListener(\"click\", onNavClick"));
+        assert!(html.contains("barEl.addEventListener(\"click\", onStepClick"));
+        assert!(html.contains("sandbox=\"allow-scripts allow-top-navigation-by-user-activation\""));
+        // Multi-page: the body carries no single-page class.
+        assert!(html.contains("</head><body>\n"));
+    }
+
+    #[test]
+    fn shell_single_page_space_shows_only_a_corner_theme_control() {
         let html = render(
             "",
             "demo",
@@ -973,14 +1246,78 @@ mod tests {
             "n",
             None,
         );
-        assert!(!html.contains("<header"));
-        assert!(!html.contains("gp-bar"));
-        assert!(html.contains("NAV.length > 1")); // one page has no redundant nav link
-        assert!(html.contains("id=\"gp-delivery\" role=\"status\" aria-live=\"polite\""));
-        assert!(html.contains("function showDelivery(state, text)"));
-        assert!(html.contains("sidebarEl.addEventListener(\"click\", onNavClick"));
-        assert!(html.contains("getItem(\"gp-theme\")"));
-        assert!(html.contains("sandbox=\"allow-scripts allow-top-navigation-by-user-activation\""));
+        assert!(html.contains(r#"</head><body class="gp-single">"#));
+        assert!(html.contains("var MULTI = NAV.length > 1;"));
+        // The switcher and previous / next ship hidden and are revealed only for MULTI.
+        assert!(html.contains(r#"aria-controls="gp-menu" hidden>"#));
+        assert!(html.contains(r#"<div class="gp-pn" id="gp-pn" hidden>"#));
+        assert!(html.contains("body.gp-single .gp-bar { position:fixed; top:8px; right:8px;"));
+        // An empty nav table is a single-page layout too.
+        let empty = render("", "demo", "index", "", &[], "n", None);
+        assert!(empty.contains(r#"</head><body class="gp-single">"#));
+    }
+
+    #[test]
+    fn shell_space_label_prefers_title_then_loopback_name_never_hosted_slug() {
+        let nav = nav_of(&["index", "sales"]);
+        let titled = render_with_groups(
+            "/p",
+            "capslug",
+            "index",
+            "",
+            &nav,
+            &[],
+            "Q3 review",
+            "n",
+            None,
+        );
+        assert!(titled.contains(r#"var SPACE_LABEL = "Q3 review";"#));
+        let loopback = render_with_groups("", "reports", "index", "", &nav, &[], "", "n", None);
+        assert!(loopback.contains(r#"var SPACE_LABEL = "reports";"#));
+        let hosted = render_with_groups("/p", "capslug", "index", "", &nav, &[], "", "n", None);
+        assert!(hosted.contains(r#"var SPACE_LABEL = "";"#));
+        // A hostile space title is encoded data, inserted with textContent.
+        let hostile = render_with_groups(
+            "",
+            "s",
+            "index",
+            "",
+            &nav,
+            &[],
+            "</script><img src=x onerror=1>",
+            "n",
+            None,
+        );
+        let line = hostile
+            .lines()
+            .find(|l| l.contains("var SPACE_LABEL ="))
+            .unwrap();
+        assert!(!line.contains('<') && line.contains("\\u003c/script"));
+        assert!(
+            hostile.contains(r#"document.getElementById("gp-space").textContent = SPACE_LABEL;"#)
+        );
+    }
+
+    #[test]
+    fn shell_page_menu_has_keyboard_and_focus_handling() {
+        let html = render(
+            "",
+            "demo",
+            "index",
+            "",
+            &nav_of(&["index", "sales"]),
+            "n",
+            None,
+        );
+        assert!(html.contains(r#"event.key === "Escape""#));
+        assert!(html.contains(r#"event.key === "ArrowDown""#));
+        assert!(html.contains(r#"event.key === "Home""#));
+        assert!(html.contains("closeMenu(true)"));
+        assert!(html.contains(r#"menuEl.addEventListener("focusout""#));
+        assert!(html.contains("outline:2px solid var(--gp-shell-focus)"));
+        // Long titles truncate in the bar and wrap in the menu.
+        assert!(html.contains(".gp-page { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"));
+        assert!(html.contains("text-decoration:none; overflow-wrap:anywhere;"));
     }
 
     #[test]
@@ -1207,7 +1544,7 @@ mod tests {
         assert!(html.contains("if (r && r.status === 409) swapCurrentArtifact"));
     }
 
-    // --- grouped nav sidebar (space-docsite-nav) ----------------------------
+    // --- grouped page menu (space-docsite-nav) -------------------------------
 
     fn item<'a>(slug: &'a str, title: &'a str, children: Vec<NavItemView<'a>>) -> NavItemView<'a> {
         NavItemView {
@@ -1218,7 +1555,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_renders_grouped_sidebar_with_nested_children() {
+    fn shell_renders_grouped_menu_with_nested_children() {
         let groups = vec![
             NavGroupView {
                 label: "Perusarkkitehtuuri",
@@ -1243,10 +1580,12 @@ mod tests {
             "backtest-arkkitehdille",
             "backtest-kirjanpitajalle",
         ]);
-        let html = render_with_groups("", "docs", "index", "Home", &nav, &groups, "n", None);
-        // The grouped sidebar container exists and is built client-side (no server-
-        // rendered artifact/label markup — createElement/textContent only).
-        assert!(html.contains(r#"<aside class="gp-sidebar" id="gp-sidebar""#));
+        let html = render_with_groups("", "docs", "index", "Home", &nav, &groups, "", "n", None);
+        // The grouped page menu is built client-side (no server-rendered
+        // artifact/label markup — createElement/textContent only).
+        assert!(
+            html.contains(r#"<nav class="gp-nav" id="gp-nav" aria-label="Pages in this space">"#)
+        );
         assert!(html.contains("document.body.classList.add(\"gp-grouped\")"));
         // GROUPS is emitted as a JSON data literal carrying labels + nested children.
         let groups_line = html.lines().find(|l| l.contains("var GROUPS =")).unwrap();
@@ -1254,7 +1593,7 @@ mod tests {
         assert!(groups_line.contains("backtest-arkkitehdille"));
         assert!(groups_line.contains("\"children\""));
         // The shared validated navigate path is reused for BOTH surfaces.
-        assert!(html.contains("sidebarEl.addEventListener(\"click\", onNavClick"));
+        assert!(html.contains("barEl.addEventListener(\"click\", onStepClick"));
         assert!(html.contains("navEl.addEventListener(\"click\", onNavClick"));
         // The full slug allowlist (NAV) still gates navigation.
         assert!(html.contains("!KNOWN_SET.has(slug)"));
@@ -1271,7 +1610,7 @@ mod tests {
             members: vec![item("evil", hostile, vec![])],
         }];
         let nav = nav_of(&["index", "evil"]);
-        let html = render_with_groups("", "docs", "index", "Home", &nav, &groups, "n", None);
+        let html = render_with_groups("", "docs", "index", "Home", &nav, &groups, "", "n", None);
         assert!(!html.contains("<img src=x onerror"));
         assert!(!html.to_ascii_lowercase().contains("</script><img"));
         let groups_line = html.lines().find(|l| l.contains("var GROUPS =")).unwrap();
@@ -1283,10 +1622,10 @@ mod tests {
     #[test]
     fn shell_flat_fallback_when_no_groups_is_byte_identical() {
         // Empty groups → the thin `render` shim and `render_with_groups(&[])` produce
-        // the identical document, and the flat sidebar navigation is populated.
+        // the identical document, and the flat page menu is populated.
         let nav = nav_of(&["index", "sales"]);
         let shim = render("", "demo", "index", "Home", &nav, "n", None);
-        let full = render_with_groups("", "demo", "index", "Home", &nav, &[], "n", None);
+        let full = render_with_groups("", "demo", "index", "Home", &nav, &[], "", "n", None);
         assert_eq!(shim, full);
         // GROUPS is empty, so the client takes the flat-nav branch (the
         // classList.add("gp-grouped") call is present in the script but never runs).
@@ -1295,9 +1634,9 @@ mod tests {
                 || shim.contains("var GROUPS = []")
                 || shim.contains("var GROUPS = [ ]")
         );
-        // The flat navigation is populated client-side inside the trusted sidebar.
+        // The flat navigation is populated client-side inside the trusted page menu.
         assert!(shim.contains(r#"<nav class="gp-nav" id="gp-nav""#));
-        assert!(shim.contains(r#"<aside class="gp-sidebar" id="gp-sidebar""#));
+        assert!(shim.contains(r#"<div class="gp-menu" id="gp-menu" hidden>"#));
     }
 
     #[test]

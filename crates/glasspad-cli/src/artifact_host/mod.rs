@@ -565,10 +565,10 @@ fn render_shell(
     let nonce = token::generate_token();
     let nav = space_nav(snap, space);
     let nav_refs: Vec<(&str, &str)> = nav.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect();
-    // Grouped sidebar (when the space's manifest declared `groups:`). Views borrow
+    // Grouped page menu (when the space's manifest declared `groups:`). Views borrow
     // straight from the live snapshot; a member's display title is its manifest
     // override, else the artifact's resolved title, else the slug. Fixtures spaces
-    // (not in the snapshot) have no groups → empty → the flat nav bar renders.
+    // (not in the snapshot) have no groups → empty → a flat page menu renders.
     let groups: Vec<shell::NavGroupView> = snap
         .space(space)
         .map(|sp| {
@@ -596,6 +596,9 @@ fn render_shell(
         title.unwrap_or(""),
         &nav_refs,
         &groups,
+        snap.space(space)
+            .and_then(|s| s.title.as_deref())
+            .unwrap_or(""),
         &nonce,
         favicon,
     );

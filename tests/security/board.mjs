@@ -5,6 +5,14 @@
 // GLASSPAD_PORT=38931 node tests/security/board.mjs
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+
+async function chooseDark(page) {
+  // The bar's theme radio group; on a multi-page phone layout it lives in the page menu.
+  const radio = page.getByRole('radio', { name: 'Dark' });
+  if (await radio.isVisible()) return radio.click();
+  await page.click('#gp-switch');
+  await page.locator('.gp-menu-theme [data-theme-choice="dark"]').click();
+}
 const port = process.env.GLASSPAD_PORT;
 assert.ok(port, 'GLASSPAD_PORT required');
 const browser = await chromium.launch({ headless: true });
@@ -17,11 +25,9 @@ try {
     await frame.locator('.gp-board').waitFor();
     if (!js && theme === 'dark') assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
     if (js) {
-      // The shell theme toggle controls the sandboxed artifact through the real bridge.
+      // The shell theme control drives the sandboxed artifact through the real bridge.
       if (theme === 'dark') {
-        const toggle = page.getByRole('button', { name: /theme/i });
-        await toggle.click(); // auto → light
-        await toggle.click(); // light → dark
+        await chooseDark(page);
         await frame.locator('html[data-theme="dark"]').waitFor();
       }
       await frame.locator('.gp-board[data-gp-enhanced]').waitFor();

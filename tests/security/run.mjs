@@ -340,8 +340,8 @@ async function main() {
         s3a === s3b + 1 && a3a === a3b, `schema ${s3b}->${s3a} accepted ${a3b}->${a3a}`);
     }
 
-    // (d) Theme toggle re-themes the framed artifact via the parent→child channel.
-    await page.click("#gp-theme-toggle");
+    // (d) The bar's theme control re-themes the framed artifact via the parent→child channel.
+    await page.click('#gp-theme [data-theme-choice="light"]');
     if (navB) {
       await navB.waitForFunction(
         () => document.documentElement.getAttribute("data-theme") === "light",
@@ -366,30 +366,30 @@ async function main() {
         stillLight === "light", `data-theme=${stillLight}`);
     }
 
-    // (d3) The trusted sidebar follows that same live transition. Capture explicit
+    // (d3) The trusted top bar follows that same live transition. Capture explicit
     // light colours, advance to dark without a reload, and wait on the actual state.
     const lightChrome = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
+      const s = getComputedStyle(document.querySelector("#gp-bar"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
         color: s.color,
       };
     });
-    await page.click("#gp-theme-toggle");
+    await page.click('#gp-theme [data-theme-choice="dark"]');
     await page.waitForFunction(
       () => document.documentElement.getAttribute("data-theme") === "dark",
       undefined,
       { timeout: 4000 });
     const darkChrome = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
+      const s = getComputedStyle(document.querySelector("#gp-bar"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
         color: s.color,
       };
     });
-    check("bridge-theme: trusted sidebar visibly follows light→dark without reload",
+    check("bridge-theme: trusted top bar visibly follows light→dark without reload",
       lightChrome.theme === "light" && darkChrome.theme === "dark" &&
         darkChrome.background !== lightChrome.background &&
         darkChrome.color !== lightChrome.color,
@@ -397,23 +397,23 @@ async function main() {
 
     // (d4) Auto is the default contract: a live OS day/night preference change must
     // re-theme the trusted shell without changing its root token or reloading.
-    await page.click("#gp-theme-toggle"); // dark → auto
+    await page.click('#gp-theme [data-theme-choice="auto"]'); // dark → auto
     await page.waitForFunction(
       () => document.documentElement.getAttribute("data-theme") === "auto",
       undefined,
       { timeout: 4000 });
     await page.emulateMedia({ colorScheme: "light" });
     const autoLight = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
+      const s = getComputedStyle(document.querySelector("#gp-bar"));
       return { background: s.backgroundColor, color: s.color };
     });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForFunction(
-      (oldBackground) => getComputedStyle(document.querySelector("aside.gp-sidebar")).backgroundColor !== oldBackground,
+      (oldBackground) => getComputedStyle(document.querySelector("#gp-bar")).backgroundColor !== oldBackground,
       autoLight.background,
       { timeout: 4000 });
     const autoDark = await page.evaluate(() => {
-      const s = getComputedStyle(document.querySelector("aside.gp-sidebar"));
+      const s = getComputedStyle(document.querySelector("#gp-bar"));
       return {
         theme: document.documentElement.getAttribute("data-theme"),
         background: s.backgroundColor,
@@ -471,7 +471,9 @@ async function main() {
   // ---------------------------------------------------------------------
   {
     await page.goto(`${BASE}/demo/`, { waitUntil: "load" });
-    await page.waitForSelector("#gp-nav a[data-slug]");
+    // The page menu is closed by default; the switcher opens it.
+    await page.click("#gp-switch");
+    await page.waitForSelector("#gp-nav a[data-slug]", { state: "visible" });
 
     // The nav lists the space's artifacts, each an <a data-slug>.
     const navSlugs = await page.evaluate(() =>
@@ -490,11 +492,16 @@ async function main() {
         fired: window.__navInjectionFired === true,
         // No unexpected element node anywhere in the trusted chrome (nav is anchors
         // only; the header carries no img/script/style/iframe/form/meta/svg).
-        strayNavEls: document.querySelectorAll("#gp-nav :not(a, div.sb-group, div.sb-group-h, ul, li)").length,
+        strayNavEls: document.querySelectorAll("#gp-nav :not(a, div.gp-g, ul, li)").length,
+        // The bar's only SVGs are its six static icons (chevron, previous, next and
+        // three theme glyphs); the menu has none. Text slots hold text nodes only.
         strayHeaderEls: document.querySelectorAll(
-          "aside.gp-sidebar img, aside.gp-sidebar script, aside.gp-sidebar style, " +
-          "aside.gp-sidebar iframe, aside.gp-sidebar form, aside.gp-sidebar meta, " +
-          "aside.gp-sidebar svg, aside.gp-sidebar object").length,
+          ["#gp-bar", "#gp-menu"].map((r) =>
+            ["img", "script", "style", "iframe", "form", "meta", "object"].map((t) => `${r} ${t}`).join(", ")
+          ).join(", ") + ", #gp-menu svg").length +
+          Math.abs(document.querySelectorAll("#gp-bar svg").length - 6) +
+          ["gp-space", "gp-page", "gp-pos", "gp-menu-space-name"]
+            .map((id) => document.getElementById(id).childElementCount).reduce((x, y) => x + y, 0),
         // No duplicate critical ids (an id-clobbering breakout would add one).
         dupIds: document.querySelectorAll("#gp-nav").length !== 1 ||
                 document.querySelectorAll("#gp-title").length !== 0 ||
@@ -519,6 +526,10 @@ async function main() {
     const parentUrlBefore = page.url();
     await page.evaluate(() => { window.__shellNotReloaded = true; }); // wiped by any full reload
     await page.click('#gp-nav a[data-slug="eval"]');
+    check("nav-chrome: choosing a page closes the menu and returns focus to the switcher",
+      await page.evaluate(() =>
+        document.getElementById("gp-menu").hidden === true &&
+        document.activeElement === document.getElementById("gp-switch")));
     await page.waitForFunction(
       () => document.getElementById("gp-artifact").getAttribute("src") &&
             /\/demo\/_c\/eval(\?|$)/.test(document.getElementById("gp-artifact").getAttribute("src")),
@@ -534,6 +545,26 @@ async function main() {
     check("nav-chrome: the previously-active entry cleared its aria-current (single active)",
       await page.evaluate(() =>
         document.querySelectorAll('#gp-nav a[aria-current="page"]').length === 1));
+
+    // The bar's next link steps through the same validated path, in menu order.
+    const stepTarget = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll("#gp-nav a[data-slug]"));
+      const i = links.findIndex((a) => a.getAttribute("aria-current") === "page");
+      return {
+        expected: i >= 0 && i < links.length - 1 ? links[i + 1].getAttribute("data-slug") : null,
+        next: document.getElementById("gp-next").getAttribute("data-slug"),
+      };
+    });
+    if (stepTarget.expected) await page.click("#gp-next");
+    await page.waitForFunction(
+      (slug) => slug && new RegExp(`/demo/_c/${slug}(\\?|$)`).test(document.getElementById("gp-artifact").getAttribute("src") || ""),
+      stepTarget.expected, { timeout: 4000 }).catch(() => {});
+    check("nav-chrome: the next link swaps to the following page in place and moves aria-current",
+      !!stepTarget.expected && stepTarget.next === stepTarget.expected &&
+        (await page.evaluate((slug) =>
+          document.querySelector(`#gp-nav a[data-slug="${slug}"]`).getAttribute("aria-current") === "page" &&
+          window.__shellNotReloaded === true, stepTarget.expected)),
+      JSON.stringify(stepTarget));
   }
 
   // ---------------------------------------------------------------------

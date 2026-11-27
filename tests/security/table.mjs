@@ -5,6 +5,14 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 
+async function chooseDark(page) {
+  // The bar's theme radio group; on a multi-page phone layout it lives in the page menu.
+  const radio = page.getByRole('radio', { name: 'Dark' });
+  if (await radio.isVisible()) return radio.click();
+  await page.click('#gp-switch');
+  await page.locator('.gp-menu-theme [data-theme-choice="dark"]').click();
+}
+
 const port = process.env.GLASSPAD_PORT;
 assert.ok(port, 'GLASSPAD_PORT required');
 const browser = await chromium.launch({ headless: true });
@@ -16,8 +24,7 @@ try {
     const frame = js ? page.frameLocator('iframe') : page;
     await frame.locator('.gp-table table').waitFor();
     if (js && theme === 'dark') {
-      const toggle = page.getByRole('button', { name: /theme/i });
-      await toggle.click(); await toggle.click();
+      await chooseDark(page);
       await frame.locator('html[data-theme="dark"]').waitFor();
     }
     assert.equal(await frame.locator('table thead th').count(), 10);

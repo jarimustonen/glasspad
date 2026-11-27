@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+
+async function chooseDark(page) {
+  // The bar's theme radio group; on a multi-page phone layout it lives in the page menu.
+  const radio = page.getByRole('radio', { name: 'Dark' });
+  if (await radio.isVisible()) return radio.click();
+  await page.click('#gp-switch');
+  await page.locator('.gp-menu-theme [data-theme-choice="dark"]').click();
+}
 const url = process.argv[2];
 assert.ok(url, 'Mermaid artifact URL required');
 const browser = await chromium.launch({ headless: true });
@@ -15,9 +23,7 @@ try {
   assert.ok((await frame.locator('.gp-mermaid-ready').last().innerText()).includes('Alice'));
   assert.ok((await frame.locator('.gp-mermaid:not(.gp-mermaid-ready)').innerText()).includes('not a diagram'));
   const before = await frame.locator('.gp-mermaid-ready svg').first().getAttribute('id');
-  const toggle = page.getByRole('button', { name: /theme/i });
-  await toggle.click(); // auto -> light
-  await toggle.click(); // light -> dark
+  await chooseDark(page);
   await frame.locator('html[data-theme="dark"]').waitFor();
   await frame.locator('.gp-mermaid-ready svg').first().waitFor();
   await frame.locator('.gp-mermaid-ready svg').first().evaluate((svg, old) => new Promise((resolve, reject) => {

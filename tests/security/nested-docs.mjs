@@ -19,8 +19,9 @@ try {
   }
   await clickAndExpect("index", "Arkkitehtuuri", "architecture/index");
   await clickAndExpect("architecture/index", "Components and authorities", "architecture/components");
-  // The trusted sidebar returns to the authored home page without leaving the shell.
-  await page.locator('a[data-slug="index"]').first().click();
+  // The trusted page menu returns to the authored home page without leaving the shell.
+  await page.click("#gp-switch");
+  await page.locator('#gp-nav a[data-slug="index"]').click();
   await clickAndExpect("index", "Päätökset", "decisions/index");
   await clickAndExpect("decisions/index", "ADR 0001", "decisions/adr-0001-unix-native-agent-host");
   console.log("nested docs browser navigation passed");

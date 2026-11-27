@@ -84,8 +84,8 @@ or more pages (or grouped nav) gets a generated table-of-contents landing at `in
 and a lone page is its own home.
 
 An optional `glasspad.yaml` inside the space describes structure only: `title`,
-`nav` (an ordered list of slugs), `groups` (a labelled sidebar with one level of
-nesting, for docsite-sized spaces), and `template`. It is usually absent. The
+`nav` (an ordered list of slugs), `groups` (labelled sections of the page menu,
+with one level of nesting, for docsite-sized spaces), and `template`. It is usually absent. The
 repo-root `.glasspad.yaml` is a different file with a different job: `target`,
 `server`, `api_key`, a default `template`, `space_key`, and `favicon`. `bind` is
 honoured from the home config only, for the reason given under LAN reach below.

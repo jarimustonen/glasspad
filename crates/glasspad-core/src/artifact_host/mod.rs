@@ -44,7 +44,7 @@ mod tests {
 
         let nav = [("index", "\" sandbox=\"allow-scripts allow-same-origin")];
         let rendered =
-            shell::render_with_groups("", "demo", "index", nav[0].1, &nav, &[], "nonce", None);
+            shell::render_with_groups("", "demo", "index", nav[0].1, &nav, &[], "", "nonce", None);
         assert!(
             rendered.contains(r#"sandbox="allow-scripts allow-top-navigation-by-user-activation""#)
         );

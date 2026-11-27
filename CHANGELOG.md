@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Multi-page spaces show a low top bar instead of the left sidebar (and the bottom dock on phones): the space name and a page switcher listing the pages with their groups, previous / next page links, and a System / Light / Dark theme control, which on phones sits at the bottom of the page menu. A single-page space shows only the theme control in a corner. Submission status appears as a notice at the bottom of the window.
 ### Fixed
 <!-- oss-changelog:unreleased-end -->
 
