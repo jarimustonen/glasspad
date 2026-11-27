@@ -523,6 +523,21 @@ async function main() {
     // Clicking a parent-nav entry swaps the iframe in place — no full reload.
     const frameHas = (slug) =>
       page.frames().some((f) => new RegExp(`/demo/_c/${slug}(\\?|$)`).test(f.url()));
+    // The iframe `src` attribute changes before the frame commits its navigation,
+    // so waiting on the attribute and then reading `page.frames()` races the load.
+    // Poll the committed frame URLs themselves with a deadline; on a real timeout
+    // report what the frames actually showed instead of swallowing it.
+    const waitForFrameCommit = async (slug, timeoutMs = 8000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (!frameHas(slug)) {
+        if (Date.now() >= deadline) {
+          return `timed out after ${timeoutMs}ms waiting for a frame to commit /demo/_c/${slug}; ` +
+            `frames=${JSON.stringify(page.frames().map((f) => f.url())).slice(0, 300)}`;
+        }
+        await page.waitForTimeout(25);
+      }
+      return null;
+    };
     const parentUrlBefore = page.url();
     await page.evaluate(() => { window.__shellNotReloaded = true; }); // wiped by any full reload
     await page.click('#gp-nav a[data-slug="eval"]');
@@ -530,12 +545,9 @@ async function main() {
       await page.evaluate(() =>
         document.getElementById("gp-menu").hidden === true &&
         document.activeElement === document.getElementById("gp-switch")));
-    await page.waitForFunction(
-      () => document.getElementById("gp-artifact").getAttribute("src") &&
-            /\/demo\/_c\/eval(\?|$)/.test(document.getElementById("gp-artifact").getAttribute("src")),
-      { timeout: 4000 }).catch(() => {});
+    const evalTimeout = await waitForFrameCommit("eval");
     check("nav-chrome: clicking a nav entry swapped the framed artifact in place",
-      frameHas("eval"), "iframe src should be /demo/_c/eval");
+      evalTimeout === null && frameHas("eval"), evalTimeout ?? "iframe should show /demo/_c/eval");
     check("nav-chrome: parent nav navigation did NOT reload the trusted shell",
       (await page.evaluate(() => window.__shellNotReloaded === true)) && page.url() === parentUrlBefore,
       `sentinel survived, url=${page.url()}`);
@@ -556,17 +568,15 @@ async function main() {
       };
     });
     if (stepTarget.expected) await page.click("#gp-next");
-    await page.waitForFunction(
-      (slug) => slug && new RegExp(`/demo/_c/${slug}(\\?|$)`).test(document.getElementById("gp-artifact").getAttribute("src") || ""),
-      stepTarget.expected, { timeout: 4000 }).catch(() => {});
+    const stepTimeout = stepTarget.expected ? await waitForFrameCommit(stepTarget.expected) : "no next page";
     check("nav-chrome: the next link swaps to the following page in place and moves aria-current",
       !!stepTarget.expected && stepTarget.next === stepTarget.expected &&
-        frameHas(stepTarget.expected) &&
+        stepTimeout === null && frameHas(stepTarget.expected) &&
         (await page.evaluate((slug) =>
           new RegExp(`/demo/_c/${slug}(\\?|$)`).test(document.getElementById("gp-artifact").getAttribute("src") || "") &&
           document.querySelector(`#gp-nav a[data-slug="${slug}"]`).getAttribute("aria-current") === "page" &&
           window.__shellNotReloaded === true, stepTarget.expected)),
-      JSON.stringify(stepTarget));
+      `${JSON.stringify(stepTarget)}${stepTimeout ? ` ${stepTimeout}` : ""}`);
   }
 
   // ---------------------------------------------------------------------
