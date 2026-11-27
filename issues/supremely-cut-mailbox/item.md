@@ -2,7 +2,7 @@
 created: 2026-11-27
 updated: 2026-11-27
 type: bug
-status: open
+status: fixed
 priority: normal
 provenance: other
 provenance_detail: release verification screenshot
@@ -10,6 +10,10 @@ source_ref: taskfleet:01m8ergvvps7d4t0ztjf119wap/observed:single-page-theme-over
 originating_run: 01m8ergvvps7d4t0ztjf119wap
 originating_run_kind: spinoff
 lane: unlaned
+closed: 2026-11-27
+commits:
+- hash: bf63cdf
+  summary: single-page theme control gets its own strip on phones
 ---
 
 # Single-page theme control overlaps the first heading on phone-width screens
