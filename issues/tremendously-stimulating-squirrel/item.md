@@ -2,13 +2,14 @@
 created: 2026-11-27
 updated: 2026-11-27
 type: bug
-status: untriaged
+status: open
 priority: normal
 provenance: other
 provenance_detail: release gate run
 source_ref: taskfleet:01m8ergvvps7d4t0ztjf119wap/flake:nav-chrome-frame-swap
 originating_run: 01m8ergvvps7d4t0ztjf119wap
 originating_run_kind: spinoff
+lane: unlaned
 ---
 
 # Security probe nav-chrome frame-swap check races the iframe navigation
