@@ -48,11 +48,14 @@ The reason is traceability: closed issues keep their plans, so `ARCHITECTURE.md`
 send a reader to an issue for the *why* behind a decision. If a piece of work needs a
 plan, it needs an issue first.
 
-`TODO.md` at the repo root is the round-by-round handoff for `/stint-start` sessions:
-where things stand, what to start on, and the standing lessons earlier rounds paid for.
-It is orientation only; `issuectl dag` is authoritative for scheduling. Read its
-standing lessons before writing a worker brief, since several of them exist because a
+The session narrative (where a round stands, what to start on, open decisions) is kept
+outside this repository; the `issuectl dag` is the schedule. Standing rules live in the
+`AGENTS.md` files, and the ones below under "Writing a worker brief" exist because a
 brief once omitted them.
+
+When ranking triaged work, rank by how often the effect happens, not by how bad its
+worst case sounds: something that bites on every publish outweighs data loss under a
+rare crash, because the frequent cost is the one users actually pay.
 
 ## How work moves
 
@@ -86,6 +89,28 @@ of this.
 Anything in a worktree that only reads, builds, or tests is free to run: `cargo build`,
 `cargo test`, `cargo clippy`, the security suite, browser automation. Verifying a change
 end to end before it merges is the expected standard, not a nicety.
+
+**Writing a worker brief.**
+
+- Put a `CHANGELOG.md` line in the done criteria, and name the section it goes in
+  (normally `[Unreleased]`). Without the first, units land with no entry; without the
+  second, a unit whose branch outlives a release cut writes into the already-published
+  section and the changelog claims the feature shipped a release early.
+- A brief that includes `/llm-review` also carries the speculative-findings filter from
+  `.issuectl/AGENTS.md`; otherwise each review round regenerates findings that are not
+  work.
+- State a constraint only for behaviour you have confirmed in the code or by running
+  the binary. A worker follows a false premise faithfully, and can add a refusal or
+  check that never existed, silently changing production behaviour.
+- When a unit lands, smoke-test its claim yourself rather than trusting its summary,
+  and re-check a "security green" claim against the full `./test-security.sh` run
+  (see below): partial runs have been reported as green.
+
+**Public means no personal setup.** The repository is public, so commits, issues,
+docs, tests and fixtures name no personal machine names, personal filesystem paths,
+private sibling repositories, internal URLs, or personal contact addresses. The
+maintainer's public account is not in that class: `github.com/jarimustonen/glasspad` in
+an install command is fine. Old history needs no scrubbing for its own sake.
 
 ## Releasing
 
@@ -129,6 +154,11 @@ The only reasons to stop short of a release and surface it: a gate fails and the
 a genuine fork; the release tooling on this machine has not converged (say so; do not
 skip or substitute a gate); or the CI-side crates.io credential is genuinely absent.
 
+Release finished user-visible work before a large restructure (a crate split, anything
+touching `Cargo.toml`, `dist-workspace.toml`, or the published package shape), not
+after. A broken pipeline only surfaces at tag time, and releasing first keeps a
+proven-good pipeline and keeps finished work from waiting behind the debugging.
+
 **Cross-platform is a hard requirement.** glasspad installs and runs on macOS and
 Linux; a release path that covers only one is incomplete. The binary matrix in
 `dist-workspace.toml` is deliberately narrower than the family's Shipshape canon, and
@@ -136,7 +166,8 @@ the comments there explain each choice (gnu rather than musl on Linux; no Intel-
 Windows binaries, those users install with `cargo install glasspad`). Two things about
 that file are easy to break. The macOS build is routed to a personal self-hosted Apple
 Silicon runner under `[dist.github-custom-runners]`; that is the operator's
-infrastructure, not project canon, and other users of the repo will not have it. That
+infrastructure, not project canon, and other users of the repo will not have it; its
+runner environment must not set `GIT_CONFIG_GLOBAL`, which breaks the macOS build. That
 sub-table has to stay last in the file, because in TOML any key written after its
 header belongs to the sub-table, not to `[dist]`. And `release.yml` is generated from
 `dist-workspace.toml` with an approved override applied by `scripts/release_workflow.py`;
@@ -164,6 +195,13 @@ with a few hundred filesystem and network touchpoints; it *is* the shell the can
 library-first section means. A canon audit that flags it as an unmoved domain module
 should be rejected. The pure parts worth extracting (rendering, sanitization, shell and
 template output, CSP policy) already live in core.
+
+The hosted store's single mutation lock is deliberately coarse. Narrowing it (staging
+and fsync outside the lock, holding it only for the pointer flip) pays off only under
+concurrent publishes, and there is one publisher; it would also break GC's invariant
+that any dotted staging directory is a crash remnant, and the snapshot
+read-modify-write. Do not file or implement it unless there is evidence: more than one
+API key in use, or measured publish latency showing GC contention.
 
 ## Working on the host
 
@@ -196,6 +234,10 @@ passed" while Wave 2a never ran; a release was halted once for exactly that. The
 count drifts as probes are added, so trust the script's own summary, not a number
 written in a document. A leftover `glasspad` serve process from an earlier run causes
 a spurious early death.
+
+The dependency tree (`idna_adapter` → `icu_*`) needs rustc 1.86 or newer. If a plain
+`cargo` fails on a minimum-version error, the machine's default toolchain is pinned
+older; run the gate under `rustup run stable` rather than downgrading dependencies.
 
 `cargo test` can fail `tests/version_cli.rs` with `commit … got: Null` on a local
 incremental build. `build.rs` stamps the git SHA into the binary, and cargo does not

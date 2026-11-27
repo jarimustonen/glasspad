@@ -58,9 +58,14 @@ Incoming bug reports and feature requests arrive as `untriaged` and move through
 obsolete). Whether a
 reported bug is fixed, deferred, or not a bug is Jari's call, as the top-level
 `AGENTS.md` says; the tracker's job is to hold the report faithfully until that
-call is made. `TODO.md` keeps the standing triage lessons, including the one about
-review findings that describe no reachable failure: those close as `wontfix` rather
-than being laned.
+call is made.
+
+Review findings that describe no reachable failure are not work: close them as
+`wontfix` rather than laning them. That covers a finding whose own justification is
+"another layer already validates this", one that "does not happen on default
+settings", and one that needs an attacker who can already write the server's own
+storage. Hardening against those costs code and review time and protects nothing,
+and once laned they look like real backlog.
 
 Scheduling is derived, not stored. `lane` is a serial queue whose head is the only
 spawnable member, `collision` names a shared file that would make two lanes

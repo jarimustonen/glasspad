@@ -45,7 +45,7 @@ HTML and SVG in markdown) is the same kind of decision. Inside the boundary you 
 free: add probes, tighten what breaks nothing, refactor behind the seams, and verify
 end to end before merging.
 
-Security code attracts speculative findings. `TODO.md`'s standing lessons record that a
+Security code attracts speculative findings. As `.issuectl/AGENTS.md` records, a
 review finding justified by "another layer already validates this", or one that
 requires an attacker who already writes the server's own storage, is not work.
 
