@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 ### Changed
 ### Fixed
-- On Linux without a graphical session (neither `DISPLAY` nor `WAYLAND_DISPLAY` set), `publish`, `open`, `serve` and `author` no longer run `xdg-open`; they print the URL and report `browser_launched: false`, instead of printing opener failures.
 <!-- oss-changelog:unreleased-end -->
+
+## [0.20.1] - 2026-11-27
+
+### Fixed
+- On Linux without a graphical session (neither `DISPLAY` nor `WAYLAND_DISPLAY` set), `publish`, `open`, `serve` and `author` no longer run `xdg-open`; they print the URL and report `browser_launched: false`, instead of printing opener failures.
 
 ## [0.20.0] - 2026-10-04
 
@@ -582,7 +586,8 @@ null-origin sandboxed iframe.
   checks plus space-model probes: per-channel exfiltration, sandbox escape, direct-open,
   postMessage abuse, path traversal/symlink, injection, and Vega/eval).
 
-[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/jarimustonen/glasspad/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/jarimustonen/glasspad/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/jarimustonen/glasspad/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/jarimustonen/glasspad/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/jarimustonen/glasspad/compare/v0.18.5...v0.19.0
