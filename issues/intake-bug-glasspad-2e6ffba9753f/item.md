@@ -1,12 +1,13 @@
 ---
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-11-27
 type: bug
 reporter: jari
-status: untriaged
+status: open
 priority: normal
 provenance: agent:homebase-wrapup
 source_ref: agent:homebase-wrapup/reporter:jari/id:open-habitat-wrapup-2026-10-15-glasspad-xdg
+lane: unlaned
 ---
 
 # glasspad publish --target hosted tries xdg-open on a headless server
