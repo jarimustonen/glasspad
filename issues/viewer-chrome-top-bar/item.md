@@ -3,9 +3,15 @@ created: 2026-11-27
 updated: 2026-11-27
 type: feature
 reporter: jari
-status: open
+status: done
 priority: normal
 lane: unlaned
+closed: 2026-11-27
+commits:
+- hash: 6ad2f4f
+  summary: top bar replaces the sidebar viewer chrome
+- hash: ebbcf4d
+  summary: focus fallback and stricter next-link probe
 ---
 
 # Top bar replaces the sidebar viewer chrome
@@ -23,11 +29,11 @@ On phones the same bar stays; the theme control moves to the bottom of the page-
 
 ## Acceptance criteria
 
-- [ ] Desktop and phone, light and dark: the bar renders without horizontal scroll; long page titles truncate in the bar and wrap in the menu.
-- [ ] Grouped and flat navigation, active page and theme choice keep working; same-space navigation and submission status are not lost (the guarantees listed in `viewer-chrome-sidebar`).
-- [ ] The change is confined to the trusted shell template and CSS; the null-origin sandbox, CSP and the page→shell message allowlist are unchanged.
-- [ ] Keyboard: the switcher opens, navigates and closes with the keyboard; focus is visible.
-- [ ] Shell tests updated; full security suite and browser checks green; CHANGELOG `[Unreleased]` entry.
+- [x] Desktop and phone, light and dark: the bar renders without horizontal scroll; long page titles truncate in the bar and wrap in the menu.
+- [x] Grouped and flat navigation, active page and theme choice keep working; same-space navigation and submission status are not lost (the guarantees listed in `viewer-chrome-sidebar`).
+- [x] The change is confined to the trusted shell template and CSS; the null-origin sandbox, CSP and the page→shell message allowlist are unchanged.
+- [x] Keyboard: the switcher opens, navigates and closes with the keyboard; focus is visible.
+- [x] Shell tests updated; full security suite and browser checks green; CHANGELOG `[Unreleased]` entry.
 
 ## Reference
 
