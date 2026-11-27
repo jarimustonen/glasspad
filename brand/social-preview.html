@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  Source for brand/social-preview.png (GitHub social preview, 1280x640).
+  Regenerate from the repository root with:
+
+    /usr/bin/google-chrome --headless --disable-gpu --hide-scrollbars \
+      --force-device-scale-factor=1 --window-size=1280,640 \
+      --screenshot=brand/social-preview.png brand/social-preview.html
+
+  Everything that matters sits inside the central 1120x480 safe area,
+  because some surfaces crop the edges.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>glasspad social preview</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 1280px;
+    height: 640px;
+    overflow: hidden;
+  }
+  body {
+    background:
+      radial-gradient(circle at 26% 50%, #f7fafb 0, #eef3f6 38%, #e6edf2 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+      "Inter", "Noto Sans", "DejaVu Sans", sans-serif;
+    color: #1a1b25;
+  }
+  .safe {
+    position: absolute;
+    left: 80px;
+    top: 80px;
+    width: 1120px;
+    height: 480px;
+    display: flex;
+    align-items: center;
+    gap: 40px;
+  }
+  .mark {
+    flex: 0 0 auto;
+    width: 400px;
+    height: 400px;
+    background: url("logo.png") center / 640px 640px no-repeat;
+    -webkit-mask-image: radial-gradient(circle, #000 52%, transparent 70%);
+            mask-image: radial-gradient(circle, #000 52%, transparent 70%);
+  }
+  .text { flex: 1 1 auto; }
+  h1 {
+    margin: 0 0 18px;
+    font-size: 112px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+  }
+  .tagline {
+    margin: 0 0 30px;
+    font-size: 38px;
+    line-height: 1.25;
+    font-weight: 500;
+    color: #374151;
+  }
+  .detail {
+    margin: 0;
+    font-size: 25px;
+    line-height: 1.45;
+    color: #6b7280;
+  }
+  .rule {
+    width: 120px;
+    height: 6px;
+    border-radius: 3px;
+    margin-bottom: 30px;
+    background: linear-gradient(90deg, #0ea5e9, #2563eb);
+  }
+</style>
+</head>
+<body>
+  <div class="safe">
+    <div class="mark" role="img" aria-label="Glasspad logo"></div>
+    <div class="text">
+      <h1>glasspad</h1>
+      <div class="rule"></div>
+      <p class="tagline">AI-friendly scratchpad for rich visual views.</p>
+      <p class="detail">Hand it HTML or markdown, get a URL. Every page renders
+        in a null-origin sandboxed iframe.</p>
+    </div>
+  </div>
+</body>
+</html>
